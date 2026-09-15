@@ -38,11 +38,13 @@ cleanup.
 ## Requirements
 
 - macOS or Linux
-- Node.js 22.13 or newer
+- Node.js 22.13+ (22.x) or Node.js 24.x
 - `lsof` available on the host
 
 The actual lock probe uses `fs-ext-extra-prebuilt`, which provides prebuilt
 native binaries for common macOS and Linux architectures.
+Node.js 26 is not currently supported because that dependency does not provide
+a compatible prebuilt binary.
 
 ## Install from GitHub
 
@@ -56,12 +58,9 @@ npm link
 codex-unlock --help
 ```
 
-The `prepare` lifecycle builds `dist/` during installation, so a Git dependency
-also works after the current commit has been pushed:
-
-```bash
-npm install --global git+https://github.com/abruption/codex-unlock.git
-```
+The `prepare` lifecycle builds `dist/` when `npm ci` runs. Direct
+`npm install --global git+https://...` installation is not supported; some npm
+versions omit the build-time dependencies while preparing a Git package.
 
 ## Options and exit codes
 
