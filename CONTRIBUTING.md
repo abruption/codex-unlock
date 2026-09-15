@@ -2,7 +2,8 @@
 
 ## Development
 
-Use Node.js 22.13 or newer and install from the committed lockfile:
+Use Node.js 22.13+ (22.x) or Node.js 24.x and install from the committed
+lockfile:
 
 ```bash
 npm ci
@@ -12,8 +13,9 @@ npm test
 npm run smoke:package
 ```
 
-`npm ci` runs the `prepare` build, which also keeps installation from a Git
-checkout or Git dependency usable before a registry release exists.
+`npm ci` runs the `prepare` build, which keeps installation from a cloned Git
+checkout usable before a registry release exists. Direct Git dependency
+installation is not a supported installation path.
 
 Tests that exercise lock ownership require `lsof` and a host with POSIX advisory
 locks (macOS or Linux).
