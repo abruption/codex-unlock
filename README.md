@@ -38,11 +38,30 @@ cleanup.
 ## Requirements
 
 - macOS or Linux
-- Node.js 20 or newer
+- Node.js 22.13 or newer
 - `lsof` available on the host
 
 The actual lock probe uses `fs-ext-extra-prebuilt`, which provides prebuilt
 native binaries for common macOS and Linux architectures.
+
+## Install from GitHub
+
+Until the npm package is available, install directly from the repository:
+
+```bash
+git clone https://github.com/abruption/codex-unlock.git
+cd codex-unlock
+npm ci
+npm link
+codex-unlock --help
+```
+
+The `prepare` lifecycle builds `dist/` during installation, so a Git dependency
+also works after the current commit has been pushed:
+
+```bash
+npm install --global git+https://github.com/abruption/codex-unlock.git
+```
 
 ## Options and exit codes
 
@@ -60,10 +79,16 @@ native binaries for common macOS and Linux architectures.
 ## Development
 
 ```bash
-npm install
+npm ci
+npm run check
+npm run lint
 npm test
-npm pack --dry-run
+npm run smoke:package
 ```
 
 The upstream handoff design proposed alongside this tool is preserved in
 [`docs/upstream-handoff-proposal.md`](docs/upstream-handoff-proposal.md).
+
+Changes use Conventional Commits and are released through Release Please. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for contribution rules and
+[`docs/maintainer-release.md`](docs/maintainer-release.md) for repository setup.

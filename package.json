@@ -7,19 +7,27 @@
     "codex-unlock": "dist/cli.js"
   },
   "files": [
-    "dist",
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
     "docs/upstream-handoff-proposal.md",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "lint": "eslint .",
     "prepack": "npm run build",
-    "test": "npm run build && node --test test/*.test.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "pretest": "npm run build",
+    "prepare": "npm run build",
+    "smoke:package": "npm run clean && npm run build && node scripts/package-smoke.mjs",
+    "test": "node --test test/*.test.mjs",
+    "typecheck": "npm run check"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13.0"
   },
   "os": [
     "darwin",
@@ -27,16 +35,31 @@
   ],
   "keywords": [
     "codex",
+    "codex-cli",
+    "diagnostics",
     "lock",
     "session",
-    "cli"
+    "cli",
+    "unlock"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abruption/codex-unlock.git"
+  },
+  "homepage": "https://github.com/abruption/codex-unlock#readme",
+  "bugs": {
+    "url": "https://github.com/abruption/codex-unlock/issues"
+  },
+  "author": "abruption",
   "license": "MIT",
   "dependencies": {
     "fs-ext-extra-prebuilt": "^2.2.14"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.15.0",
-    "typescript": "^5.8.3"
+    "eslint": "^10.0.1",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.62.1"
   }
 }

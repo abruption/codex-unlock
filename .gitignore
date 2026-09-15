@@ -1,4 +1,13 @@
 node_modules/
 dist/
+coverage/
+.cache/
+*.log
 *.tgz
+*.tsbuildinfo
 .DS_Store
+
+# Secrets and machine-local configuration
+.env
+.env.*
+!.env.example
