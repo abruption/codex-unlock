@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { defaultOptions, inspectThread, listThreads, unlockThread } from "./doctor.js";
@@ -36,7 +37,13 @@ interface ParsedArguments {
 }
 
 function packageVersion(): string {
-  return "0.1.0";
+  const manifest = JSON.parse(
+    readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+  ) as { version?: unknown };
+  if (typeof manifest.version !== "string") {
+    throw new Error("package.json does not contain a version");
+  }
+  return manifest.version;
 }
 
 function integerOption(name: string, value: string | undefined, min: number, max: number): number {
@@ -188,16 +195,19 @@ async function main(): Promise<number> {
   try {
     if (parsed.command === "list") {
       const result = await listThreads(parsed.options);
-      parsed.json ? console.log(JSON.stringify(result, null, 2)) : printList(result);
+      if (parsed.json) console.log(JSON.stringify(result, null, 2));
+      else printList(result);
       return 0;
     }
     if (parsed.command === "inspect") {
       const result = await inspectThread(parsed.threadId!, parsed.options);
-      parsed.json ? console.log(JSON.stringify(result, null, 2)) : printInspection(result);
+      if (parsed.json) console.log(JSON.stringify(result, null, 2));
+      else printInspection(result);
       return 0;
     }
     const result = await unlockThread(parsed.threadId!, parsed.options);
-    parsed.json ? console.log(JSON.stringify(result, null, 2)) : printUnlock(result);
+    if (parsed.json) console.log(JSON.stringify(result, null, 2));
+    else printUnlock(result);
     if (result.outcome === "unlocked" || result.outcome === "not_locked") return 0;
     if (result.outcome === "refused") return 2;
     return 3;

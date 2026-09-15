@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22.13.0
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+
+  security-audit:
+    name: security-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22.13.0
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm audit --audit-level=high
+      - run: npm audit --omit=dev --audit-level=high
+
+  package-artifact:
+    name: package artifact (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22.13.0
+          cache: npm
+      - run: npm ci
+      - run: npm run smoke:package
+
+  git-install:
+    name: git clone install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22.13.0
+          cache: npm
+      - name: Install from a fresh clone
+        run: |
+          git clone --local --no-hardlinks "$GITHUB_WORKSPACE" "$RUNNER_TEMP/codex-unlock"
+          cd "$RUNNER_TEMP/codex-unlock"
+          npm ci
+          NPM_CONFIG_PREFIX="$RUNNER_TEMP/codex-unlock-prefix" npm link
+          "$RUNNER_TEMP/codex-unlock-prefix/bin/codex-unlock" --version
+
+  package-smoke:
+    name: package-smoke
+    if: ${{ always() }}
+    needs: [package-artifact, git-install]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every supported package installation
+        env:
+          ARTIFACT_RESULT: ${{ needs.package-artifact.result }}
+          GIT_RESULT: ${{ needs.git-install.result }}
+        run: |
+          test "$ARTIFACT_RESULT" = success
+          test "$GIT_RESULT" = success
+
+  compatibility:
+    name: supported (node ${{ matrix.node }} on ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        node: ["22.13.0", "22", "24"]
+        include:
+          - os: macos-latest
+            node: "22"
+          - os: macos-latest
+            node: "24"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+
+  supported-tests:
+    name: supported-tests
+    if: ${{ always() }}
+    needs: [compatibility]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every supported runtime
+        env:
+          RESULT: ${{ needs.compatibility.result }}
+        run: test "$RESULT" = success
