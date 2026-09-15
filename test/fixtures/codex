@@ -1,0 +1,16 @@
+#!/usr/bin/env node
+
+import fs from "node:fs";
+
+import { flockSync } from "fs-ext-extra-prebuilt";
+
+const lockPath = process.argv[2];
+if (!lockPath) {
+  process.stderr.write("lock path required\n");
+  process.exit(64);
+}
+
+const fd = fs.openSync(lockPath, "r+");
+flockSync(fd, "ex");
+process.stdout.write("ready\n");
+setInterval(() => {}, 1_000);

@@ -1,0 +1,42 @@
+{
+  "name": "codex-unlock",
+  "version": "0.1.0",
+  "description": "Diagnose Codex thread writer locks and safely release completed idle sessions.",
+  "type": "module",
+  "bin": {
+    "codex-unlock": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "docs/upstream-handoff-proposal.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "keywords": [
+    "codex",
+    "lock",
+    "session",
+    "cli"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "fs-ext-extra-prebuilt": "^2.2.14"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.3"
+  }
+}
