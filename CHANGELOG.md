@@ -16,7 +16,3 @@
 ### Continuous Integration
 
 * establish repository and release automation ([#3](https://github.com/abruption/codex-unlock/issues/3)) ([a4d9315](https://github.com/abruption/codex-unlock/commit/a4d931518be2632a7014901933e3f3f41fedb257))
-
-## Changelog
-
-Notable changes to this project are recorded here by Release Please.
