@@ -46,9 +46,17 @@ native binaries for common macOS and Linux architectures.
 Node.js 26 is not currently supported because that dependency does not provide
 a compatible prebuilt binary.
 
-## Install from GitHub
+## Install
 
-Until the npm package is available, install directly from the repository:
+Install the published package globally from npm:
+
+```bash
+npm install --global codex-unlock
+codex-unlock --version
+codex-unlock --help
+```
+
+To install from source instead:
 
 ```bash
 git clone https://github.com/abruption/codex-unlock.git
