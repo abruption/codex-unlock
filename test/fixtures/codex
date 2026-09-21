@@ -1,16 +1,50 @@
 #!/usr/bin/env node
 
 import fs from "node:fs";
+import path from "node:path";
 
 import { flockSync } from "fs-ext-extra-prebuilt";
 
-const lockPath = process.argv[2];
-if (!lockPath) {
+const lockPaths = process.argv.slice(2);
+if (lockPaths.length === 0) {
   process.stderr.write("lock path required\n");
   process.exit(64);
 }
 
-const fd = fs.openSync(lockPath, "r+");
-flockSync(fd, "ex");
+const descriptors = [];
+function acquire(path) {
+  const fd = fs.openSync(path, "r+");
+  flockSync(fd, "ex");
+  descriptors.push(fd);
+}
+
+for (const lockPath of lockPaths) acquire(lockPath);
+
+if (process.env.CODEX_FIXTURE_DELAYED_LOCK) {
+  const delay = Number(process.env.CODEX_FIXTURE_DELAY_MS ?? "0");
+  setTimeout(() => acquire(process.env.CODEX_FIXTURE_DELAYED_LOCK), delay);
+}
+if (process.env.CODEX_FIXTURE_TITLE) {
+  const delay = Number(process.env.CODEX_FIXTURE_TITLE_DELAY_MS ?? "0");
+  setTimeout(() => {
+    process.title = process.env.CODEX_FIXTURE_TITLE;
+  }, delay);
+}
+if (
+  process.env.CODEX_FIXTURE_SIGTERM_MARKER ||
+  process.env.CODEX_FIXTURE_SIGTERM_BREAK_LOCK_PATH === "1"
+) {
+  process.on("SIGTERM", () => {
+    if (process.env.CODEX_FIXTURE_SIGTERM_MARKER) {
+      fs.writeFileSync(process.env.CODEX_FIXTURE_SIGTERM_MARKER, "terminated\n");
+    }
+    if (process.env.CODEX_FIXTURE_SIGTERM_BREAK_LOCK_PATH === "1") {
+      const lockDirectory = path.dirname(lockPaths[0]);
+      fs.renameSync(lockDirectory, `${lockDirectory}.moved`);
+      fs.writeFileSync(lockDirectory, "not a directory");
+    }
+    process.exit(0);
+  });
+}
 process.stdout.write("ready\n");
 setInterval(() => {}, 1_000);

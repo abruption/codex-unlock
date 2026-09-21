@@ -6,6 +6,7 @@ import type { LockProbe, PublicFileSnapshot } from "./types.js";
 import { errorText, publicSnapshot } from "./util.js";
 
 export interface LockFileObservation {
+  status: "present" | "absent" | "unknown";
   exists: boolean;
   regularFile: boolean | null;
   symlink: boolean | null;
@@ -19,6 +20,7 @@ export function observeLockFile(path: string): LockFileObservation {
     const value = lstatSync(path);
     const uid = process.getuid?.();
     return {
+      status: "present",
       exists: true,
       regularFile: value.isFile(),
       symlink: value.isSymbolicLink(),
@@ -28,6 +30,7 @@ export function observeLockFile(path: string): LockFileObservation {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return {
+        status: "absent",
         exists: false,
         regularFile: null,
         symlink: null,
@@ -36,6 +39,7 @@ export function observeLockFile(path: string): LockFileObservation {
       };
     }
     return {
+      status: "unknown",
       exists: false,
       regularFile: null,
       symlink: null,
@@ -53,6 +57,20 @@ function isContentionError(error: unknown): boolean {
 
 export function probeLock(path: string): LockProbe {
   const before = observeLockFile(path);
+  return probeObservedLock(path, before);
+}
+
+export function probeObservedLock(
+  path: string,
+  before: LockFileObservation,
+): LockProbe {
+  if (before.status === "unknown") {
+    return {
+      status: "unknown",
+      method: "flock_exclusive_nonblocking",
+      error: before.error ?? "lock file observation failed",
+    };
+  }
   if (!before.exists) {
     return { status: "free", method: "flock_exclusive_nonblocking" };
   }

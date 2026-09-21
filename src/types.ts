@@ -25,6 +25,14 @@ export interface LockProbe {
   error?: string;
 }
 
+export type ProcessObservationStatus = "present" | "absent" | "unknown";
+
+export interface ProcessStartObservation {
+  status: ProcessObservationStatus;
+  startTime: string | null;
+  error?: string;
+}
+
 export interface ProcessInfo {
   pid: number;
   ppid: number | null;
@@ -66,6 +74,7 @@ export interface TranscriptInspection {
 
 export interface LockInspection {
   path: string;
+  observation: "present" | "absent" | "unknown";
   exists: boolean;
   regularFile: boolean | null;
   symlink: boolean | null;
@@ -73,6 +82,7 @@ export interface LockInspection {
   snapshot: PublicFileSnapshot | null;
   stable: boolean | null;
   probe: LockProbe;
+  observationError?: string;
 }
 
 export interface InspectionResult {
@@ -120,6 +130,7 @@ export interface UnlockResult {
   pid: number | null;
   signalSent: "SIGTERM" | null;
   processExited: boolean | null;
+  processObservation: ProcessStartObservation | null;
   lockReleased: boolean;
   lockFileRemovedByTool: false;
   transcriptUnchanged: boolean | null;
