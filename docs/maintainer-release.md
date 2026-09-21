@@ -1,34 +1,55 @@
-# Maintainer release setup
+# Maintainer release guide
 
-This repository follows the `agy-cli-usage` release pattern: Conventional
-Commits feed Release Please, and merging its release pull request creates a tag
-and GitHub release. npm publication runs only when that release is created.
+The package is published at
+[`codex-unlock` on npm](https://www.npmjs.com/package/codex-unlock). Conventional
+Commits on `main` feed Release Please; merging its release pull request creates
+the version tag and GitHub release, which starts npm publication with
+provenance. The Release Please manifest records the latest released version.
 
-## One-time repository setup
+## Recurring release flow
 
-1. Add the npm automation token as the Actions repository secret `NPM_TOKEN`.
-   With GitHub CLI, run `gh secret set NPM_TOKEN --repo abruption/codex-unlock`
-   and paste the value at its prompt. Do not store it in this repository.
-2. In **Settings → Actions → General**, allow GitHub Actions to create pull
-   requests if the repository policy currently blocks Release Please.
-3. If branch protection is enabled, use these stable aggregate required checks:
-   `supported-tests`, `lint`, `security-audit`, and `package-smoke`.
+1. Merge focused Conventional Commit pull requests into `main` only after CI
+   passes.
+2. Review the Release Please pull request. It owns `package.json`,
+   `package-lock.json`, `.release-please-manifest.json`, and `CHANGELOG.md`.
+3. Merge that pull request to create the tag and GitHub release.
+4. Confirm the tagged release workflow passed `npm ci`, type checking, lint,
+   tests, package smoke, and `npm publish --provenance --access public`.
+5. Verify the GitHub release and npm version match, provenance is present, and
+   a clean global install passes `codex-unlock --version` and `--help`.
 
-The initially empty `.release-please-manifest.json` is intentional. The squash
-commit that introduces this automation carries `Release-As: 0.1.0`, so Release
-Please bootstraps the first release at `0.1.0` instead of inferring `1.0.0` from
-the existing package version. Its release pull request then updates the
-manifest, package versions, lockfile, and changelog together.
+The stable aggregate branch-protection checks are `supported-tests`, `lint`,
+`security-audit`, and `package-smoke`.
 
-## Release flow
+## npm publishing credential
 
-1. Merge Conventional Commit changes to `main`.
-2. Review and merge the Release Please pull request.
-3. The release workflow checks the tagged source, installs and exercises the
-   packed tarball, then runs `npm publish --provenance --access public`.
-4. Confirm the GitHub release, npm package version, provenance, and CLI install.
+Publication reads `NPM_TOKEN` only from the GitHub Actions repository secret.
+Never put a token in a file, command argument, issue, pull request, or log. To
+rotate it, create the replacement in npm, update the secret interactively with
+`gh secret set NPM_TOKEN --repo abruption/codex-unlock`, verify the next release,
+then revoke the previous token. A failed publication should be diagnosed and
+re-run from the existing release; do not create an unrelated version solely to
+retry credentials.
 
-Until `NPM_TOKEN` is configured, do not merge the Release Please pull request.
-Ordinary CI and release-PR preparation do not require the npm token.
-Before registry publication, users can install from a clone with `npm ci` and
-`npm link`; CI verifies that path independently of the packed npm artifact.
+## Installation verification
+
+The supported user installation is:
+
+```bash
+npm install --global codex-unlock
+codex-unlock --version
+codex-unlock --help
+```
+
+Clone installation with `npm ci` and `npm link` is retained for source
+development and is tested separately in CI. It is not a substitute for
+verifying the published npm artifact.
+
+## npm lifecycle contract
+
+`prepare` supports fresh-clone installation and is also the single lifecycle
+build used by direct packing and publication. `build` removes `dist/` before
+TypeScript compilation. `npm test` compiles once through `pretest`.
+`npm run smoke:package` compiles once, then its verifier calls `npm pack
+--ignore-scripts`; this prevents a nested second lifecycle build while still
+checking the exact allowlisted artifact and an isolated installation.

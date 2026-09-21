@@ -8,6 +8,7 @@ import {
   descendantPids,
   inspectLockOpeners,
   lockFilesOpenedByProcess,
+  originalProcessExited,
   processStartTime,
 } from "./process.js";
 import {
@@ -22,6 +23,7 @@ import type {
   InspectionResult,
   ListResult,
   ProcessInfo,
+  ProcessStartObservation,
   UnlockResult,
 } from "./types.js";
 import { SCHEMA_VERSION } from "./types.js";
@@ -59,14 +61,15 @@ function sameProcessIdentity(
 }
 
 function classify(
-  lockExists: boolean,
+  lockObservation: "present" | "absent" | "unknown",
   lockStable: boolean | null,
   probeStatus: "held" | "free" | "unknown",
   openers: ProcessInfo[],
   openerError: string | undefined,
   ownerIdentityStable: boolean | null,
 ): Classification {
-  if (!lockExists) {
+  if (lockObservation === "unknown") return "unknown";
+  if (lockObservation === "absent") {
     return lockStable === false ? "unknown" : "absent";
   }
   if (lockStable === false || probeStatus === "unknown") {
@@ -106,6 +109,7 @@ function evaluateSafety(
     addOnce(blockers, `classification_${result.classification}`);
   }
   if (!lock.exists) addOnce(blockers, "lock_file_absent");
+  if (lock.observation === "unknown") addOnce(blockers, "lock_file_observation_failed");
   if (lock.regularFile !== true) addOnce(blockers, "lock_file_not_regular");
   if (lock.symlink !== false) addOnce(blockers, "lock_file_symlink_or_unknown");
   if (lock.ownedByCurrentUser !== true) addOnce(blockers, "lock_file_wrong_owner");
@@ -183,7 +187,9 @@ export async function inspectThread(
   ]);
 
   const lockStable =
-    !lockBefore.exists && !lockAfter.exists
+    lockBefore.status === "unknown" || lockAfter.status === "unknown"
+      ? false
+      : !lockBefore.exists && !lockAfter.exists
       ? true
       : sameSnapshot(lockBefore.snapshot, lockAfter.snapshot);
   const candidatesStable =
@@ -205,7 +211,7 @@ export async function inspectThread(
   const openerError = openersBefore.error ?? openersAfter.error;
   const probeStable = probeBefore.status === probeAfter.status;
   const classification = classify(
-    lockAfter.exists,
+    lockAfter.status,
     lockStable && probeStable,
     probeAfter.status,
     openersAfter.processes,
@@ -218,7 +224,7 @@ export async function inspectThread(
   let ownerLockError: string | undefined;
   let descendants: number[] | null = null;
   if (owner) {
-    const lockFiles = await lockFilesOpenedByProcess(owner.pid, lockDirectory);
+    const lockFiles = await lockFilesOpenedByProcess(owner.pid, lockPath);
     ownerLockFiles = lockFiles.paths;
     ownerLockError = lockFiles.error;
     descendants = await descendantPids(owner.pid);
@@ -234,6 +240,7 @@ export async function inspectThread(
     classification,
     lock: {
       path: lockPath,
+      observation: lockAfter.status,
       exists: lockAfter.exists,
       regularFile: lockAfter.regularFile,
       symlink: lockAfter.symlink,
@@ -241,6 +248,7 @@ export async function inspectThread(
       snapshot: lockAfter.snapshot,
       stable: lockStable && probeStable,
       probe: probeAfter,
+      ...(lockAfter.error ? { observationError: lockAfter.error } : {}),
     },
     owner,
     openers: openersAfter.processes,
@@ -305,6 +313,25 @@ function unlockResult(
   };
 }
 
+function sameOwnerEvidence(before: ProcessInfo, after: ProcessInfo): boolean {
+  return (
+    before.pid === after.pid &&
+    before.ppid === after.ppid &&
+    before.uid === after.uid &&
+    before.startTime !== null &&
+    before.startTime === after.startTime &&
+    before.command === after.command &&
+    before.arguments === after.arguments &&
+    before.identityComplete === after.identityComplete &&
+    before.isCodex === after.isCodex &&
+    before.isSharedService === after.isSharedService
+  );
+}
+
+function sameStringArray(before: string[] | null, after: string[] | null): boolean {
+  return before !== null && after !== null && JSON.stringify(before) === JSON.stringify(after);
+}
+
 export async function unlockThread(
   rawThreadId: string,
   options: DoctorOptions = defaultOptions(),
@@ -320,6 +347,7 @@ export async function unlockThread(
       pid: null,
       signalSent: null,
       processExited: null,
+      processObservation: null,
       lockReleased: true,
       transcriptUnchanged: null,
       reasons: [inspection.classification],
@@ -332,6 +360,7 @@ export async function unlockThread(
       pid: inspection.owner?.pid ?? null,
       signalSent: null,
       processExited: null,
+      processObservation: null,
       lockReleased: false,
       transcriptUnchanged: null,
       reasons: inspection.blockers,
@@ -341,7 +370,7 @@ export async function unlockThread(
   const owner = inspection.owner;
   const transcriptPath = inspection.transcript.path;
   const revalidationReasons: string[] = [];
-  let beforeHash: string;
+  let beforeHash: string | null = null;
   try {
     const hashed = await stableFileHash(transcriptPath);
     beforeHash = hashed.hash;
@@ -350,23 +379,48 @@ export async function unlockThread(
     }
   } catch (error) {
     revalidationReasons.push(`transcript_hash_failed:${errorText(error)}`);
-    beforeHash = "";
   }
 
-  const [currentStart, currentProbe, currentOpeners] = await Promise.all([
-    processStartTime(owner.pid),
-    Promise.resolve(probeLock(inspection.lock.path)),
-    inspectLockOpeners(inspection.lock.path),
-  ]);
-  if (currentStart !== owner.startTime) revalidationReasons.push("owner_identity_changed");
-  if (currentProbe.status !== "held") revalidationReasons.push("lock_no_longer_held");
-  if (currentOpeners.error) revalidationReasons.push("lock_opener_lookup_failed");
+  const finalInspection = await inspectThread(rawThreadId, options);
+  if (!finalInspection.safeToUnlock) {
+    for (const blocker of finalInspection.blockers) {
+      revalidationReasons.push(`revalidation_${blocker}`);
+    }
+  }
+  if (!finalInspection.owner || !sameOwnerEvidence(owner, finalInspection.owner)) {
+    revalidationReasons.push("owner_identity_changed");
+  }
+  if (!sameSnapshot(inspection.lock.snapshot, finalInspection.lock.snapshot)) {
+    revalidationReasons.push("lock_file_changed");
+  }
   if (
-    currentOpeners.processes.length !== 1 ||
-    currentOpeners.processes[0].pid !== owner.pid ||
-    currentOpeners.processes[0].startTime !== owner.startTime
+    finalInspection.lock.probe.status !== "held" ||
+    finalInspection.lock.observation !== "present"
   ) {
-    revalidationReasons.push("lock_owner_changed");
+    revalidationReasons.push("lock_no_longer_held");
+  }
+  if (!sameStringArray(inspection.ownerLockFiles, finalInspection.ownerLockFiles)) {
+    revalidationReasons.push("owner_lock_set_changed");
+  }
+  if (
+    inspection.transcript.path !== finalInspection.transcript.path ||
+    !sameSnapshot(inspection.transcript.snapshot, finalInspection.transcript.snapshot) ||
+    !sameLastRecord(inspection.transcript.lastRecord, finalInspection.transcript.lastRecord)
+  ) {
+    revalidationReasons.push("transcript_changed_after_inspection");
+  }
+  if (finalInspection.transcript.path && beforeHash !== null) {
+    try {
+      const finalHash = await stableFileHash(finalInspection.transcript.path);
+      if (
+        finalHash.hash !== beforeHash ||
+        !sameSnapshot(finalHash.snapshot, finalInspection.transcript.snapshot)
+      ) {
+        revalidationReasons.push("transcript_changed_during_revalidation");
+      }
+    } catch (error) {
+      revalidationReasons.push(`transcript_revalidation_hash_failed:${errorText(error)}`);
+    }
   }
   if (revalidationReasons.length > 0) {
     return unlockResult(inspection, {
@@ -375,6 +429,7 @@ export async function unlockThread(
       pid: owner.pid,
       signalSent: null,
       processExited: null,
+      processObservation: null,
       lockReleased: false,
       transcriptUnchanged: null,
       reasons: unique(revalidationReasons),
@@ -390,6 +445,7 @@ export async function unlockThread(
       pid: owner.pid,
       signalSent: null,
       processExited: false,
+      processObservation: null,
       lockReleased: false,
       transcriptUnchanged: null,
       reasons: [`sigterm_failed:${errorText(error)}`],
@@ -397,16 +453,23 @@ export async function unlockThread(
   }
 
   const deadline = Date.now() + options.terminationTimeoutMs;
-  let processExited = false;
+  let processExited: boolean | null = false;
+  let processObservation: ProcessStartObservation = {
+    status: "present",
+    startTime: owner.startTime,
+  };
   let lockReleased = false;
+  let lastLockProbe = probeLock(inspection.lock.path);
   while (Date.now() <= deadline) {
-    const [startTime, lockProbe] = await Promise.all([
+    const [startObservation, lockProbe] = await Promise.all([
       processStartTime(owner.pid),
       Promise.resolve(probeLock(inspection.lock.path)),
     ]);
-    processExited = startTime === null || startTime !== owner.startTime;
+    processObservation = startObservation;
+    lastLockProbe = lockProbe;
+    processExited = originalProcessExited(owner.startTime!, startObservation);
     lockReleased = lockProbe.status === "free";
-    if (processExited && lockReleased) {
+    if (processExited === true && lockReleased) {
       break;
     }
     await delay(100);
@@ -420,10 +483,20 @@ export async function unlockThread(
   } catch (error) {
     reasons.push(`post_unlock_transcript_hash_failed:${errorText(error)}`);
   }
-  if (!processExited) reasons.push("owner_did_not_exit_before_timeout");
-  if (!lockReleased) reasons.push("lock_was_not_released");
+  if (processExited === null) {
+    reasons.push(`owner_exit_unknown:${processObservation.error ?? "process observation failed"}`);
+  } else if (!processExited) {
+    reasons.push("owner_did_not_exit_before_timeout");
+  }
+  if (!lockReleased) {
+    reasons.push(
+      lastLockProbe.status === "unknown"
+        ? `lock_release_unknown:${lastLockProbe.error ?? "lock probe failed"}`
+        : "lock_was_not_released",
+    );
+  }
 
-  const verified = processExited && lockReleased && transcriptUnchanged === true;
+  const verified = processExited === true && lockReleased && transcriptUnchanged === true;
   return unlockResult(inspection, {
     outcome: verified
       ? "unlocked"
@@ -434,6 +507,7 @@ export async function unlockThread(
     pid: owner.pid,
     signalSent: "SIGTERM",
     processExited,
+    processObservation,
     lockReleased,
     transcriptUnchanged,
     reasons,

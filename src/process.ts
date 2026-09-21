@@ -1,8 +1,14 @@
-import { access, realpath } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { access, lstat, realpath } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join } from "node:path";
 
-import type { ProcessInfo } from "./types.js";
-import { errorText, runCommand, unique } from "./util.js";
+import type { ProcessInfo, ProcessStartObservation } from "./types.js";
+import {
+  commandFailureText,
+  errorText,
+  runCommand,
+  type CommandResult,
+  unique,
+} from "./util.js";
 
 interface LsofProcess {
   pid: number;
@@ -24,7 +30,9 @@ async function findLsofExecutable(): Promise<string | null> {
         }
       }
       const result = await runCommand("lsof", ["-v"]);
-      return result.error?.code === "ENOENT" ? null : "lsof";
+      return result.failure?.kind === "spawn_error" && result.error?.code === "ENOENT"
+        ? null
+        : "lsof";
     })();
   }
   return await lsofExecutablePromise;
@@ -65,8 +73,9 @@ export async function findLockOpeners(
     return { processes: [], error: "lsof is not installed" };
   }
   const result = await runCommand(executable, ["-nP", "-F0pcu", "--", path]);
-  if (result.error) {
-    return { processes: [], error: errorText(result.error) };
+  const failure = commandFailureText(result);
+  if (failure) {
+    return { processes: [], error: failure };
   }
   const processes = parseLsofProcesses(result.stdout);
   if (result.status === 0 || (result.status === 1 && processes.length === 0)) {
@@ -78,17 +87,89 @@ export async function findLockOpeners(
   };
 }
 
-async function psField(pid: number, field: string): Promise<string | null> {
-  const result = await runCommand("ps", ["-p", String(pid), "-o", `${field}=`]);
-  if (result.status !== 0) {
-    return null;
-  }
-  const value = result.stdout.trim();
-  return value || null;
+interface ProcessFieldObservation {
+  status: "present" | "absent" | "unknown";
+  value: string | null;
+  error?: string;
 }
 
-export async function processStartTime(pid: number): Promise<string | null> {
-  return await psField(pid, "lstart");
+function commandStatusError(result: CommandResult, command: string): string {
+  const failure = commandFailureText(result);
+  if (failure) return failure;
+  return result.stderr.trim() || `${command} exited with status ${result.status}`;
+}
+
+async function psField(pid: number, field: string): Promise<ProcessFieldObservation> {
+  const result = await runCommand("ps", ["-p", String(pid), "-o", `${field}=`]);
+  if (commandFailureText(result)) {
+    return { status: "unknown", value: null, error: commandStatusError(result, "ps") };
+  }
+  const value = result.stdout.trim();
+  if (result.status === 0) {
+    return value
+      ? { status: "present", value }
+      : { status: "unknown", value: null, error: `ps returned empty ${field} output` };
+  }
+  if (result.status === 1 && value === "") {
+    return { status: "absent", value: null };
+  }
+  return { status: "unknown", value: null, error: commandStatusError(result, "ps") };
+}
+
+export function processStartTimeFromCommand(
+  result: CommandResult,
+): ProcessStartObservation {
+  const failure = commandFailureText(result);
+  if (failure) return { status: "unknown", startTime: null, error: failure };
+  const value = result.stdout.trim();
+  if (result.status === 1 && value === "") {
+    return { status: "absent", startTime: null };
+  }
+  if (result.status !== 0) {
+    return {
+      status: "unknown",
+      startTime: null,
+      error: commandStatusError(result, "ps"),
+    };
+  }
+  if (!value || Number.isNaN(Date.parse(value))) {
+    return {
+      status: "unknown",
+      startTime: null,
+      error: value ? "ps returned malformed process start time" : "ps returned empty process start time",
+    };
+  }
+  return { status: "present", startTime: value };
+}
+
+export async function processStartTime(pid: number): Promise<ProcessStartObservation> {
+  const result = await runCommand("ps", ["-p", String(pid), "-o", "lstart="]);
+  const observation = processStartTimeFromCommand(result);
+  if (observation.status !== "absent") return observation;
+  try {
+    process.kill(pid, 0);
+    return {
+      status: "unknown",
+      startTime: null,
+      error: "ps reported absence while the PID still exists",
+    };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return observation;
+    return {
+      status: "unknown",
+      startTime: null,
+      error: `could not confirm PID absence: ${errorText(error)}`,
+    };
+  }
+}
+
+export function originalProcessExited(
+  originalStartTime: string,
+  observation: ProcessStartObservation,
+): boolean | null {
+  if (observation.status === "unknown") return null;
+  return observation.status === "absent" || observation.startTime !== originalStartTime;
 }
 
 async function processCwd(pid: number): Promise<string | null> {
@@ -105,7 +186,7 @@ async function processCwd(pid: number): Promise<string | null> {
     return null;
   }
   const result = await runCommand(executable, ["-a", "-p", String(pid), "-d", "cwd", "-Fn"]);
-  if (result.status !== 0) {
+  if (commandFailureText(result) || result.status !== 0) {
     return null;
   }
   for (const token of result.stdout.split(/[\0\n]/)) {
@@ -127,19 +208,22 @@ function parseInteger(value: string | null): number | null {
 export async function inspectProcess(
   candidate: LsofProcess,
 ): Promise<ProcessInfo> {
-  const [ppidValue, uidValue, startTime, ttyValue, command, argumentsValue, cwd] =
+  const [ppidField, uidField, startTime, ttyField, commandField, argumentsField, cwd] =
     await Promise.all([
       psField(candidate.pid, "ppid"),
       psField(candidate.pid, "uid"),
-      psField(candidate.pid, "lstart"),
+      processStartTime(candidate.pid),
       psField(candidate.pid, "tty"),
       psField(candidate.pid, "comm"),
       psField(candidate.pid, "args"),
       processCwd(candidate.pid),
     ]);
-  const ppid = parseInteger(ppidValue);
-  const uid = parseInteger(uidValue);
+  const ppid = parseInteger(ppidField.value);
+  const uid = parseInteger(uidField.value);
+  const ttyValue = ttyField.value;
   const tty = ttyValue === "?" || ttyValue === "??" || ttyValue === "-" ? null : ttyValue;
+  const command = commandField.value;
+  const argumentsValue = argumentsField.value;
   const commandBase = command ? basename(command).toLowerCase() : "";
   const args = argumentsValue ?? null;
   const isCodex =
@@ -149,24 +233,28 @@ export async function inspectProcess(
     /(^|\/)codex(?:\s|$)/i.test(args ?? "");
   const isSharedService = /\b(?:app-server|remote-control|daemon)\b/i.test(args ?? "");
   const errors: string[] = [];
-  if (ppid === null) errors.push("ppid_unavailable");
-  if (uid === null) errors.push("uid_unavailable");
-  if (startTime === null) errors.push("start_time_unavailable");
-  if (command === null) errors.push("command_unavailable");
-  if (args === null) errors.push("arguments_unavailable");
+  if (ppid === null) errors.push(`ppid_${ppidField.status}${ppidField.error ? `:${ppidField.error}` : ""}`);
+  if (uid === null) errors.push(`uid_${uidField.status}${uidField.error ? `:${uidField.error}` : ""}`);
+  if (startTime.status !== "present") errors.push(`start_time_${startTime.status}${startTime.error ? `:${startTime.error}` : ""}`);
+  if (command === null) errors.push(`command_${commandField.status}${commandField.error ? `:${commandField.error}` : ""}`);
+  if (args === null) errors.push(`arguments_${argumentsField.status}${argumentsField.error ? `:${argumentsField.error}` : ""}`);
 
   return {
     pid: candidate.pid,
     ppid,
     uid,
-    startTime,
+    startTime: startTime.startTime,
     tty,
     command,
     arguments: args,
     cwd,
     lsofCommand: candidate.command,
     identityComplete:
-      ppid !== null && uid !== null && startTime !== null && command !== null && args !== null,
+      ppid !== null &&
+      uid !== null &&
+      startTime.status === "present" &&
+      command !== null &&
+      args !== null,
     isCodex,
     isSharedService,
     errors,
@@ -185,40 +273,65 @@ export async function inspectLockOpeners(
 
 export async function lockFilesOpenedByProcess(
   pid: number,
-  lockDirectory: string,
+  intendedLockPath: string,
 ): Promise<{ paths: string[]; error?: string }> {
   const executable = await findLsofExecutable();
   if (!executable) {
     return { paths: [], error: "lsof is not installed" };
   }
   const result = await runCommand(executable, ["-a", "-p", String(pid), "-Fn"]);
+  const failure = commandFailureText(result);
+  if (failure) {
+    return { paths: [], error: failure };
+  }
   if (result.status !== 0) {
     return {
       paths: [],
       error: result.stderr.trim() || `lsof exited with status ${result.status}`,
     };
   }
-  const wantedDirectory = await realpath(lockDirectory).catch(() => resolve(lockDirectory));
   const candidates = result.stdout
     .split(/[\0\n]/)
     .filter((token) => token.startsWith("n"))
     .map((token) => token.slice(1))
-    .filter((path) => /^[0-9a-f-]{36}\.lock$/i.test(basename(path)));
+    .filter((path) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.lock(?: \(deleted\))?$/i.test(basename(path)))
+    .filter((path) => basename(dirname(path)) === "thread-writer-locks");
+  let intendedCanonical: string;
+  try {
+    const intendedDirectory = await realpath(dirname(intendedLockPath));
+    intendedCanonical = join(intendedDirectory, basename(intendedLockPath));
+  } catch (error) {
+    return { paths: [], error: `intended lock directory is unresolved: ${errorText(error)}` };
+  }
   const paths: string[] = [];
   for (const path of candidates) {
-    const canonicalPath = await realpath(path).catch(() => resolve(path));
-    if (dirname(canonicalPath) === wantedDirectory) {
-      paths.push(join(lockDirectory, basename(path)));
+    if (path.endsWith(" (deleted)")) {
+      return { paths: [], error: `open lock path was deleted: ${path}` };
+    }
+    if (!isAbsolute(path)) {
+      return { paths: [], error: `lsof returned a relative lock path: ${path}` };
+    }
+    try {
+      const value = await lstat(path);
+      if (value.isSymbolicLink() || !value.isFile()) {
+        return { paths: [], error: `open lock path is a symlink or non-regular file: ${path}` };
+      }
+      const canonicalDirectory = await realpath(dirname(path));
+      const canonicalPath = join(canonicalDirectory, basename(path));
+      paths.push(canonicalPath === intendedCanonical ? intendedLockPath : canonicalPath);
+    } catch (error) {
+      return { paths: [], error: `open lock path is unresolved: ${errorText(error)}` };
     }
   }
   return { paths: unique(paths).sort() };
 }
 
-async function processTable(): Promise<Map<number, number>> {
+async function processTable(): Promise<Map<number, number> | null> {
   const result = await runCommand("ps", ["-axo", "pid=,ppid="]);
+  if (commandFailureText(result)) return null;
   const table = new Map<number, number>();
   if (result.status !== 0) {
-    return table;
+    return null;
   }
   for (const line of result.stdout.split("\n")) {
     const match = line.trim().match(/^(\d+)\s+(\d+)$/);
@@ -231,7 +344,7 @@ async function processTable(): Promise<Map<number, number>> {
 
 export async function descendantPids(pid: number): Promise<number[] | null> {
   const table = await processTable();
-  if (table.size === 0) {
+  if (table === null || table.size === 0) {
     return null;
   }
   const found: number[] = [];
@@ -250,7 +363,7 @@ export async function descendantPids(pid: number): Promise<number[] | null> {
 
 export async function currentProcessFamily(): Promise<Set<number> | null> {
   const table = await processTable();
-  if (table.size === 0) {
+  if (table === null || table.size === 0) {
     return null;
   }
   const family = new Set<number>();
