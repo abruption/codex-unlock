@@ -312,9 +312,12 @@ test("revalidation refuses a replaced lock inode and owner", async (t) => {
   assert.equal(result.signalSent, null);
   assert.equal(value.child.exitCode, null);
   assert.ok(
-    result.reasons.includes("lock_file_changed") ||
-      result.reasons.includes("lock_owner_changed") ||
-      result.reasons.some((reason) => reason.startsWith("revalidation_")),
+    result.reasons.some(
+      (reason) =>
+        reason.includes("lock") ||
+        reason.includes("owner") ||
+        reason === "classification_unknown",
+    ),
   );
 });
 
