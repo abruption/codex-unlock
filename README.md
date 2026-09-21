@@ -33,14 +33,22 @@ Lock-file existence is not treated as ownership. The tool independently:
 4. requires exactly one same-user Codex owner holding exactly one thread lock;
 5. requires the rollout's last record to be `event_msg/task_complete`;
 6. refuses shared `app-server`, Remote Control, and daemon owners;
-7. revalidates PID identity, the lock, and a SHA-256 transcript snapshot before
-   sending `SIGTERM`;
+7. repeats the complete safety inspection immediately before signaling,
+   including process identity, every open native thread lock across Codex
+   homes, lock inode/ownership, and the terminal transcript record;
 8. waits for process exit and actual lock release, then verifies that the
    transcript hash did not change.
 
 `unlock` never deletes lock files, never sends `SIGKILL`, and has no force flag.
 Any missing or ambiguous evidence fails closed. Persistent helper children are
 reported as warnings because only the lock-owning PID receives `SIGTERM`.
+Every `ps` and `lsof` subprocess has a deadline and bounded output; timeout,
+overflow, spawn, and parsing failures remain `unknown` evidence. The
+`--timeout-ms` option is separate and controls only the post-`SIGTERM` wait.
+
+There is an unavoidable interval between final validation and the signal
+system call. Eliminating that last race requires an owner-cooperative upstream
+handoff protocol; see the linked proposal below.
 
 Stale residue—an existing file with no actual OS lock—is reported but left in
 place. Codex itself removes stale lock files during its coordinated startup
@@ -109,4 +117,5 @@ The upstream handoff design proposed alongside this tool is preserved in
 
 Changes use Conventional Commits and are released through Release Please. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for contribution rules and
-[`docs/maintainer-release.md`](docs/maintainer-release.md) for repository setup.
+[`SECURITY.md`](SECURITY.md) for private vulnerability reporting. Maintainers
+can use [`docs/maintainer-release.md`](docs/maintainer-release.md) for releases.

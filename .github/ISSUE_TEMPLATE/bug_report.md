@@ -9,6 +9,12 @@ labels: bug
 
 <!-- What went wrong? -->
 
+<!--
+Security-sensitive behavior or unredacted diagnostics must not be posted here.
+Use https://github.com/abruption/codex-unlock/security/advisories/new and read
+SECURITY.md before reporting a vulnerability.
+-->
+
 ## Steps to reproduce
 
 1.
@@ -29,5 +35,6 @@ labels: bug
 
 ## Diagnostic output
 
-<!-- Prefer `inspect <thread-id> --json`. Redact usernames, paths, PIDs,
-process arguments, and transcript content before posting. Never post tokens. -->
+<!-- Prefer `inspect <thread-id> --json`. Redact usernames, paths, thread IDs,
+PIDs/PPIDs, process arguments, TTY/cwd, transcript data, environment variables,
+and tokens before posting. See SECURITY.md for private reporting. -->
