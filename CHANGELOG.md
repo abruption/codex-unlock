@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/abruption/codex-unlock/compare/v0.1.0...v0.1.1) (2026-09-21)
+
+
+### Bug Fixes
+
+* harden v0.1.1 lock recovery ([#21](https://github.com/abruption/codex-unlock/issues/21)) ([3e3d325](https://github.com/abruption/codex-unlock/commit/3e3d325f01deca3da740b51295119eee4d5e7e01))
+
 ## 0.1.0 (2026-09-15)
 
 
