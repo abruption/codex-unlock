@@ -57,6 +57,8 @@ try {
   const packageRoot = join(installDirectory, "node_modules", "codex-unlock");
   const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
   assert.equal(manifest.bin["codex-unlock"], "dist/cli.js");
+  assert.equal(manifest.scripts.prepare, "npm run build");
+  assert.equal(manifest.scripts.prepack, undefined);
   assert.match(
     readFileSync(resolve(packageRoot, manifest.bin["codex-unlock"]), "utf8"),
     /^#!\/usr\/bin\/env node/,
