@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/abruption/codex-unlock/blob/main/schemas/codex-unlock-v1.schema.json",
+  "title": "codex-unlock JSON v1",
+  "oneOf": [
+    { "$ref": "#/$defs/listResult" },
+    { "$ref": "#/$defs/inspectionResult" },
+    { "$ref": "#/$defs/unlockResult" },
+    { "$ref": "#/$defs/cliErrorResult" }
+  ],
+  "$defs": {
+    "commandName": {
+      "enum": ["list", "inspect", "unlock"]
+    },
+    "fileSnapshot": {
+      "type": "object",
+      "required": ["device", "inode", "mode", "uid", "links", "size", "modifiedAt", "modifiedMs"],
+      "properties": {
+        "device": { "type": "string" },
+        "inode": { "type": "string" },
+        "mode": { "type": "integer" },
+        "uid": { "type": "integer" },
+        "links": { "type": "integer", "minimum": 0 },
+        "size": { "type": "integer", "minimum": 0 },
+        "modifiedAt": { "type": "string" },
+        "modifiedMs": { "type": "number" }
+      }
+    },
+    "lockProbe": {
+      "type": "object",
+      "required": ["status", "method"],
+      "properties": {
+        "status": { "enum": ["held", "free", "unknown"] },
+        "method": { "const": "flock_exclusive_nonblocking" },
+        "error": { "type": "string" }
+      }
+    },
+    "processInfo": {
+      "type": "object",
+      "required": ["pid", "ppid", "uid", "startTime", "tty", "command", "arguments", "cwd", "lsofCommand", "identityComplete", "isCodex", "isSharedService", "errors"],
+      "properties": {
+        "pid": { "type": "integer", "minimum": 1 },
+        "ppid": { "type": ["integer", "null"], "minimum": 0 },
+        "uid": { "type": ["integer", "null"], "minimum": 0 },
+        "startTime": { "type": ["string", "null"] },
+        "tty": { "type": ["string", "null"] },
+        "command": { "type": ["string", "null"] },
+        "arguments": { "type": ["string", "null"] },
+        "cwd": { "type": ["string", "null"] },
+        "lsofCommand": { "type": ["string", "null"] },
+        "identityComplete": { "type": "boolean" },
+        "isCodex": { "type": "boolean" },
+        "isSharedService": { "type": "boolean" },
+        "errors": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "transcriptRecord": {
+      "type": "object",
+      "required": ["recordType", "eventType", "timestamp", "ordinal"],
+      "properties": {
+        "recordType": { "type": ["string", "null"] },
+        "eventType": { "type": ["string", "null"] },
+        "timestamp": { "type": ["string", "null"] },
+        "ordinal": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "transcriptInspection": {
+      "type": "object",
+      "required": ["status", "path", "candidates", "snapshot", "lastRecord", "stable"],
+      "properties": {
+        "status": { "enum": ["found", "missing", "ambiguous", "unreadable"] },
+        "path": { "type": ["string", "null"] },
+        "candidates": { "type": "array", "items": { "type": "string" } },
+        "snapshot": { "oneOf": [{ "$ref": "#/$defs/fileSnapshot" }, { "type": "null" }] },
+        "lastRecord": { "oneOf": [{ "$ref": "#/$defs/transcriptRecord" }, { "type": "null" }] },
+        "stable": { "type": ["boolean", "null"] },
+        "error": { "type": "string" }
+      }
+    },
+    "lockInspection": {
+      "type": "object",
+      "required": ["path", "observation", "exists", "regularFile", "symlink", "ownedByCurrentUser", "snapshot", "stable", "probe"],
+      "properties": {
+        "path": { "type": "string" },
+        "observation": { "enum": ["present", "absent", "unknown"] },
+        "exists": { "type": "boolean" },
+        "regularFile": { "type": ["boolean", "null"] },
+        "symlink": { "type": ["boolean", "null"] },
+        "ownedByCurrentUser": { "type": ["boolean", "null"] },
+        "snapshot": { "oneOf": [{ "$ref": "#/$defs/fileSnapshot" }, { "type": "null" }] },
+        "stable": { "type": ["boolean", "null"] },
+        "probe": { "$ref": "#/$defs/lockProbe" },
+        "observationError": { "type": "string" }
+      }
+    },
+    "inspectionResult": {
+      "type": "object",
+      "required": ["schemaVersion", "command", "inspectedAt", "codexHome", "threadId", "classification", "safeToUnlock", "blockers", "warnings", "lock", "owner", "openers", "ownerIdentityStable", "ownerLockFiles", "descendantPids", "transcript"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "command": { "const": "inspect" },
+        "inspectedAt": { "type": "string" },
+        "codexHome": { "type": "string" },
+        "threadId": { "type": "string" },
+        "classification": { "enum": ["absent", "stale_residue", "live_owner", "unknown"] },
+        "safeToUnlock": { "type": "boolean" },
+        "blockers": { "type": "array", "items": { "type": "string" } },
+        "warnings": { "type": "array", "items": { "type": "string" } },
+        "lock": { "$ref": "#/$defs/lockInspection" },
+        "owner": { "oneOf": [{ "$ref": "#/$defs/processInfo" }, { "type": "null" }] },
+        "openers": { "type": "array", "items": { "$ref": "#/$defs/processInfo" } },
+        "ownerIdentityStable": { "type": ["boolean", "null"] },
+        "ownerLockFiles": {
+          "oneOf": [
+            { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+            { "type": "null" }
+          ]
+        },
+        "descendantPids": {
+          "oneOf": [
+            { "type": "array", "items": { "type": "integer", "minimum": 1 }, "uniqueItems": true },
+            { "type": "null" }
+          ]
+        },
+        "transcript": { "$ref": "#/$defs/transcriptInspection" }
+      }
+    },
+    "listResult": {
+      "type": "object",
+      "required": ["schemaVersion", "command", "inspectedAt", "codexHome", "count", "sessions"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "command": { "const": "list" },
+        "inspectedAt": { "type": "string" },
+        "codexHome": { "type": "string" },
+        "count": { "type": "integer", "minimum": 0 },
+        "sessions": { "type": "array", "items": { "$ref": "#/$defs/inspectionResult" } }
+      }
+    },
+    "processStartObservation": {
+      "type": "object",
+      "required": ["status", "startTime"],
+      "properties": {
+        "status": { "enum": ["present", "absent", "unknown"] },
+        "startTime": { "type": ["string", "null"] },
+        "error": { "type": "string" }
+      }
+    },
+    "unlockResult": {
+      "type": "object",
+      "required": ["schemaVersion", "command", "attemptedAt", "threadId", "outcome", "changed", "pid", "signalSent", "processExited", "processObservation", "lockReleased", "lockFileRemovedByTool", "transcriptUnchanged", "reasons", "inspection"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "command": { "const": "unlock" },
+        "attemptedAt": { "type": "string" },
+        "threadId": { "type": "string" },
+        "outcome": { "enum": ["unlocked", "not_locked", "refused", "termination_failed", "verification_failed"] },
+        "changed": { "type": "boolean" },
+        "pid": { "type": ["integer", "null"], "minimum": 1 },
+        "signalSent": { "enum": ["SIGTERM", null] },
+        "processExited": { "type": ["boolean", "null"] },
+        "processObservation": { "oneOf": [{ "$ref": "#/$defs/processStartObservation" }, { "type": "null" }] },
+        "lockReleased": { "type": "boolean" },
+        "lockFileRemovedByTool": { "const": false },
+        "transcriptUnchanged": { "type": ["boolean", "null"] },
+        "reasons": { "type": "array", "items": { "type": "string" } },
+        "inspection": { "$ref": "#/$defs/inspectionResult" }
+      }
+    },
+    "cliErrorResult": {
+      "type": "object",
+      "required": ["schemaVersion", "command", "status", "error", "errorCode", "exitCode", "retryable", "suggestedAction"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "command": {
+          "oneOf": [
+            { "$ref": "#/$defs/commandName" },
+            { "type": "null" }
+          ]
+        },
+        "status": { "const": "error" },
+        "error": { "type": "string" },
+        "errorCode": { "enum": ["invalid_usage", "command_failed"] },
+        "exitCode": { "enum": [3, 64] },
+        "retryable": { "type": "boolean" },
+        "suggestedAction": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

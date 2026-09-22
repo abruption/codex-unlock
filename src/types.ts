@@ -1,5 +1,20 @@
 export const SCHEMA_VERSION = 1;
 
+export type CommandName = "list" | "inspect" | "unlock";
+
+export type CliErrorCode = "invalid_usage" | "command_failed";
+
+export interface CliErrorResult {
+  schemaVersion: typeof SCHEMA_VERSION;
+  command: CommandName | null;
+  status: "error";
+  error: string;
+  errorCode: CliErrorCode;
+  exitCode: 3 | 64;
+  retryable: boolean;
+  suggestedAction: string | null;
+}
+
 export type Classification =
   | "absent"
   | "stale_residue"

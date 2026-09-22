@@ -22,6 +22,12 @@ npx codex-unlock unlock 01a089e8-3731-7202-ba68-0f4b0a3b2711
 
 Add `--json` to any command for a stable, versioned JSON result.
 
+The supported automation surface is the CLI and its `schemaVersion: 1` JSON
+output. The package does not expose a JavaScript library API; imports of
+generated `dist/` modules are intentionally unsupported and blocked by package
+exports. See the [JSON v1 contract](docs/json-v1.md) for field, error, and exit
+code compatibility rules.
+
 ## Safety model
 
 Lock-file existence is not treated as ownership. The tool independently:
@@ -101,6 +107,11 @@ versions omit the build-time dependencies while preparing a Git package.
 - `2`: unlock refused because the evidence was not safe
 - `3`: termination or post-unlock verification failed
 - `64`: invalid command-line usage
+
+With `--json`, stdout is always one JSON value and human diagnostics are not
+mixed into stderr. Usage and command failures retain the top-level string
+`error` field for compatibility and add a stable `errorCode`, `exitCode`, and
+`schemaVersion`.
 
 ## Development
 
