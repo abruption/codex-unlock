@@ -2,6 +2,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import readline from "node:readline";
 
 import { flockSync } from "fs-ext-extra-prebuilt";
 
@@ -20,16 +21,14 @@ function acquire(path) {
 
 for (const lockPath of lockPaths) acquire(lockPath);
 
-if (process.env.CODEX_FIXTURE_DELAYED_LOCK) {
-  const delay = Number(process.env.CODEX_FIXTURE_DELAY_MS ?? "0");
-  setTimeout(() => acquire(process.env.CODEX_FIXTURE_DELAYED_LOCK), delay);
-}
-if (process.env.CODEX_FIXTURE_TITLE) {
-  const delay = Number(process.env.CODEX_FIXTURE_TITLE_DELAY_MS ?? "0");
-  setTimeout(() => {
-    process.title = process.env.CODEX_FIXTURE_TITLE;
-  }, delay);
-}
+const commands = readline.createInterface({ input: process.stdin });
+commands.on("line", (line) => {
+  const command = JSON.parse(line);
+  if (command.action === "acquire") acquire(command.path);
+  else if (command.action === "title") process.title = command.value;
+  else throw new Error(`unknown fixture command: ${command.action}`);
+  process.stdout.write(`ack:${command.id}\n`);
+});
 if (
   process.env.CODEX_FIXTURE_SIGTERM_MARKER ||
   process.env.CODEX_FIXTURE_SIGTERM_BREAK_LOCK_PATH === "1"

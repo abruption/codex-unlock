@@ -4,11 +4,16 @@ import { chmod, link, mkdir, mkdtemp, rename, unlink, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import process from "node:process";
-import { clearTimeout, setTimeout } from "node:timers";
+import { setTimeout as delay } from "node:timers/promises";
 import { spawn } from "node:child_process";
 import test from "node:test";
 
-import { inspectThread, unlockThread } from "../dist/doctor.js";
+import { acquireUnlockLease } from "../dist/coordination.js";
+import {
+  inspectThread,
+  unlockInspectedThread,
+  unlockThread,
+} from "../dist/doctor.js";
 import { parseLsofProcesses } from "../dist/process.js";
 
 const THREAD_ID = "01a089e8-3731-7202-ba68-0f4b0a3b2711";
@@ -39,7 +44,7 @@ async function fixture(lastEvent = "task_complete", settings = {}) {
   await chmod(OWNER_FIXTURE, 0o755);
   const child = spawn(OWNER_FIXTURE, [lockPath, ...(settings.additionalLockPaths ?? [])], {
     env: { ...process.env, ...(settings.ownerEnv ?? {}) },
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["pipe", "pipe", "pipe"],
   });
   child.stdout.setEncoding("utf8");
   await new Promise((resolveReady, reject) => {
@@ -57,6 +62,24 @@ async function fixture(lastEvent = "task_complete", settings = {}) {
     child,
     options: { codexHome, stabilityMs: 50, terminationTimeoutMs: 3_000 },
   };
+}
+
+let ownerCommandId = 0;
+async function commandOwner(child, command) {
+  ownerCommandId += 1;
+  const id = ownerCommandId;
+  const acknowledged = new Promise((resolveAcknowledged, reject) => {
+    const onData = (chunk) => {
+      if (chunk.includes(`ack:${id}`)) {
+        child.stdout.off("data", onData);
+        resolveAcknowledged();
+      }
+    };
+    child.stdout.on("data", onData);
+    child.once("exit", (code) => reject(new Error(`owner exited before command ${id}: ${code}`)));
+  });
+  child.stdin.write(`${JSON.stringify({ id, ...command })}\n`);
+  await acknowledged;
 }
 
 async function otherLockPath(root, label = "other") {
@@ -91,6 +114,18 @@ async function runCli(args, env = process.env) {
   });
   const [code, signal] = await once(child, "exit");
   return { code, signal, stdout, stderr };
+}
+
+async function waitForUnlockLeaseContention(codexHome, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const attempt = acquireUnlockLease(codexHome, THREAD_ID);
+    if (attempt.status === "contended") return;
+    if (attempt.status === "acquired") attempt.lease.release();
+    else throw new Error(`could not observe unlock lease: ${attempt.reason}`);
+    await delay(25);
+  }
+  throw new Error("timed out waiting for the first unlock lease");
 }
 
 test("parses null-delimited lsof process fields", () => {
@@ -226,17 +261,14 @@ test("fails closed when an open lock path cannot be resolved", async (t) => {
 test("revalidation refuses a transcript record appended before SIGTERM", async (t) => {
   const value = await fixture();
   t.after(async () => await stopChild(value.child));
-  const options = { ...value.options, stabilityMs: 1_000 };
-  const mutation = setTimeout(async () => {
-    await writeFile(
-      value.transcriptPath,
-      `${JSON.stringify({ type: "event_msg", payload: { type: "task_started" } })}\n`,
-      { flag: "a" },
-    );
-  }, 1_400);
-  t.after(() => clearTimeout(mutation));
+  const inspection = await inspectThread(THREAD_ID, value.options);
+  await writeFile(
+    value.transcriptPath,
+    `${JSON.stringify({ type: "event_msg", payload: { type: "task_started" } })}\n`,
+    { flag: "a" },
+  );
 
-  const result = await unlockThread(THREAD_ID, options);
+  const result = await unlockInspectedThread(inspection, value.options);
   assert.equal(result.outcome, "refused");
   assert.equal(result.signalSent, null);
   assert.equal(value.child.exitCode, null);
@@ -246,18 +278,12 @@ test("revalidation refuses a transcript record appended before SIGTERM", async (
 test("revalidation refuses a newly acquired lock in another home", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "codex-unlock-delayed-lock-test-"));
   const extraLock = await otherLockPath(root);
-  const value = await fixture("task_complete", {
-    ownerEnv: {
-      CODEX_FIXTURE_DELAYED_LOCK: extraLock,
-      CODEX_FIXTURE_DELAY_MS: "1400",
-    },
-  });
+  const value = await fixture();
   t.after(async () => await stopChild(value.child));
+  const inspection = await inspectThread(THREAD_ID, value.options);
+  await commandOwner(value.child, { action: "acquire", path: extraLock });
 
-  const result = await unlockThread(THREAD_ID, {
-    ...value.options,
-    stabilityMs: 1_000,
-  });
+  const result = await unlockInspectedThread(inspection, value.options);
   assert.equal(result.outcome, "refused");
   assert.equal(result.signalSent, null);
   assert.equal(value.child.exitCode, null);
@@ -268,18 +294,15 @@ test("revalidation refuses a newly acquired lock in another home", async (t) => 
 });
 
 test("revalidation refuses changed process arguments", async (t) => {
-  const value = await fixture("task_complete", {
-    ownerEnv: {
-      CODEX_FIXTURE_TITLE: "not-the-original-codex-owner",
-      CODEX_FIXTURE_TITLE_DELAY_MS: "1400",
-    },
-  });
+  const value = await fixture();
   t.after(async () => await stopChild(value.child));
-
-  const result = await unlockThread(THREAD_ID, {
-    ...value.options,
-    stabilityMs: 1_000,
+  const inspection = await inspectThread(THREAD_ID, value.options);
+  await commandOwner(value.child, {
+    action: "title",
+    value: "not-the-original-codex-owner",
   });
+
+  const result = await unlockInspectedThread(inspection, value.options);
   assert.equal(result.outcome, "refused");
   assert.equal(result.signalSent, null);
   assert.equal(value.child.exitCode, null);
@@ -293,24 +316,28 @@ test("revalidation refuses a replaced lock inode and owner", async (t) => {
     if (replacementOwner.child) await stopChild(replacementOwner.child);
     await stopChild(value.child);
   });
-  const mutation = setTimeout(async () => {
-    await rename(value.lockPath, `${value.lockPath}.old`);
-    await writeFile(value.lockPath, "");
-    const child = spawn(OWNER_FIXTURE, [value.lockPath], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    replacementOwner.child = child;
-    child.stdout.resume();
-  }, 1_400);
-  t.after(() => clearTimeout(mutation));
-
-  const result = await unlockThread(THREAD_ID, {
-    ...value.options,
-    stabilityMs: 1_000,
+  const inspection = await inspectThread(THREAD_ID, value.options);
+  await rename(value.lockPath, `${value.lockPath}.old`);
+  await writeFile(value.lockPath, "");
+  const child = spawn(OWNER_FIXTURE, [value.lockPath], {
+    stdio: ["ignore", "pipe", "pipe"],
   });
+  replacementOwner.child = child;
+  child.stdout.setEncoding("utf8");
+  await new Promise((resolveReady, reject) => {
+    child.stdout.once("data", (chunk) => {
+      if (chunk.includes("ready")) resolveReady();
+      else reject(new Error(`unexpected replacement output: ${chunk}`));
+    });
+    child.once("error", reject);
+    child.once("exit", (code) => reject(new Error(`replacement exited early: ${code}`)));
+  });
+
+  const result = await unlockInspectedThread(inspection, value.options);
   assert.equal(result.outcome, "refused");
   assert.equal(result.signalSent, null);
   assert.equal(value.child.exitCode, null);
+  assert.equal(replacementOwner.child.exitCode, null);
   assert.ok(
     result.reasons.some(
       (reason) =>
@@ -319,6 +346,59 @@ test("revalidation refuses a replaced lock inode and owner", async (t) => {
         reason === "classification_unknown",
     ),
   );
+});
+
+test("concurrent CLI unlock attempts send at most one SIGTERM", async (t) => {
+  const value = await fixture();
+  t.after(async () => await stopChild(value.child));
+  const firstArgs = [
+    "unlock",
+    THREAD_ID,
+    "--json",
+    "--codex-home",
+    value.codexHome,
+    "--stability-ms",
+    "1000",
+  ];
+  const competingArgs = [...firstArgs.slice(0, -1), "250"];
+  const first = runCli(firstArgs);
+  await waitForUnlockLeaseContention(value.codexHome);
+  const invocations = await Promise.all([first, runCli(competingArgs)]);
+  const results = invocations.map((invocation) => JSON.parse(invocation.stdout));
+  const signaled = results.filter((result) => result.signalSent === "SIGTERM");
+
+  assert.equal(signaled.length, 1, JSON.stringify(results, null, 2));
+  assert.equal(signaled[0].outcome, "unlocked", JSON.stringify(results, null, 2));
+  const competing = results.find((result) => result.signalSent === null);
+  assert.equal(competing?.outcome, "refused", JSON.stringify(results, null, 2));
+  assert.deepEqual(competing?.reasons, ["concurrent_unlock_in_progress"]);
+});
+
+test("coordination failure refuses without signaling the safe owner", async (t) => {
+  const value = await fixture();
+  t.after(async () => await stopChild(value.child));
+  const runtimeDirectory = await mkdtemp(join(tmpdir(), "codex-unlock-public-runtime-"));
+  await chmod(runtimeDirectory, 0o755);
+
+  const result = await runCli(
+    [
+      "unlock",
+      THREAD_ID,
+      "--json",
+      "--codex-home",
+      value.codexHome,
+      "--stability-ms",
+      "250",
+    ],
+    { ...process.env, XDG_RUNTIME_DIR: runtimeDirectory },
+  );
+  const parsed = JSON.parse(result.stdout);
+
+  assert.equal(result.code, 2);
+  assert.equal(parsed.outcome, "refused");
+  assert.equal(parsed.signalSent, null);
+  assert.ok(parsed.reasons[0].startsWith("unlock_coordination_failed:"));
+  assert.equal(value.child.exitCode, null);
 });
 
 test("process inspection failure cannot produce a successful unlock", async (t) => {

@@ -45,6 +45,12 @@ Lock-file existence is not treated as ownership. The tool independently:
 8. waits for process exit and actual lock release, then verifies that the
    transcript hash did not change.
 
+Before a safe candidate can reach the final revalidation and signal, `unlock`
+also acquires a private same-user advisory operation lease keyed by the
+canonical Codex home and thread UUID. A concurrent `unlock` is refused; the
+coordination file is outside Codex native lock paths and its existence is never
+treated as lock evidence. Unsafe and already-unlocked cases do not create it.
+
 `unlock` never deletes lock files, never sends `SIGKILL`, and has no force flag.
 Any missing or ambiguous evidence fails closed. Persistent helper children are
 reported as warnings because only the lock-owning PID receives `SIGTERM`.
