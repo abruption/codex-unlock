@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0](https://github.com/abruption/codex-unlock/compare/v0.1.1...v0.2.0) (2026-09-22)
+
+
+### Features
+
+* define CLI JSON integration contract ([#31](https://github.com/abruption/codex-unlock/issues/31)) ([6ffa738](https://github.com/abruption/codex-unlock/commit/6ffa738fff6969834df6a3c4481fd3e608edd9c7))
+
+
+### Bug Fixes
+
+* serialize concurrent unlock attempts ([#35](https://github.com/abruption/codex-unlock/issues/35)) ([7a8e113](https://github.com/abruption/codex-unlock/commit/7a8e113e5c64ff7f6f58053ac07cde5d485e3b83))
+
 ## [0.1.1](https://github.com/abruption/codex-unlock/compare/v0.1.0...v0.1.1) (2026-09-21)
 
 
