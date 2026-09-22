@@ -6,9 +6,13 @@
   "bin": {
     "codex-unlock": "dist/cli.js"
   },
+  "exports": {
+    "./package.json": "./package.json"
+  },
   "files": [
     "dist/**/*.js",
-    "dist/**/*.d.ts",
+    "schemas/**/*.json",
+    "docs/json-v1.md",
     "docs/upstream-handoff-proposal.md",
     "README.md",
     "CHANGELOG.md",
@@ -57,6 +61,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.15.0",
+    "ajv": "^8.20.0",
     "eslint": "^10.0.1",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.62.1"

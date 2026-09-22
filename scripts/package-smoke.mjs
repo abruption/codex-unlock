@@ -22,7 +22,7 @@ try {
   const [packed] = JSON.parse(
     npm(["pack", "--json", "--ignore-scripts", "--pack-destination", directory]),
   );
-  const publicFile = /^(dist\/.+\.(?:js|d\.ts)|package\.json|README\.md|CHANGELOG\.md|LICENSE|docs\/upstream-handoff-proposal\.md)$/;
+  const publicFile = /^(dist\/.+\.js|package\.json|README\.md|CHANGELOG\.md|LICENSE|schemas\/codex-unlock-v1\.schema\.json|docs\/(?:json-v1|upstream-handoff-proposal)\.md)$/;
   assert.ok(
     packed.files.every(({ path }) => publicFile.test(path)),
     "Package must contain only runtime JS/types and public documentation",
@@ -30,7 +30,8 @@ try {
   for (const path of [
     "dist/cli.js",
     "dist/doctor.js",
-    "dist/doctor.d.ts",
+    "schemas/codex-unlock-v1.schema.json",
+    "docs/json-v1.md",
     "docs/upstream-handoff-proposal.md",
   ]) {
     assert.ok(
@@ -57,6 +58,9 @@ try {
   const packageRoot = join(installDirectory, "node_modules", "codex-unlock");
   const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
   assert.equal(manifest.bin["codex-unlock"], "dist/cli.js");
+  assert.deepEqual(manifest.exports, { "./package.json": "./package.json" });
+  assert.equal(manifest.main, undefined);
+  assert.equal(manifest.types, undefined);
   assert.equal(manifest.scripts.prepare, "npm run build");
   assert.equal(manifest.scripts.prepack, undefined);
   assert.match(
@@ -70,6 +74,28 @@ try {
   assert.match(
     npm(["exec", "--offline", "--", "codex-unlock", "--help"], installDirectory),
     /codex-unlock/,
+  );
+  const jsonOutput = npm(
+    ["exec", "--offline", "--", "codex-unlock", "list", "--json", "--codex-home", join(directory, "empty-home")],
+    installDirectory,
+  );
+  assert.equal(JSON.parse(jsonOutput).schemaVersion, 1);
+
+  assert.throws(
+    () => execFileSync(
+      process.execPath,
+      ["--input-type=module", "--eval", "await import('codex-unlock')"],
+      { cwd: installDirectory, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    ),
+    (error) => error?.stderr?.includes("ERR_PACKAGE_PATH_NOT_EXPORTED"),
+  );
+  assert.throws(
+    () => execFileSync(
+      process.execPath,
+      ["--input-type=module", "--eval", "await import('codex-unlock/dist/doctor.js')"],
+      { cwd: installDirectory, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    ),
+    (error) => error?.stderr?.includes("ERR_PACKAGE_PATH_NOT_EXPORTED"),
   );
   log("Packed artifact installs and passes help/version checks.");
 } finally {

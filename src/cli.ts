@@ -4,7 +4,16 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { defaultOptions, inspectThread, listThreads, unlockThread } from "./doctor.js";
-import type { DoctorOptions, InspectionResult, ListResult, UnlockResult } from "./types.js";
+import {
+  SCHEMA_VERSION,
+  type CliErrorCode,
+  type CliErrorResult,
+  type CommandName,
+  type DoctorOptions,
+  type InspectionResult,
+  type ListResult,
+  type UnlockResult,
+} from "./types.js";
 import { errorText } from "./util.js";
 
 const HELP = `codex-unlock - diagnose and safely release Codex thread writer locks
@@ -30,10 +39,36 @@ Safety:
 `;
 
 interface ParsedArguments {
-  command: "list" | "inspect" | "unlock";
+  command: CommandName;
   threadId?: string;
   json: boolean;
   options: DoctorOptions;
+}
+
+function requestedCommand(argv: string[]): CommandName | null {
+  const candidate = argv[0];
+  return candidate === "list" || candidate === "inspect" || candidate === "unlock"
+    ? candidate
+    : null;
+}
+
+function cliError(
+  command: CommandName | null,
+  errorCode: CliErrorCode,
+  exitCode: 3 | 64,
+  message: string,
+): CliErrorResult {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    command,
+    status: "error",
+    error: message,
+    errorCode,
+    exitCode,
+    retryable: false,
+    suggestedAction:
+      errorCode === "invalid_usage" ? "Run codex-unlock --help for usage." : null,
+  };
 }
 
 function packageVersion(): string {
@@ -176,7 +211,18 @@ async function main(): Promise<number> {
   } catch (error) {
     const wantsJson = process.argv.includes("--json");
     if (wantsJson) {
-      console.log(JSON.stringify({ error: errorText(error) }, null, 2));
+      console.log(
+        JSON.stringify(
+          cliError(
+            requestedCommand(process.argv.slice(2)),
+            "invalid_usage",
+            64,
+            errorText(error),
+          ),
+          null,
+          2,
+        ),
+      );
     } else {
       console.error(`codex-unlock: ${errorText(error)}`);
       console.error("Run codex-unlock --help for usage.");
@@ -213,11 +259,17 @@ async function main(): Promise<number> {
     return 3;
   } catch (error) {
     if (parsed.json) {
-      console.log(JSON.stringify({ error: errorText(error) }, null, 2));
+      console.log(
+        JSON.stringify(
+          cliError(parsed.command, "command_failed", 3, errorText(error)),
+          null,
+          2,
+        ),
+      );
     } else {
       console.error(`codex-unlock: ${errorText(error)}`);
     }
-    return 1;
+    return 3;
   }
 }
 
