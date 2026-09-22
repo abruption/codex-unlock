@@ -151,6 +151,13 @@ revalidated-evidence type can reach the narrow SIGTERM function. These modules
 are review and test boundaries, not a supported JavaScript API; automation
 should continue to use the CLI's versioned JSON output.
 
+Any advisory update feature must remain outside those safety boundaries. Its
+cache, registry request, single-flight lease, privacy limits, CI/TTY policy,
+and failure isolation are specified in the
+[`update metadata security contract`](docs/update-security.md). The contract
+does not permit synchronous network access from `list`, `inspect`, or
+`unlock`, and it does not permit automatic self-update.
+
 The upstream handoff design proposed alongside this tool is preserved in
 [`docs/upstream-handoff-proposal.md`](docs/upstream-handoff-proposal.md).
 
