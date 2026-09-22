@@ -129,6 +129,14 @@ npm test
 npm run smoke:package
 ```
 
+Runtime responsibilities are kept in focused internal modules: `inspection`
+collects stable OS and transcript evidence, `policy` makes a pure fail-closed
+authorization decision, and `unlock` owns the advisory operation lease,
+complete revalidation, signaling, and post-signal verification. Only a private
+revalidated-evidence type can reach the narrow SIGTERM function. These modules
+are review and test boundaries, not a supported JavaScript API; automation
+should continue to use the CLI's versioned JSON output.
+
 The upstream handoff design proposed alongside this tool is preserved in
 [`docs/upstream-handoff-proposal.md`](docs/upstream-handoff-proposal.md).
 
