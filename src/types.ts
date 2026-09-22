@@ -1,6 +1,6 @@
 export const SCHEMA_VERSION = 1;
 
-export type CommandName = "list" | "inspect" | "unlock";
+export type CommandName = "list" | "inspect" | "unlock" | "check-update";
 
 export type CliErrorCode = "invalid_usage" | "command_failed";
 
@@ -13,6 +13,28 @@ export interface CliErrorResult {
   exitCode: 3 | 64;
   retryable: boolean;
   suggestedAction: string | null;
+}
+
+export interface ClientUpdate {
+  schemaVersion: 1;
+  source: "npm";
+  currentVersion: string;
+  latestVersion: string;
+  checkedAt: string;
+  updateAvailable: true;
+  updateCommand: string;
+}
+
+export interface CheckUpdateResult {
+  schemaVersion: typeof SCHEMA_VERSION;
+  command: "check-update";
+  status: "ok";
+  source: "npm";
+  currentVersion: string;
+  latestVersion: string;
+  checkedAt: string;
+  updateAvailable: boolean;
+  updateCommand: string;
 }
 
 export type Classification =

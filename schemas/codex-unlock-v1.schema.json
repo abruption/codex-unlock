@@ -6,11 +6,25 @@
     { "$ref": "#/$defs/listResult" },
     { "$ref": "#/$defs/inspectionResult" },
     { "$ref": "#/$defs/unlockResult" },
+    { "$ref": "#/$defs/checkUpdateResult" },
     { "$ref": "#/$defs/cliErrorResult" }
   ],
   "$defs": {
     "commandName": {
-      "enum": ["list", "inspect", "unlock"]
+      "enum": ["list", "inspect", "unlock", "check-update"]
+    },
+    "clientUpdate": {
+      "type": "object",
+      "required": ["schemaVersion", "source", "currentVersion", "latestVersion", "checkedAt", "updateAvailable", "updateCommand"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "source": { "const": "npm" },
+        "currentVersion": { "type": "string" },
+        "latestVersion": { "type": "string" },
+        "checkedAt": { "type": "string" },
+        "updateAvailable": { "const": true },
+        "updateCommand": { "type": "string" }
+      }
     },
     "fileSnapshot": {
       "type": "object",
@@ -122,7 +136,8 @@
             { "type": "null" }
           ]
         },
-        "transcript": { "$ref": "#/$defs/transcriptInspection" }
+        "transcript": { "$ref": "#/$defs/transcriptInspection" },
+        "clientUpdate": { "$ref": "#/$defs/clientUpdate" }
       }
     },
     "listResult": {
@@ -134,7 +149,8 @@
         "inspectedAt": { "type": "string" },
         "codexHome": { "type": "string" },
         "count": { "type": "integer", "minimum": 0 },
-        "sessions": { "type": "array", "items": { "$ref": "#/$defs/inspectionResult" } }
+        "sessions": { "type": "array", "items": { "$ref": "#/$defs/inspectionResult" } },
+        "clientUpdate": { "$ref": "#/$defs/clientUpdate" }
       }
     },
     "processStartObservation": {
@@ -164,7 +180,23 @@
         "lockFileRemovedByTool": { "const": false },
         "transcriptUnchanged": { "type": ["boolean", "null"] },
         "reasons": { "type": "array", "items": { "type": "string" } },
-        "inspection": { "$ref": "#/$defs/inspectionResult" }
+        "inspection": { "$ref": "#/$defs/inspectionResult" },
+        "clientUpdate": { "$ref": "#/$defs/clientUpdate" }
+      }
+    },
+    "checkUpdateResult": {
+      "type": "object",
+      "required": ["schemaVersion", "command", "status", "source", "currentVersion", "latestVersion", "checkedAt", "updateAvailable", "updateCommand"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "command": { "const": "check-update" },
+        "status": { "const": "ok" },
+        "source": { "const": "npm" },
+        "currentVersion": { "type": "string" },
+        "latestVersion": { "type": "string" },
+        "checkedAt": { "type": "string" },
+        "updateAvailable": { "type": "boolean" },
+        "updateCommand": { "type": "string" }
       }
     },
     "cliErrorResult": {
@@ -183,7 +215,8 @@
         "errorCode": { "enum": ["invalid_usage", "command_failed"] },
         "exitCode": { "enum": [3, 64] },
         "retryable": { "type": "boolean" },
-        "suggestedAction": { "type": ["string", "null"] }
+        "suggestedAction": { "type": ["string", "null"] },
+        "clientUpdate": { "$ref": "#/$defs/clientUpdate" }
       }
     }
   }
