@@ -52,6 +52,25 @@ try {
     "Package contents must match the explicit public artifact allowlist",
   );
 
+  const cacheDirectory = join(directory, "npm-cache");
+  const primeDirectory = join(directory, "cache-prime");
+  mkdirSync(primeDirectory);
+  npm(
+    [
+      "install",
+      "--prefix",
+      primeDirectory,
+      "--cache",
+      cacheDirectory,
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      join(directory, packed.filename),
+    ],
+    primeDirectory,
+  );
+  rmSync(primeDirectory, { recursive: true, force: true });
+
   const installDirectory = join(directory, "installation");
   mkdirSync(installDirectory);
   npm(
@@ -59,6 +78,8 @@ try {
       "install",
       "--prefix",
       installDirectory,
+      "--cache",
+      cacheDirectory,
       "--offline",
       "--omit=dev",
       "--no-audit",
