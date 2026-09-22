@@ -13,6 +13,20 @@ const limits = {
   killGraceMs: 100,
 };
 
+async function waitForProcessExit(pid, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if (error?.code === "ESRCH") return;
+      throw error;
+    }
+    await delay(25);
+  }
+  assert.fail(`process ${pid} still exists after ${timeoutMs} ms`);
+}
+
 test("runs a diagnostic command within explicit limits", async () => {
   const result = await runCommand(
     process.execPath,
@@ -49,16 +63,12 @@ test("cleans up diagnostic command descendants after timeout", async (t) => {
   const result = await runCommand(
     process.execPath,
     ["-e", source],
-    { ...limits, timeoutMs: 100 },
+    { ...limits, timeoutMs: 1_000 },
   );
   assert.equal(result.failure?.kind, "timeout");
   const descendantPid = Number(result.stdout.trim());
-  assert.ok(Number.isSafeInteger(descendantPid));
-  await delay(50);
-  assert.throws(
-    () => process.kill(descendantPid, 0),
-    (error) => error?.code === "ESRCH",
-  );
+  assert.ok(Number.isSafeInteger(descendantPid) && descendantPid > 0);
+  await waitForProcessExit(descendantPid);
 });
 
 for (const stream of ["stdout", "stderr"]) {

@@ -22,23 +22,54 @@ try {
   const [packed] = JSON.parse(
     npm(["pack", "--json", "--ignore-scripts", "--pack-destination", directory]),
   );
-  const publicFile = /^(dist\/.+\.js|package\.json|README\.md|CHANGELOG\.md|LICENSE|schemas\/codex-unlock-v1\.schema\.json|docs\/(?:json-v1|upstream-handoff-proposal)\.md)$/;
-  assert.ok(
-    packed.files.every(({ path }) => publicFile.test(path)),
-    "Package must contain only runtime JS/types and public documentation",
-  );
-  for (const path of [
+  const expectedFiles = [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
     "dist/cli.js",
+    "dist/coordination.js",
     "dist/doctor.js",
-    "schemas/codex-unlock-v1.schema.json",
+    "dist/inspection.js",
+    "dist/lock.js",
+    "dist/options.js",
+    "dist/policy.js",
+    "dist/process.js",
+    "dist/transcript.js",
+    "dist/types.js",
+    "dist/unlock.js",
+    "dist/util.js",
     "docs/json-v1.md",
+    "docs/platform-support.md",
+    "docs/safety-race-matrix.md",
     "docs/upstream-handoff-proposal.md",
-  ]) {
-    assert.ok(
-      packed.files.some((file) => file.path === path),
-      `Missing ${path}`,
-    );
-  }
+    "docs/v0.2-migration.md",
+    "package.json",
+    "schemas/codex-unlock-v1.schema.json",
+  ].sort();
+  assert.deepEqual(
+    packed.files.map(({ path }) => path).sort(),
+    expectedFiles,
+    "Package contents must match the explicit public artifact allowlist",
+  );
+
+  const cacheDirectory = join(directory, "npm-cache");
+  const primeDirectory = join(directory, "cache-prime");
+  mkdirSync(primeDirectory);
+  npm(
+    [
+      "install",
+      "--prefix",
+      primeDirectory,
+      "--cache",
+      cacheDirectory,
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      join(directory, packed.filename),
+    ],
+    primeDirectory,
+  );
+  rmSync(primeDirectory, { recursive: true, force: true });
 
   const installDirectory = join(directory, "installation");
   mkdirSync(installDirectory);
@@ -47,6 +78,9 @@ try {
       "install",
       "--prefix",
       installDirectory,
+      "--cache",
+      cacheDirectory,
+      "--offline",
       "--omit=dev",
       "--no-audit",
       "--no-fund",
@@ -97,7 +131,7 @@ try {
     ),
     (error) => error?.stderr?.includes("ERR_PACKAGE_PATH_NOT_EXPORTED"),
   );
-  log("Packed artifact installs and passes help/version checks.");
+  log("Packed artifact matches the allowlist and passes offline CLI/JSON boundary checks.");
 } finally {
   rmSync(directory, { recursive: true, force: true });
 }
