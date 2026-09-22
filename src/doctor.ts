@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { observeLockFile, probeLock } from "./lock.js";
+import { acquireUnlockLease } from "./coordination.js";
 import {
   currentProcessFamily,
   descendantPids,
@@ -336,7 +337,48 @@ export async function unlockThread(
   rawThreadId: string,
   options: DoctorOptions = defaultOptions(),
 ): Promise<UnlockResult> {
-  const inspection = await inspectThread(rawThreadId, options);
+  const threadId = validateThreadId(rawThreadId);
+  const inspection = await inspectThread(threadId, options);
+  if (!inspection.safeToUnlock || !inspection.owner || !inspection.transcript.path) {
+    return await unlockInspectedThread(inspection, options);
+  }
+  const leaseAttempt = acquireUnlockLease(options.codexHome, threadId);
+  if (leaseAttempt.status !== "acquired") {
+    return unlockResult(inspection, {
+      outcome: "refused",
+      changed: false,
+      pid: inspection.owner?.pid ?? null,
+      signalSent: null,
+      processExited: null,
+      processObservation: null,
+      lockReleased: false,
+      transcriptUnchanged: null,
+      reasons: [
+        leaseAttempt.status === "contended"
+          ? "concurrent_unlock_in_progress"
+          : `unlock_coordination_failed:${leaseAttempt.reason}`,
+      ],
+    });
+  }
+  try {
+    return await unlockInspectedThread(inspection, options);
+  } finally {
+    leaseAttempt.lease.release();
+  }
+}
+
+/**
+ * Continue an unlock from previously collected evidence.
+ *
+ * This internal seam exists so the race matrix can deterministically mutate
+ * state after the first inspection. It is not exported by the npm package,
+ * and it never trusts the supplied inspection without a complete reinspection.
+ */
+export async function unlockInspectedThread(
+  inspection: InspectionResult,
+  options: DoctorOptions = defaultOptions(),
+): Promise<UnlockResult> {
+  const rawThreadId = inspection.threadId;
   if (
     inspection.classification === "absent" ||
     inspection.classification === "stale_residue"
