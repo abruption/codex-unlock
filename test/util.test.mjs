@@ -63,11 +63,11 @@ test("cleans up diagnostic command descendants after timeout", async (t) => {
   const result = await runCommand(
     process.execPath,
     ["-e", source],
-    { ...limits, timeoutMs: 100 },
+    { ...limits, timeoutMs: 1_000 },
   );
   assert.equal(result.failure?.kind, "timeout");
   const descendantPid = Number(result.stdout.trim());
-  assert.ok(Number.isSafeInteger(descendantPid));
+  assert.ok(Number.isSafeInteger(descendantPid) && descendantPid > 0);
   await waitForProcessExit(descendantPid);
 });
 
