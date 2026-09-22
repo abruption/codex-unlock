@@ -40,12 +40,18 @@ jobs:
       - run: npm audit --omit=dev --audit-level=high
 
   package-artifact:
-    name: package artifact (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: package artifact (${{ matrix.platform }}-${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - runner: ubuntu-24.04
+            platform: linux
+            arch: x64
+          - runner: macos-15
+            platform: darwin
+            arch: arm64
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -91,17 +97,59 @@ jobs:
           test "$GIT_RESULT" = success
 
   compatibility:
-    name: supported (node ${{ matrix.node }} on ${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: supported (${{ matrix.platform }}-${{ matrix.arch }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        node: ["22.13.0", "22", "24"]
         include:
-          - os: macos-latest
+          - runner: ubuntu-24.04
+            platform: linux
+            arch: x64
+            node: "22.13.0"
+          - runner: ubuntu-24.04
+            platform: linux
+            arch: x64
             node: "22"
-          - os: macos-latest
+          - runner: ubuntu-24.04
+            platform: linux
+            arch: x64
+            node: "24"
+          - runner: ubuntu-24.04-arm
+            platform: linux
+            arch: arm64
+            node: "22.13.0"
+          - runner: ubuntu-24.04-arm
+            platform: linux
+            arch: arm64
+            node: "22"
+          - runner: ubuntu-24.04-arm
+            platform: linux
+            arch: arm64
+            node: "24"
+          - runner: macos-15-intel
+            platform: darwin
+            arch: x64
+            node: "22.13.0"
+          - runner: macos-15-intel
+            platform: darwin
+            arch: x64
+            node: "22"
+          - runner: macos-15-intel
+            platform: darwin
+            arch: x64
+            node: "24"
+          - runner: macos-15
+            platform: darwin
+            arch: arm64
+            node: "22.13.0"
+          - runner: macos-15
+            platform: darwin
+            arch: arm64
+            node: "22"
+          - runner: macos-15
+            platform: darwin
+            arch: arm64
             node: "24"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -114,6 +162,12 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm test
+      - name: Verify real lock and process evidence
+        env:
+          CODEX_UNLOCK_EXPECTED_PLATFORM: ${{ matrix.platform }}
+          CODEX_UNLOCK_EXPECTED_ARCH: ${{ matrix.arch }}
+          CODEX_UNLOCK_EXPECTED_NODE: ${{ matrix.node }}
+        run: node scripts/platform-smoke.mjs
 
   supported-tests:
     name: supported-tests

@@ -76,6 +76,10 @@ The actual lock probe uses `fs-ext-extra-prebuilt`, which provides prebuilt
 native binaries for common macOS and Linux architectures.
 Node.js 26 is not currently supported because that dependency does not provide
 a compatible prebuilt binary.
+The exact OS, architecture, and runtime combinations backed by real lock and
+process evidence are listed in
+[`docs/platform-support.md`](docs/platform-support.md). Unlisted combinations
+are unverified rather than implicitly supported.
 
 ## Install
 
@@ -85,6 +89,12 @@ Install the published package globally from npm:
 npm install --global codex-unlock
 codex-unlock --version
 codex-unlock --help
+```
+
+For an ephemeral invocation without a retained global installation:
+
+```bash
+npx --yes codex-unlock@latest list
 ```
 
 To install from source instead:
@@ -100,6 +110,10 @@ codex-unlock --help
 The `prepare` lifecycle builds `dist/` when `npm ci` runs. Direct
 `npm install --global git+https://...` installation is not supported; some npm
 versions omit the build-time dependencies while preparing a Git package.
+Users moving from the hardened 0.1.1 baseline should review the
+[`v0.2 integration and migration boundary`](docs/v0.2-migration.md). The CLI's
+JSON v1 output remains the supported integration surface; internal module
+imports remain blocked.
 
 ## Options and exit codes
 
