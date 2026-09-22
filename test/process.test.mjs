@@ -3,8 +3,16 @@ import test from "node:test";
 
 import {
   originalProcessExited,
+  parseLsofProcesses,
   processStartTimeFromCommand,
 } from "../dist/process.js";
+
+test("parses null-delimited lsof process fields", () => {
+  assert.deepEqual(parseLsofProcesses("p42\0ccodex\0u501\0\np7\0cnode\0u502\0"), [
+    { pid: 7, command: "node", uid: 502 },
+    { pid: 42, command: "codex", uid: 501 },
+  ]);
+});
 
 test("interprets process start observations without conflating absence and errors", () => {
   assert.deepEqual(
