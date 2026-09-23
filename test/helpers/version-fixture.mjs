@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { URL } from "node:url";
 
 export const currentVersion = JSON.parse(
   readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
