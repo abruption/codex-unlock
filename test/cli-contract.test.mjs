@@ -11,8 +11,9 @@ import Ajv2020 from "ajv/dist/2020.js";
 
 const THREAD_ID = "01a089e8-3731-7202-ba68-0f4b0a3b2711";
 
-async function runCli(args) {
+async function runCli(args, env = process.env) {
   const child = spawn(process.execPath, [resolve("dist/cli.js"), ...args], {
+    env,
     stdio: ["ignore", "pipe", "pipe"],
   });
   let stdout = "";
@@ -82,4 +83,32 @@ test("JSON v1 permits additive unknown fields", async () => {
   const validate = await validator();
 
   assertValid(validate, value);
+});
+
+test("JSON v1 validates additive clientUpdate and explicit check-update results", async () => {
+  const codexHome = await mkdtemp(join(tmpdir(), "codex-unlock-json-update-home-"));
+  const cacheRoot = await mkdtemp(join(tmpdir(), "codex-unlock-json-update-cache-"));
+  const { writeUpdateCache, updateCacheLocation } = await import("../dist/update.js");
+  const location = updateCacheLocation({ XDG_CACHE_HOME: cacheRoot });
+  assert.equal(writeUpdateCache("0.2.1", location, Date.now()).status, "written");
+  const result = await runCli(
+    ["list", "--json", "--codex-home", codexHome],
+    { ...process.env, XDG_CACHE_HOME: cacheRoot, CODEX_UNLOCK_NO_UPDATE_NOTICE: "false" },
+  );
+  const validate = await validator();
+  const value = JSON.parse(result.stdout);
+  assert.equal(value.clientUpdate.latestVersion, "0.2.1");
+  assertValid(validate, value);
+
+  assertValid(validate, {
+    schemaVersion: 1,
+    command: "check-update",
+    status: "ok",
+    source: "npm",
+    currentVersion: "0.2.0",
+    latestVersion: "0.2.1",
+    checkedAt: "2026-09-22T00:00:00.000Z",
+    updateAvailable: true,
+    updateCommand: "npm install --global codex-unlock@latest",
+  });
 });

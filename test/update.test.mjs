@@ -15,6 +15,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import process from "node:process";
 import test from "node:test";
 
@@ -27,12 +28,18 @@ import {
   UPDATE_REGISTRY_URL,
   acquireUpdateRefreshLease,
   compareStableVersions,
+  emitHumanUpdateNotice,
   fetchNpmLatest,
   readUpdateCache,
+  prepareUpdateAdvisory,
   refreshUpdateCache,
   stableVersion,
+  scheduleUpdateRefresh,
   updateAutomationPolicy,
   updateCacheLocation,
+  updateCommand,
+  updateInstallation,
+  withClientUpdate,
   writeUpdateCache,
 } from "../dist/update.js";
 import { THREAD_ID, fixture, runCli, stopChild } from "./helpers/owner-fixture.mjs";
@@ -461,6 +468,219 @@ test("automation policy suppresses opt-out, CI, and non-TTY side effects", () =>
   assert.equal(interactiveHuman.readCache, true);
   assert.equal(interactiveHuman.showHumanNotice, true);
   assert.equal(interactiveHuman.scheduleRefresh, true);
+});
+
+test("fresh update advisories distinguish newer, equal, and older versions", async () => {
+  const target = await temporaryLocation("codex-unlock-update-advisory-");
+  assert.equal(writeUpdateCache("0.2.1", target, NOW).status, "written");
+  const base = {
+    json: true,
+    noUpdateNotice: false,
+    stdoutIsTTY: false,
+    stderrIsTTY: false,
+    environment: {},
+    location: target,
+    nowMs: NOW,
+    guidance: { sourceCheckout: false, environment: {} },
+  };
+
+  const newer = prepareUpdateAdvisory({ ...base, currentVersion: "0.2.0" });
+  assert.deepEqual(newer.clientUpdate, {
+    schemaVersion: 1,
+    source: "npm",
+    currentVersion: "0.2.0",
+    latestVersion: "0.2.1",
+    checkedAt: "2026-09-22T00:00:00.000Z",
+    updateAvailable: true,
+    updateCommand: "npm install --global codex-unlock@latest",
+  });
+  assert.equal(newer.humanNotice, null);
+  assert.equal(newer.scheduleRefresh, false);
+  assert.equal(
+    prepareUpdateAdvisory({ ...base, currentVersion: "0.2.1" }).clientUpdate,
+    null,
+  );
+  assert.equal(
+    prepareUpdateAdvisory({ ...base, currentVersion: "0.2.2" }).clientUpdate,
+    null,
+  );
+});
+
+test("human notice is emitted after primary output and opt-out suppresses all work", async () => {
+  const target = await temporaryLocation("codex-unlock-update-human-");
+  assert.equal(writeUpdateCache("0.2.1", target, NOW).status, "written");
+  const advisory = prepareUpdateAdvisory({
+    currentVersion: "0.2.0",
+    json: false,
+    noUpdateNotice: false,
+    stdoutIsTTY: true,
+    stderrIsTTY: true,
+    environment: {},
+    location: target,
+    nowMs: NOW,
+    guidance: { sourceCheckout: false, environment: {} },
+  });
+  const writes = ["primary result\n"];
+  emitHumanUpdateNotice(advisory.humanNotice, (value) => writes.push(value));
+  assert.deepEqual(writes, [
+    "primary result\n",
+    "Update available: 0.2.0 → 0.2.1. Run: npm install --global codex-unlock@latest\n",
+  ]);
+  assert.doesNotThrow(() => emitHumanUpdateNotice(advisory.humanNotice, () => {
+    throw new Error("stderr unavailable");
+  }));
+
+  const disabled = prepareUpdateAdvisory({
+    currentVersion: "0.2.0",
+    json: true,
+    noUpdateNotice: false,
+    stdoutIsTTY: true,
+    stderrIsTTY: true,
+    environment: { [UPDATE_NOTICE_ENV]: "true" },
+    location: target,
+    nowMs: NOW,
+  });
+  assert.deepEqual(disabled, {
+    clientUpdate: null,
+    humanNotice: null,
+    scheduleRefresh: false,
+  });
+});
+
+test("update guidance is conservative for registry, npx, and source installs", () => {
+  assert.equal(updateInstallation({ environment: {}, cliPath: "/usr/local/bin/codex-unlock" }), "registry");
+  assert.equal(updateCommand({ environment: {}, cliPath: "/usr/local/bin/codex-unlock" }), "npm install --global codex-unlock@latest");
+  assert.equal(updateInstallation({ environment: { npm_command: "exec" } }), "npx");
+  assert.equal(updateCommand({ environment: { npm_command: "exec" } }), "npx --yes codex-unlock@latest");
+  assert.equal(updateInstallation({ sourceCheckout: true }), "source");
+  assert.equal(
+    updateCommand({ sourceCheckout: true }),
+    "git -C <source-checkout> pull --ff-only && npm --prefix <source-checkout> ci",
+  );
+});
+
+test("detached refresh scheduling is bounded and swallows spawn errors", () => {
+  let invocation;
+  let unrefCalled = false;
+  let errorHandlerAttached = false;
+  const child = {
+    once(event) {
+      if (event === "error") errorHandlerAttached = true;
+      return child;
+    },
+    unref() {
+      unrefCalled = true;
+      return child;
+    },
+  };
+  const scheduled = scheduleUpdateRefresh({
+    executable: "/usr/bin/node",
+    cliPath: "/package/dist/cli.js",
+    environment: { PATH: "/usr/bin" },
+    spawnImpl(command, args, options) {
+      invocation = { command, args, options };
+      return child;
+    },
+  });
+  assert.equal(scheduled, true);
+  assert.deepEqual(invocation.command, "/usr/bin/node");
+  assert.deepEqual(invocation.args, ["/package/dist/cli.js", UPDATE_REFRESH_ARG]);
+  assert.equal(invocation.options.detached, true);
+  assert.equal(invocation.options.stdio, "ignore");
+  assert.deepEqual(invocation.options.env, { PATH: "/usr/bin" });
+  assert.equal(errorHandlerAttached, true);
+  assert.equal(unrefCalled, true);
+  assert.equal(scheduleUpdateRefresh({
+    cliPath: "/package/dist/cli.js",
+    spawnImpl() { throw new Error("spawn failed"); },
+  }), false);
+});
+
+test("clientUpdate is an additive root field", () => {
+  const primary = { schemaVersion: 1, command: "list", count: 0 };
+  assert.equal(withClientUpdate(primary, null), primary);
+  const update = {
+    schemaVersion: 1,
+    source: "npm",
+    currentVersion: "0.2.0",
+    latestVersion: "0.2.1",
+    checkedAt: "2026-09-22T00:00:00.000Z",
+    updateAvailable: true,
+    updateCommand: "npm install --global codex-unlock@latest",
+  };
+  assert.deepEqual(withClientUpdate(primary, update), { ...primary, clientUpdate: update });
+});
+
+test("JSON CLI attaches a fresh newer advisory on success and usage error only", async () => {
+  const root = await mkdtemp(join(tmpdir(), "codex-unlock-update-cli-json-"));
+  const target = location(root);
+  assert.equal(writeUpdateCache("0.2.1", target, Date.now()).status, "written");
+  const codexHome = await mkdtemp(join(tmpdir(), "codex-unlock-update-cli-home-"));
+  const environment = {
+    ...process.env,
+    CI: "false",
+    XDG_CACHE_HOME: root,
+    CODEX_UNLOCK_NO_UPDATE_NOTICE: "false",
+  };
+
+  const success = await runCli(["list", "--json", "--codex-home", codexHome], environment);
+  assert.equal(success.code, 0);
+  assert.equal(success.stderr, "");
+  assert.equal(JSON.parse(success.stdout).clientUpdate.latestVersion, "0.2.1");
+
+  const usage = await runCli(["inspect", "--json"], environment);
+  assert.equal(usage.code, 64);
+  assert.equal(usage.stderr, "");
+  assert.equal(JSON.parse(usage.stdout).clientUpdate.latestVersion, "0.2.1");
+
+  const flagOptOut = await runCli(
+    ["list", "--json", "--no-update-notice", "--codex-home", codexHome],
+    environment,
+  );
+  assert.equal(JSON.parse(flagOptOut.stdout).clientUpdate, undefined);
+  const environmentOptOut = await runCli(
+    ["list", "--json", "--codex-home", codexHome],
+    { ...environment, CODEX_UNLOCK_NO_UPDATE_NOTICE: "yes" },
+  );
+  assert.equal(JSON.parse(environmentOptOut.stdout).clientUpdate, undefined);
+});
+
+test("check-update performs the explicit bounded refresh and returns structured output", async () => {
+  const root = await mkdtemp(join(tmpdir(), "codex-unlock-check-update-"));
+  const preload = join(root, "registry-response.mjs");
+  await writeFile(
+    preload,
+    `globalThis.fetch = async () => new Response(JSON.stringify({ version: "0.2.1" }), { headers: { "content-type": "application/json" } });\n`,
+  );
+  const environment = {
+    ...process.env,
+    XDG_CACHE_HOME: root,
+    NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`,
+  };
+  const result = await runCli(["check-update", "--json"], environment);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.stderr, "");
+  assert.deepEqual(JSON.parse(result.stdout), {
+    schemaVersion: 1,
+    command: "check-update",
+    status: "ok",
+    source: "npm",
+    currentVersion: "0.2.0",
+    latestVersion: "0.2.1",
+    checkedAt: JSON.parse(await readFile(location(root).cacheFile, "utf8")).checkedAt,
+    updateAvailable: true,
+    updateCommand: "git -C <source-checkout> pull --ff-only && npm --prefix <source-checkout> ci",
+  });
+
+  await writeFile(preload, `globalThis.fetch = async () => { throw new Error("offline"); };\n`);
+  const failedRoot = await mkdtemp(join(tmpdir(), "codex-unlock-check-update-failed-"));
+  const failed = await runCli(
+    ["check-update", "--json"],
+    { ...environment, XDG_CACHE_HOME: failedRoot },
+  );
+  assert.equal(failed.code, 3);
+  assert.equal(failed.stderr, "");
+  assert.equal(JSON.parse(failed.stdout).errorCode, "command_failed");
 });
 
 test("cache failures leave primary JSON bytes and exit status unchanged", async () => {

@@ -1,7 +1,7 @@
 # Update metadata security and failure-isolation contract
 
 This document is the normative security boundary for the advisory update
-feature tracked by issue #20. The implementation primitives live in
+feature. The implementation primitives live in
 `src/update.ts`, but they are internal code rather than a supported JavaScript
 API. The supported integration surface remains the CLI and JSON schema v1.
 
@@ -100,7 +100,7 @@ internal error result. They do not overwrite a previously valid cache.
 
 ## Automatic-policy boundary
 
-The integration in issue #20 must apply these defaults:
+The CLI applies these defaults:
 
 - `--no-update-notice` or
   `CODEX_UNLOCK_NO_UPDATE_NOTICE=1|true|yes|on` disables cache reads, notices,
@@ -112,14 +112,23 @@ The integration in issue #20 must apply these defaults:
   never print update text to stdout or stderr;
 - an interactive human command may show a fresh advisory on stderr only after
   the primary result and may schedule a refresh only after command completion;
-- an explicit future `check-update` command may perform the bounded foreground
-  request because the user requested network access.
+- an explicit `check-update` command may perform the bounded foreground request
+  because the user requested network access. `--no-update-notice` does not
+  suppress that explicit request.
 
-JSON schema v1 permits additive root fields. A future `clientUpdate` field must
-remain optional and ignorable. Its presence cannot change the command result,
+JSON schema v1 permits additive root fields. `clientUpdate` remains optional
+and ignorable and appears only when a fresh cache proves that `latest` is newer
+than the running stable version. Its presence cannot change the command result,
 safety evidence, or exit status. Human notices are advisory stderr output after
 the primary human result; JSON mode remains one valid JSON value with empty
 stderr.
+
+The update command is conservative and does not modify the installation:
+
+- registry installs recommend `npm install --global codex-unlock@latest`;
+- npx runs recommend the explicit `npx --yes codex-unlock@latest` prefix;
+- source checkouts use a `<source-checkout>` placeholder rather than exposing
+  an absolute local path in output.
 
 ## Required regression coverage
 
@@ -130,7 +139,7 @@ registry host, redirects, timeouts, registry failures, content type, malformed
 and oversized responses, strict stable versions, CI/TTY/opt-out policy, and a
 real-lock unlock with zero registry calls and zero update-refresh children.
 
-Issue #20 must add end-to-end CLI tests for human stderr placement, optional
-JSON metadata on success and error paths, detached-process cleanup, explicit
+End-to-end and unit tests cover human stderr placement, optional JSON metadata
+on success and error paths, detached-process isolation, explicit
 `check-update`, installation-specific guidance, and byte/exit-code invariance
-across every update failure.
+under cache failures.

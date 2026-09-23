@@ -18,6 +18,7 @@
 npx codex-unlock list
 npx codex-unlock inspect 01a089e8-3731-7202-ba68-0f4b0a3b2711
 npx codex-unlock unlock 01a089e8-3731-7202-ba68-0f4b0a3b2711
+npx codex-unlock check-update
 ```
 
 Add `--json` to any command for a stable, versioned JSON result.
@@ -121,7 +122,23 @@ imports remain blocked.
 --codex-home <path>  defaults to CODEX_HOME or ~/.codex
 --stability-ms <ms>  defaults to 1000
 --timeout-ms <ms>    defaults to 5000
+--no-update-notice   disables cached notices and automatic refresh
 ```
+
+Normal commands never wait for the network. An interactive invocation may
+show a fresh cached update advisory on stderr after its primary result, then
+start one detached best-effort cache refresh when the cache is missing or
+expired. JSON output instead uses an optional versioned `clientUpdate` field
+and never mixes advisory text into stderr. CI and non-TTY human commands do not
+show or refresh notices.
+
+Use `codex-unlock check-update` (or `codex-unlock check-update --json`) when
+you explicitly want a foreground registry check. Set
+`CODEX_UNLOCK_NO_UPDATE_NOTICE=1` or pass
+`--no-update-notice` to disable cache reads, notices, and automatic refreshes;
+the flag does not disable an explicitly requested `check-update`. The metadata
+request, cache permissions, offline behavior, and safety isolation are detailed
+in the [update security contract](docs/update-security.md).
 
 - `0`: success, including an already-unlocked or absent lock
 - `2`: unlock refused because the evidence was not safe

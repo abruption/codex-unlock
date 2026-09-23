@@ -1,8 +1,9 @@
 # JSON v1 contract
 
 `codex-unlock` supports automation through its command-line interface. It does
-not expose a supported JavaScript library API. Run `list`, `inspect`, or
-`unlock` with `--json` and consume the single JSON value written to stdout.
+not expose a supported JavaScript library API. Run `list`, `inspect`, `unlock`,
+or `check-update` with `--json` and consume the single JSON value written to
+stdout.
 
 The normative machine-readable schema is
 [`schemas/codex-unlock-v1.schema.json`](../schemas/codex-unlock-v1.schema.json).
@@ -14,8 +15,8 @@ breaking-change process.
 ## Common rules
 
 - `schemaVersion` is the integer `1` on command results and CLI errors.
-- `command` identifies `list`, `inspect`, or `unlock`. A usage error that did
-  not identify a command uses `null`.
+- `command` identifies `list`, `inspect`, `unlock`, or `check-update`. A usage
+  error that did not identify a command uses `null`.
 - Timestamps are UTC ISO 8601 strings. File sizes, inode values, process IDs,
   and times retain the types defined in the schema.
 - Nullable evidence means that the observation was unavailable or not
@@ -46,6 +47,25 @@ lock-release observation, transcript-invariance result, reasons, and the
 inspection that authorized or refused the operation. `lockFileRemovedByTool`
 is always `false`.
 
+`check-update` is the only command that performs a foreground npm registry
+request. It returns `status: "ok"`, the current and latest stable versions,
+the check timestamp, an `updateAvailable` boolean, and conservative update
+guidance. Registry, timeout, response, or cache-write failures use the normal
+structured command error and exit `3`.
+
+## Cached update advisory
+
+`list`, `inspect`, and `unlock` may add `clientUpdate` at the root when a fresh
+local cache proves that a newer stable release exists. The block has its own
+`schemaVersion: 1`, `source: "npm"`, current/latest versions, `checkedAt`,
+`updateAvailable: true`, and `updateCommand`. It is absent when the cache is
+missing, stale, unsafe, equal, older, or suppressed.
+
+Consumers must ignore this optional block. It cannot change classification,
+`safeToUnlock`, signaling, refusal reasons, the primary result, or exit code.
+JSON commands write no update text to stderr and never perform synchronous
+network access.
+
 ## CLI errors
 
 Errors retain the top-level string `error` field and add:
@@ -64,7 +84,7 @@ and JSON fields for decisions.
 
 | Exit | Meaning | JSON result |
 |---:|---|---|
-| `0` | Successful read-only command, successful unlock, or already absent lock | `list`, `inspect`, or `unlock` |
+| `0` | Successful read-only/update check, successful unlock, or already absent lock | `list`, `inspect`, `unlock`, or `check-update` |
 | `2` | Unlock refused because the evidence is not safe | `unlock` with `outcome: "refused"` |
 | `3` | Termination/post-check failure or an unexpected command failure | `unlock` failure outcome or `errorCode: "command_failed"` |
 | `64` | Invalid command-line usage | `errorCode: "invalid_usage"` |

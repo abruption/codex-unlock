@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { spawn } from "node:child_process";
 import {
   chmodSync,
   closeSync,
@@ -18,6 +19,9 @@ import {
 import type { Stats } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
+import type { ChildProcess, SpawnOptions } from "node:child_process";
+
+import type { ClientUpdate } from "./types.js";
 
 import { flockSync } from "fs-ext-extra-prebuilt";
 
@@ -108,6 +112,38 @@ export interface UpdateAutomationPolicy {
   attachJson: boolean;
   showHumanNotice: boolean;
   scheduleRefresh: boolean;
+}
+
+export type UpdateInstallation = "registry" | "npx" | "source";
+
+export interface UpdateGuidanceContext {
+  environment?: NodeJS.ProcessEnv;
+  cliPath?: string;
+  sourceCheckout?: boolean;
+}
+
+export interface PreparedUpdateAdvisory {
+  clientUpdate: ClientUpdate | null;
+  humanNotice: string | null;
+  scheduleRefresh: boolean;
+}
+
+export interface PrepareUpdateAdvisoryOptions extends UpdateAutomationContext {
+  currentVersion: string;
+  location?: UpdateCacheLocation;
+  nowMs?: number;
+  guidance?: UpdateGuidanceContext;
+}
+
+export interface ScheduleUpdateRefreshOptions {
+  executable?: string;
+  cliPath: string;
+  environment?: NodeJS.ProcessEnv;
+  spawnImpl?: (
+    command: string,
+    args: readonly string[],
+    options: SpawnOptions,
+  ) => ChildProcess;
 }
 
 function errno(error: unknown): string | undefined {
@@ -674,4 +710,112 @@ export function updateAutomationPolicy(
     showHumanNotice: !context.json && !ci && context.stderrIsTTY,
     scheduleRefresh: !ci && interactive,
   };
+}
+
+export function updateInstallation(
+  context: UpdateGuidanceContext = {},
+): UpdateInstallation {
+  if (context.sourceCheckout === true) return "source";
+  const environment = context.environment ?? process.env;
+  const cliPath = context.cliPath ?? process.argv[1] ?? "";
+  if (
+    environment.npm_command === "exec" ||
+    environment.npm_lifecycle_event === "npx" ||
+    /(?:^|[/\\])_npx(?:[/\\]|$)/.test(cliPath)
+  ) {
+    return "npx";
+  }
+  return "registry";
+}
+
+export function updateCommand(context: UpdateGuidanceContext = {}): string {
+  const installation = updateInstallation(context);
+  if (installation === "source") {
+    return "git -C <source-checkout> pull --ff-only && npm --prefix <source-checkout> ci";
+  }
+  if (installation === "npx") return "npx --yes codex-unlock@latest";
+  return "npm install --global codex-unlock@latest";
+}
+
+export function prepareUpdateAdvisory(
+  options: PrepareUpdateAdvisoryOptions,
+): PreparedUpdateAdvisory {
+  const policy = updateAutomationPolicy(options);
+  if (policy.disabled) {
+    return { clientUpdate: null, humanNotice: null, scheduleRefresh: false };
+  }
+
+  const observation = policy.readCache
+    ? readUpdateCache(options.location, options.nowMs)
+    : { status: "missing" as const, reason: "cache_read_suppressed" };
+  const command = updateCommand(options.guidance);
+  let clientUpdate: ClientUpdate | null = null;
+  let humanNotice: string | null = null;
+  if (
+    observation.status === "fresh" &&
+    stableVersion(options.currentVersion) !== null &&
+    compareStableVersions(options.currentVersion, observation.record.latest) < 0
+  ) {
+    clientUpdate = {
+      schemaVersion: UPDATE_CACHE_SCHEMA_VERSION,
+      source: "npm",
+      currentVersion: options.currentVersion,
+      latestVersion: observation.record.latest,
+      checkedAt: observation.record.checkedAt,
+      updateAvailable: true,
+      updateCommand: command,
+    };
+    if (policy.showHumanNotice) {
+      humanNotice =
+        `Update available: ${options.currentVersion} → ${observation.record.latest}. ` +
+        `Run: ${command}`;
+    }
+  }
+
+  return {
+    clientUpdate: policy.attachJson ? clientUpdate : null,
+    humanNotice,
+    scheduleRefresh: policy.scheduleRefresh && observation.status !== "fresh",
+  };
+}
+
+export function withClientUpdate<T extends object>(
+  value: T,
+  clientUpdate: ClientUpdate | null,
+): T | (T & { clientUpdate: ClientUpdate }) {
+  return clientUpdate === null ? value : { ...value, clientUpdate };
+}
+
+export function emitHumanUpdateNotice(
+  notice: string | null,
+  write: (value: string) => unknown = (value) => process.stderr.write(value),
+): void {
+  if (notice === null) return;
+  try {
+    write(`${notice}\n`);
+  } catch {
+    // Advisory output cannot change the primary command result.
+  }
+}
+
+export function scheduleUpdateRefresh(
+  options: ScheduleUpdateRefreshOptions,
+): boolean {
+  try {
+    const spawnImpl = options.spawnImpl ?? spawn;
+    const child = spawnImpl(
+      options.executable ?? process.execPath,
+      [options.cliPath, UPDATE_REFRESH_ARG],
+      {
+        detached: true,
+        stdio: "ignore",
+        env: options.environment ?? process.env,
+      },
+    );
+    child.once("error", () => undefined);
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
 }
