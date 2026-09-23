@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/abruption/codex-unlock/compare/v0.2.0...v0.3.0) (2026-09-23)
+
+
+### Features
+
+* add cached update notices ([#40](https://github.com/abruption/codex-unlock/issues/40)) ([98d6258](https://github.com/abruption/codex-unlock/commit/98d625859f635f0c706d528f9cde2f09c0d853df))
+
+
+### Bug Fixes
+
+* harden update metadata boundary ([#38](https://github.com/abruption/codex-unlock/issues/38)) ([3170ebd](https://github.com/abruption/codex-unlock/commit/3170ebdb3783e1184f331a73f482ecafb56ce140))
+
 ## [0.2.0](https://github.com/abruption/codex-unlock/compare/v0.1.1...v0.2.0) (2026-09-22)
 
 
