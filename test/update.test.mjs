@@ -43,6 +43,7 @@ import {
   writeUpdateCache,
 } from "../dist/update.js";
 import { THREAD_ID, fixture, runCli, stopChild } from "./helpers/owner-fixture.mjs";
+import { currentVersion, newerVersion } from "./helpers/version-fixture.mjs";
 
 const NOW = Date.parse("2026-09-22T00:00:00.000Z");
 
@@ -614,7 +615,7 @@ test("clientUpdate is an additive root field", () => {
 test("JSON CLI attaches a fresh newer advisory on success and usage error only", async () => {
   const root = await mkdtemp(join(tmpdir(), "codex-unlock-update-cli-json-"));
   const target = location(root);
-  assert.equal(writeUpdateCache("0.2.1", target, Date.now()).status, "written");
+  assert.equal(writeUpdateCache(newerVersion, target, Date.now()).status, "written");
   const codexHome = await mkdtemp(join(tmpdir(), "codex-unlock-update-cli-home-"));
   const environment = {
     ...process.env,
@@ -626,12 +627,12 @@ test("JSON CLI attaches a fresh newer advisory on success and usage error only",
   const success = await runCli(["list", "--json", "--codex-home", codexHome], environment);
   assert.equal(success.code, 0);
   assert.equal(success.stderr, "");
-  assert.equal(JSON.parse(success.stdout).clientUpdate.latestVersion, "0.2.1");
+  assert.equal(JSON.parse(success.stdout).clientUpdate.latestVersion, newerVersion);
 
   const usage = await runCli(["inspect", "--json"], environment);
   assert.equal(usage.code, 64);
   assert.equal(usage.stderr, "");
-  assert.equal(JSON.parse(usage.stdout).clientUpdate.latestVersion, "0.2.1");
+  assert.equal(JSON.parse(usage.stdout).clientUpdate.latestVersion, newerVersion);
 
   const flagOptOut = await runCli(
     ["list", "--json", "--no-update-notice", "--codex-home", codexHome],
@@ -650,7 +651,7 @@ test("check-update performs the explicit bounded refresh and returns structured 
   const preload = join(root, "registry-response.mjs");
   await writeFile(
     preload,
-    `globalThis.fetch = async () => new Response(JSON.stringify({ version: "0.2.1" }), { headers: { "content-type": "application/json" } });\n`,
+    `globalThis.fetch = async () => new Response(JSON.stringify({ version: "${newerVersion}" }), { headers: { "content-type": "application/json" } });\n`,
   );
   const environment = {
     ...process.env,
@@ -665,8 +666,8 @@ test("check-update performs the explicit bounded refresh and returns structured 
     command: "check-update",
     status: "ok",
     source: "npm",
-    currentVersion: "0.2.0",
-    latestVersion: "0.2.1",
+    currentVersion,
+    latestVersion: newerVersion,
     checkedAt: JSON.parse(await readFile(location(root).cacheFile, "utf8")).checkedAt,
     updateAvailable: true,
     updateCommand: "git -C <source-checkout> pull --ff-only && npm --prefix <source-checkout> ci",
