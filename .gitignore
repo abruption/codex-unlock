@@ -2,6 +2,7 @@ node_modules/
 dist/
 coverage/
 .cache/
+.worktree/
 *.log
 *.tgz
 *.tsbuildinfo
