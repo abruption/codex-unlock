@@ -44,6 +44,7 @@
     "smoke:package": "npm run build && node scripts/package-smoke.mjs",
     "smoke:platform": "npm run build && node scripts/platform-smoke.mjs",
     "test": "node --test test/*.test.mjs",
+    "test:python-parity": "node --test prototype/python/parity.test.mjs",
     "typecheck": "npm run check"
   },
   "engines": {

@@ -45,3 +45,8 @@ Windows, other Unix variants, and OS/architecture combinations absent from the
 matrix are unverified. Windows lock and process semantics require a separate
 design and real-host evidence before the package may advertise support. The
 tool does not infer support from a fixture-only or cross-compiled result.
+
+The repository also carries an unpublished Python safety prototype under
+`prototype/python/`. Four macOS/Linux x64/arm64 CI cells cross-check it against
+the supported Node CLI using synthetic lock owners. That experimental check
+does not extend the supported runtime or package-installation matrix.

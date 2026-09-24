@@ -162,6 +162,15 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm test
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        if: ${{ matrix.node == '22.13.0' }}
+        with:
+          python-version: '3.12'
+      - name: Cross-check Python safety prototype
+        if: ${{ matrix.node == '22.13.0' }}
+        run: npm run test:python-parity
+        env:
+          CODEX_UNLOCK_TEST_PYTHON: python
       - name: Verify real lock and process evidence
         env:
           CODEX_UNLOCK_EXPECTED_PLATFORM: ${{ matrix.platform }}

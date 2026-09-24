@@ -6,6 +6,8 @@ coverage/
 *.log
 *.tgz
 *.tsbuildinfo
+__pycache__/
+*.pyc
 .DS_Store
 
 # Secrets and machine-local configuration
