@@ -1,19 +1,32 @@
-## Proposal: owner-cooperative release and handoff for live thread writers
+# Upstream proposal: owner-cooperative release and handoff for live thread writers
 
-I investigated this together with the related Remote Control case in #44449 and
-several real lock holders on macOS. The important distinction is that these are
-usually live kernel locks held by a legitimate Codex process, not stale lock-file
+**Proposal only — not an implemented codex-unlock feature or a confirmed
+upstream API.** `codex-unlock` does not call `thread/unsubscribe`, offer
+`thread/release`, or release a shared app-server, Remote Control, daemon, or
+multiple-owner writer. Those cases remain refused. A failed or unavailable
+cooperative handoff must not automatically fall back to process termination.
+
+As checked on 2026-09-27, the related upstream
+[panel/CLI handoff issue](https://github.com/openai/codex/issues/45406) and
+[Remote Control lock issue](https://github.com/openai/codex/issues/44449) were
+both open. Their status does not establish that the proposed protocol exists;
+recheck the current upstream implementation before relying on this design.
+
+The original investigation considered the related Remote Control case and
+several real lock holders on macOS. The important distinction is that these can
+be live kernel locks held by a legitimate Codex process, not stale lock-file
 residue. Deleting `<thread-id>.lock` cannot release such a lock and can make the
 state harder to reason about.
 
-Current `main` already has most of the safe owner-side lifecycle machinery:
+The original source review found these owner-side lifecycle mechanisms. They
+are historical design context, not a guarantee about a current Codex release:
 
-- `WriterLockCoordinator` uses a real nonblocking OS lock and removes only
+- `WriterLockCoordinator` used a real nonblocking OS lock and removed only
   unlocked stale files.
-- `thread/unsubscribe` removes a connection's subscription.
-- an unsubscribed, inactive thread is flushed, shut down, removed, and emits
-  `thread/closed` after `thread_unload_delay_secs` (60 seconds by default, zero
-  for immediate unloading).
+- `thread/unsubscribe` removed a connection's subscription.
+- an unsubscribed, inactive thread was observed to flush, shut down, be removed,
+  and emit `thread/closed` after `thread_unload_delay_secs` (then 60 seconds by
+  default, zero for immediate unloading).
 
 What appears to be missing is an explicit, observable handoff contract between
 products/processes. I suggest building that contract around cooperative release
@@ -23,7 +36,8 @@ delete files or kill the owner.
 ### 1. Owner-side release operation
 
 Either add an optional immediate mode to `thread/unsubscribe`, or introduce a
-small `thread/release` operation. A possible request is:
+small `thread/release` operation. The following request and response are
+illustrative proposals, not supported API shapes:
 
 ```json
 {
@@ -45,10 +59,10 @@ released | busy | subscribersRemain | notLoaded | notOwner
   requires the loaded runtime;
 - pending rollout items have been flushed and the recorder shuts down cleanly.
 
-Only then should it remove the runtime and drop `WriterLockGuard`. The existing
-`thread/closed` notification can be the acknowledgement that ownership was
-actually released. A contender should retry `thread/resume` only after that
-acknowledgement.
+Only then should it remove the runtime and drop `WriterLockGuard`. If the
+upstream protocol confirms it, `thread/closed` could acknowledge that ownership
+was actually released. A contender should retry `thread/resume` only after an
+authoritative release acknowledgement.
 
 ### 2. Product lifecycle integration
 
@@ -60,7 +74,8 @@ acknowledgement.
 - Reconnection should restore subscriptions only for threads the client is
   actually observing or running, rather than every recently viewed thread.
 
-This directly addresses #44449 without weakening single-writer protection.
+If implemented upstream, this would address the Remote Control scenario without
+weakening single-writer protection.
 
 ### 3. Structured conflict diagnostics
 
@@ -97,3 +112,8 @@ process metadata are separate evidence.
 An incremental first step could be the owner-side `ifIdle` release plus structured
 conflict data; panel and Remote Control affordances could then use the same
 protocol without changing the lock's safety model.
+
+Any future codex-unlock integration needs a separate protocol and security
+design review. Until then, the standalone CLI must keep refusing shared or
+ambiguous owners; it must not chain a failed handoff to `SIGTERM`, delete native
+lock files, add force mode, or send `SIGKILL` to an owner.
