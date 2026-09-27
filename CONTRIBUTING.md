@@ -43,6 +43,11 @@ The lock-file deletion, force-unlock, and `SIGKILL` behaviors are intentionally
 out of scope. A proposal to weaken an existing refusal condition must explain
 how PID reuse, shared owners, and transcript mutation remain excluded.
 
+The [owner-cooperative handoff proposal](docs/upstream-handoff-proposal.md) is
+upstream design work, not a supported codex-unlock feature. Any future
+integration requires a separate protocol and security review; a failed or
+unsupported handoff must never automatically trigger process termination.
+
 ## Releases
 
 Do not bump versions or edit generated changelog entries in ordinary pull

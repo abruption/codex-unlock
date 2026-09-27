@@ -178,6 +178,11 @@ does not permit synchronous network access from `list`, `inspect`, or
 The upstream handoff design proposed alongside this tool is preserved in
 [`docs/upstream-handoff-proposal.md`](docs/upstream-handoff-proposal.md).
 
+It is a proposal, not a codex-unlock command or an available fallback for
+shared app-server, Remote Control, daemon, or multiple-owner writers. The CLI
+continues to refuse those owners and never automatically chains a failed
+handoff to process termination.
+
 Changes use Conventional Commits and are released through Release Please. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for contribution rules and
 [`SECURITY.md`](SECURITY.md) for private vulnerability reporting. Maintainers
