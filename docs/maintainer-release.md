@@ -4,7 +4,8 @@ The package is published at
 [`codex-unlock` on npm](https://www.npmjs.com/package/codex-unlock). Conventional
 Commits on `main` feed Release Please; merging its release pull request creates
 the version tag and GitHub release, which starts npm publication with
-provenance. The Release Please manifest records the latest released version.
+provenance through npm Trusted Publisher OIDC. The Release Please manifest
+records the latest released version.
 
 ## Recurring release flow
 
@@ -17,7 +18,8 @@ provenance. The Release Please manifest records the latest released version.
    concurrent-unlock serialization, and deliberately unsupported owners.
 3. Merge that pull request to create the tag and GitHub release.
 4. Confirm the tagged release workflow passed `npm ci`, type checking, lint,
-   tests, package smoke, and `npm publish --provenance --access public`.
+   tests, package smoke, and OIDC-authenticated
+   `npm publish --provenance --access public`.
 5. Verify the GitHub release and npm version match, provenance is present, and
    a clean global install passes `codex-unlock --version` and `--help`.
 
@@ -41,15 +43,41 @@ Before merging the v0.2.0 Release Please pull request:
   release-gate commits;
 - review the generated changelog instead of editing it by hand.
 
-## npm publishing credential
+## npm Trusted Publisher binding
 
-Publication reads `NPM_TOKEN` only from the GitHub Actions repository secret.
-Never put a token in a file, command argument, issue, pull request, or log. To
-rotate it, create the replacement in npm, update the secret interactively with
-`gh secret set NPM_TOKEN --repo abruption/codex-unlock`, verify the next release,
-then revoke the previous token. A failed publication should be diagnosed and
-re-run from the existing release; do not create an unrelated version solely to
-retry credentials.
+Before merging a change that removes token authentication, a package owner must
+create this binding under the npm package's **Settings → Trusted Publisher**.
+The fields are case-sensitive; the workflow filename is not a path:
+
+| npm field | Value |
+| --- | --- |
+| Provider | GitHub Actions |
+| Organization or user | `abruption` |
+| Repository | `codex-unlock` |
+| Workflow filename | `release-please.yml` |
+| Environment name | Blank (the publish job has no GitHub environment) |
+| Allowed actions | Enable direct `npm publish` |
+
+The publish job runs on a GitHub-hosted runner with `id-token: write`, Node 24,
+and npm 11.11.0 (npm requires 11.5.1 or later and Node 22.14.0 or later).
+It checks out the Release Please tag, then publishes without `NODE_AUTH_TOKEN`.
+Do not add a token, copy a PassKey, or weaken the package's publishing-access/2FA
+setting to make OIDC work. The npm website may ask the owner for PassKey/2FA
+while creating the binding; the CI job itself needs no interactive approval.
+
+On the first release after migration, verify the exact workflow and tag used,
+the successful npm publication, provenance/attestations, and the clean-install
+checks below. Only **after** that succeeds, delete the unused GitHub Actions
+`NPM_TOKEN` secret and revoke the old npm publish token in npm; verify both
+separately. Until the first OIDC publication succeeds, keep the old credential
+for recovery but do not pass it to the new publish job. A failed publication
+should be diagnosed and re-run from the existing release rather than creating
+an unrelated version solely to retry credentials. `ENEEDAUTH` commonly means a
+binding-field mismatch, missing `id-token: write`, or unsupported runner/npm;
+check those before changing release artifacts.
+
+See [npm's Trusted Publisher guide](https://docs.npmjs.com/trusted-publishers)
+for the current setup and troubleshooting contract.
 
 ## Installation verification
 
@@ -67,9 +95,10 @@ verifying the published npm artifact.
 
 ## Provenance and registry signatures
 
-The release workflow's `npm publish --provenance --access public` generates the
-package provenance statement. After registry propagation, verify the released
-version rather than an unpacked workspace:
+The release workflow's OIDC-authenticated
+`npm publish --provenance --access public` generates the package provenance
+statement. After registry propagation, verify the released version rather than
+an unpacked workspace:
 
 ```bash
 npm view codex-unlock@<version> version dist.integrity dist.attestations --json
