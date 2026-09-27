@@ -45,4 +45,6 @@ committing changes that affect runtime, packaging, or automation.
 - Let Release Please update `package.json`, `package-lock.json`,
   `.release-please-manifest.json`, `CHANGELOG.md`, tags, and GitHub releases.
 - Never place npm tokens in files, commit messages, logs, or command arguments.
-  Publication reads `NPM_TOKEN` only from GitHub Actions secrets.
+  Publication uses the package's npm Trusted Publisher OIDC binding to
+  `.github/workflows/release-please.yml`; keep `id-token: write` on the publish
+  job and do not reintroduce `NODE_AUTH_TOKEN` or a publish token.
