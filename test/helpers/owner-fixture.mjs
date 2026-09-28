@@ -11,6 +11,7 @@ import { acquireUnlockLease } from "../../dist/coordination.js";
 export const THREAD_ID = "01a089e8-3731-7202-ba68-0f4b0a3b2711";
 export const OTHER_THREAD_ID = "02b190f9-4842-8313-ca79-1f5c1b4c3822";
 export const OWNER_FIXTURE = resolve("test/fixtures/codex");
+export const DIAGNOSTIC_OVERRIDE = resolve("test/helpers/diagnostic-override.mjs");
 
 export async function fixture(lastEvent = "task_complete", settings = {}) {
   const codexHome =

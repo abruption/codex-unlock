@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
+import { EventEmitter } from "node:events";
+import { resolve } from "node:path";
 import process from "node:process";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 
-import { runCommand } from "../dist/util.js";
+import { DIAGNOSTIC_COMMAND_ENV, runCommand } from "../dist/util.js";
 
 const limits = {
   timeoutMs: 2_000,
@@ -93,4 +96,103 @@ test("reports spawn failure as a structured command error", async () => {
   assert.equal(result.status, -2);
   assert.equal(result.failure?.kind, "spawn_error");
   assert.equal(result.error?.code, "ENOENT");
+});
+
+test("does not pass the caller environment to diagnostic commands", async (t) => {
+  const saved = {};
+  for (const [name, value] of Object.entries({
+    COLUMNS: "40",
+    LINES: "5",
+    PS_FORMAT: "pid",
+    PS_PERSONALITY: "posix",
+    LC_CTYPE: "en_US.UTF-8",
+  })) {
+    saved[name] = process.env[name];
+    process.env[name] = value;
+  }
+  t.after(() => {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+  const result = await runCommand(
+    process.execPath,
+    ["-e", "process.stdout.write(JSON.stringify(process.env))"],
+    limits,
+  );
+  assert.equal(result.failure, undefined);
+  const environment = JSON.parse(result.stdout);
+  for (const name of Object.keys(saved)) assert.equal(environment[name], undefined, name);
+  for (const [name, value] of Object.entries(DIAGNOSTIC_COMMAND_ENV)) {
+    assert.equal(environment[name], value, name);
+  }
+});
+
+function errno(code) {
+  return Object.assign(new Error(`spawn ${code}`), { code, errno: -1, syscall: "spawn" });
+}
+
+test("reports a synchronous spawn throw as a structured command error", async () => {
+  const result = await runCommand("/bin/ps", [], limits, () => {
+    throw errno("EBADF");
+  });
+  assert.equal(result.status, null);
+  assert.equal(result.failure?.kind, "spawn_error");
+  assert.equal(result.error?.code, "EBADF");
+});
+
+test("reports a child without stdio pipes as a structured command error", async () => {
+  let emitted = false;
+  const result = await runCommand("/bin/ps", [], limits, () => {
+    const child = new EventEmitter();
+    child.stdout = null;
+    child.stderr = null;
+    child.pid = undefined;
+    child.kill = () => false;
+    process.nextTick(() => {
+      child.emit("error", errno("EMFILE"));
+      emitted = true;
+    });
+    return child;
+  });
+  assert.equal(emitted, true);
+  assert.equal(result.status, null);
+  assert.equal(result.failure?.kind, "spawn_error");
+  assert.equal(result.error?.code, "EMFILE");
+
+  const silent = await runCommand("/bin/ps", [], limits, () => {
+    const child = new EventEmitter();
+    child.stdout = null;
+    child.stderr = null;
+    child.kill = () => false;
+    return child;
+  });
+  assert.equal(silent.failure?.kind, "spawn_error");
+  assert.match(silent.failure.message, /stdout\/stderr/);
+});
+
+test("survives real descriptor exhaustion without an unhandled error", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("POSIX descriptor limits only");
+    return;
+  }
+  const script = [
+    "import { closeSync, openSync } from 'node:fs'",
+    "const output = process.stdout",
+    `const { runCommand } = await import(${JSON.stringify(pathToFileURL(resolve("dist/util.js")).href)})`,
+    "const held = []",
+    "try { for (;;) held.push(openSync('/dev/null', 'r')) } catch {}",
+    "const result = await runCommand('/bin/ps', ['-p', String(process.pid)])",
+    "for (const fd of held) closeSync(fd)",
+    "output.write(JSON.stringify({ kind: result.failure?.kind ?? null, code: result.error?.code ?? null }))",
+  ].join("\n");
+  const child = await runCommand(
+    "/bin/sh",
+    ["-c", `ulimit -n 64 && exec "$0" --input-type=module -e "$1"`, process.execPath, script],
+    { ...limits, timeoutMs: 10_000 },
+  );
+  assert.equal(child.status, 0, child.stderr);
+  const parsed = JSON.parse(child.stdout);
+  assert.equal(parsed.kind, "spawn_error");
 });

@@ -1,4 +1,5 @@
-import { access, lstat, realpath } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, lstat, readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
 
 import type { ProcessInfo, ProcessStartObservation } from "./types.js";
@@ -16,26 +17,62 @@ interface LsofProcess {
   uid: number | null;
 }
 
-let lsofExecutablePromise: Promise<string | null> | undefined;
+// Process evidence comes only from fixed system binaries, never from PATH.
+const SYSTEM_EXECUTABLES = {
+  ps: ["/bin/ps", "/usr/bin/ps"],
+  lsof: ["/usr/sbin/lsof", "/usr/bin/lsof"],
+} as const;
 
-async function findLsofExecutable(): Promise<string | null> {
-  if (!lsofExecutablePromise) {
-    lsofExecutablePromise = (async () => {
-      for (const candidate of ["/usr/sbin/lsof", "/usr/bin/lsof"]) {
+export type DiagnosticTool = keyof typeof SYSTEM_EXECUTABLES;
+
+const executablePromises = new Map<DiagnosticTool, Promise<string | null>>();
+
+async function findSystemExecutable(tool: DiagnosticTool): Promise<string | null> {
+  let pending = executablePromises.get(tool);
+  if (!pending) {
+    pending = (async () => {
+      for (const candidate of SYSTEM_EXECUTABLES[tool]) {
         try {
-          await access(candidate);
+          if (!(await stat(candidate)).isFile()) continue;
+          await access(candidate, constants.X_OK);
           return candidate;
         } catch {
-          // Continue to PATH lookup.
+          // Try the next fixed location; PATH is never consulted.
         }
       }
-      const result = await runCommand("lsof", ["-v"]);
-      return result.failure?.kind === "spawn_error" && result.error?.code === "ENOENT"
-        ? null
-        : "lsof";
+      return null;
     })();
+    executablePromises.set(tool, pending);
   }
-  return await lsofExecutablePromise;
+  return await pending;
+}
+
+/**
+ * Test-only seam for fault injection. Replaces the resolved executable for
+ * this process; `null` restores fixed system-path resolution.
+ */
+export function overrideDiagnosticExecutableForTesting(
+  tool: DiagnosticTool,
+  executable: string | null,
+): void {
+  if (executable === null) executablePromises.delete(tool);
+  else executablePromises.set(tool, Promise.resolve(executable));
+}
+
+async function runDiagnostic(tool: DiagnosticTool, args: string[]): Promise<CommandResult> {
+  const executable = await findSystemExecutable(tool);
+  if (!executable) {
+    return {
+      status: null,
+      stdout: "",
+      stderr: "",
+      failure: {
+        kind: "spawn_error",
+        message: `${tool} is not installed at ${SYSTEM_EXECUTABLES[tool].join(" or ")}`,
+      },
+    };
+  }
+  return await runCommand(executable, args);
 }
 
 export function parseLsofProcesses(output: string): LsofProcess[] {
@@ -68,11 +105,7 @@ export function parseLsofProcesses(output: string): LsofProcess[] {
 export async function findLockOpeners(
   path: string,
 ): Promise<{ processes: LsofProcess[]; error?: string }> {
-  const executable = await findLsofExecutable();
-  if (!executable) {
-    return { processes: [], error: "lsof is not installed" };
-  }
-  const result = await runCommand(executable, ["-nP", "-F0pcu", "--", path]);
+  const result = await runDiagnostic("lsof", ["-nP", "-F0pcu", "--", path]);
   const failure = commandFailureText(result);
   if (failure) {
     return { processes: [], error: failure };
@@ -100,7 +133,8 @@ function commandStatusError(result: CommandResult, command: string): string {
 }
 
 async function psField(pid: number, field: string): Promise<ProcessFieldObservation> {
-  const result = await runCommand("ps", ["-p", String(pid), "-o", `${field}=`]);
+  // -ww: never truncate to a terminal width (procps honours COLUMNS otherwise).
+  const result = await runDiagnostic("ps", ["-ww", "-p", String(pid), "-o", `${field}=`]);
   if (commandFailureText(result)) {
     return { status: "unknown", value: null, error: commandStatusError(result, "ps") };
   }
@@ -143,7 +177,7 @@ export function processStartTimeFromCommand(
 }
 
 export async function processStartTime(pid: number): Promise<ProcessStartObservation> {
-  const result = await runCommand("ps", ["-p", String(pid), "-o", "lstart="]);
+  const result = await runDiagnostic("ps", ["-ww", "-p", String(pid), "-o", "lstart="]);
   const observation = processStartTimeFromCommand(result);
   if (observation.status !== "absent") return observation;
   try {
@@ -181,11 +215,7 @@ async function processCwd(pid: number): Promise<string | null> {
       // Fall back to lsof below.
     }
   }
-  const executable = await findLsofExecutable();
-  if (!executable) {
-    return null;
-  }
-  const result = await runCommand(executable, ["-a", "-p", String(pid), "-d", "cwd", "-Fn"]);
+  const result = await runDiagnostic("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"]);
   if (commandFailureText(result) || result.status !== 0) {
     return null;
   }
@@ -205,10 +235,76 @@ function parseInteger(value: string | null): number | null {
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
+const SHARED_SERVICE_PATTERN = /\b(?:app-server|remote-control|daemon)\b/i;
+
+export type CommandLineObservation =
+  | { status: "present"; argv: string[] }
+  | { status: "unknown"; error: string };
+
+export function parseProcCommandLine(value: Buffer): string[] {
+  const argv = value.toString("utf8").split("\0");
+  while (argv.length > 0 && argv[argv.length - 1] === "") argv.pop();
+  return argv;
+}
+
+async function linuxCommandLine(pid: number): Promise<CommandLineObservation> {
+  try {
+    return {
+      status: "present",
+      argv: parseProcCommandLine(await readFile(`/proc/${pid}/cmdline`)),
+    };
+  } catch (error) {
+    return { status: "unknown", error: errorText(error) };
+  }
+}
+
+export interface ArgumentEvidence {
+  arguments: string | null;
+  isSharedService: boolean;
+  error?: string;
+}
+
+/**
+ * Combines `ps` arguments with the kernel argv when one is available (Linux).
+ * Truncated or unverifiable arguments become unknown, and a shared-service
+ * token in either source classifies the owner as shared.
+ */
+export function reconcileArguments(
+  psArguments: string | null,
+  commandLine: CommandLineObservation | null,
+): ArgumentEvidence {
+  const kernelArguments =
+    commandLine?.status === "present" ? commandLine.argv.join(" ") : "";
+  const isSharedService =
+    SHARED_SERVICE_PATTERN.test(psArguments ?? "") ||
+    SHARED_SERVICE_PATTERN.test(kernelArguments);
+  if (psArguments === null || commandLine === null) {
+    return { arguments: psArguments, isSharedService };
+  }
+  if (commandLine.status === "unknown") {
+    return {
+      arguments: null,
+      isSharedService,
+      error: `arguments_unverified:${commandLine.error}`,
+    };
+  }
+  if (
+    kernelArguments.length > psArguments.length &&
+    kernelArguments.startsWith(psArguments)
+  ) {
+    return {
+      arguments: null,
+      isSharedService,
+      error: "arguments_truncated:ps output is shorter than the kernel argv",
+    };
+  }
+  return { arguments: psArguments, isSharedService };
+}
+
 export async function inspectProcess(
   candidate: LsofProcess,
 ): Promise<ProcessInfo> {
-  const [ppidField, uidField, startTime, ttyField, commandField, argumentsField, cwd] =
+  const [ppidField, uidField, startTime, ttyField, commandField, argumentsField, cwd, commandLine] =
     await Promise.all([
       psField(candidate.pid, "ppid"),
       psField(candidate.pid, "uid"),
@@ -217,27 +313,29 @@ export async function inspectProcess(
       psField(candidate.pid, "comm"),
       psField(candidate.pid, "args"),
       processCwd(candidate.pid),
+      process.platform === "linux" ? linuxCommandLine(candidate.pid) : Promise.resolve(null),
     ]);
   const ppid = parseInteger(ppidField.value);
   const uid = parseInteger(uidField.value);
   const ttyValue = ttyField.value;
   const tty = ttyValue === "?" || ttyValue === "??" || ttyValue === "-" ? null : ttyValue;
   const command = commandField.value;
-  const argumentsValue = argumentsField.value;
+  const argumentEvidence = reconcileArguments(argumentsField.value, commandLine);
   const commandBase = command ? basename(command).toLowerCase() : "";
-  const args = argumentsValue ?? null;
+  const args = argumentEvidence.arguments;
   const isCodex =
     candidate.command?.toLowerCase() === "codex" ||
     commandBase === "codex" ||
     commandBase.startsWith("codex-") ||
     /(^|\/)codex(?:\s|$)/i.test(args ?? "");
-  const isSharedService = /\b(?:app-server|remote-control|daemon)\b/i.test(args ?? "");
+  const isSharedService = argumentEvidence.isSharedService;
   const errors: string[] = [];
   if (ppid === null) errors.push(`ppid_${ppidField.status}${ppidField.error ? `:${ppidField.error}` : ""}`);
   if (uid === null) errors.push(`uid_${uidField.status}${uidField.error ? `:${uidField.error}` : ""}`);
   if (startTime.status !== "present") errors.push(`start_time_${startTime.status}${startTime.error ? `:${startTime.error}` : ""}`);
   if (command === null) errors.push(`command_${commandField.status}${commandField.error ? `:${commandField.error}` : ""}`);
-  if (args === null) errors.push(`arguments_${argumentsField.status}${argumentsField.error ? `:${argumentsField.error}` : ""}`);
+  if (argumentEvidence.error) errors.push(argumentEvidence.error);
+  else if (args === null) errors.push(`arguments_${argumentsField.status}${argumentsField.error ? `:${argumentsField.error}` : ""}`);
 
   return {
     pid: candidate.pid,
@@ -271,15 +369,61 @@ export async function inspectLockOpeners(
   };
 }
 
+interface LsofFile {
+  name: string;
+  device: bigint | null;
+  inode: bigint | null;
+}
+
+function parseLsofUnsigned(value: string, radix: 10 | 16): bigint | null {
+  const pattern = radix === 16 ? /^0x[0-9a-f]+$/i : /^[0-9]+$/;
+  return pattern.test(value) ? BigInt(value) : null;
+}
+
+/**
+ * Parses `lsof -F0Din` file sets. Device (`D`, hexadecimal) and inode (`i`,
+ * decimal) identify a file independently of how lsof renders its name.
+ */
+export function parseLsofFiles(output: string): LsofFile[] {
+  const files: LsofFile[] = [];
+  let current: LsofFile | undefined;
+  const flush = (): void => {
+    if (current?.name) files.push(current);
+    current = undefined;
+  };
+  for (const token of output.split(/[\0\n]/)) {
+    if (token.length < 1) continue;
+    const field = token[0];
+    const value = token.slice(1);
+    if (field === "p") {
+      flush();
+    } else if (field === "f") {
+      flush();
+      current = { name: "", device: null, inode: null };
+    } else if (current && field === "D") {
+      current.device = parseLsofUnsigned(value, 16);
+    } else if (current && field === "i") {
+      current.inode = parseLsofUnsigned(value, 10);
+    } else if (current && field === "n") {
+      current.name = value;
+    }
+  }
+  flush();
+  return files;
+}
+
+function isThreadLockName(path: string): boolean {
+  return (
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.lock(?: \(deleted\))?$/i.test(basename(path)) &&
+    basename(dirname(path)) === "thread-writer-locks"
+  );
+}
+
 export async function lockFilesOpenedByProcess(
   pid: number,
   intendedLockPath: string,
 ): Promise<{ paths: string[]; error?: string }> {
-  const executable = await findLsofExecutable();
-  if (!executable) {
-    return { paths: [], error: "lsof is not installed" };
-  }
-  const result = await runCommand(executable, ["-a", "-p", String(pid), "-Fn"]);
+  const result = await runDiagnostic("lsof", ["-a", "-p", String(pid), "-F0Din"]);
   const failure = commandFailureText(result);
   if (failure) {
     return { paths: [], error: failure };
@@ -290,35 +434,47 @@ export async function lockFilesOpenedByProcess(
       error: result.stderr.trim() || `lsof exited with status ${result.status}`,
     };
   }
-  const candidates = result.stdout
-    .split(/[\0\n]/)
-    .filter((token) => token.startsWith("n"))
-    .map((token) => token.slice(1))
-    .filter((path) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.lock(?: \(deleted\))?$/i.test(basename(path)))
-    .filter((path) => basename(dirname(path)) === "thread-writer-locks");
+  const candidates = parseLsofFiles(result.stdout).filter((file) => isThreadLockName(file.name));
   let intendedCanonical: string;
+  let intendedDevice: bigint;
+  let intendedInode: bigint;
   try {
     const intendedDirectory = await realpath(dirname(intendedLockPath));
     intendedCanonical = join(intendedDirectory, basename(intendedLockPath));
+    const intended = await lstat(intendedLockPath, { bigint: true });
+    intendedDevice = intended.dev;
+    intendedInode = intended.ino;
   } catch (error) {
-    return { paths: [], error: `intended lock directory is unresolved: ${errorText(error)}` };
+    return { paths: [], error: `intended lock is unresolved: ${errorText(error)}` };
   }
   const paths: string[] = [];
-  for (const path of candidates) {
+  for (const { name: path, device, inode } of candidates) {
     if (path.endsWith(" (deleted)")) {
       return { paths: [], error: `open lock path was deleted: ${path}` };
+    }
+    // Match the intended lock by identity: in the C locale lsof escapes
+    // non-ASCII name bytes (\xNN), so the rendered name may not be a real path.
+    if (device !== null && inode !== null && device === intendedDevice && inode === intendedInode) {
+      paths.push(intendedLockPath);
+      continue;
     }
     if (!isAbsolute(path)) {
       return { paths: [], error: `lsof returned a relative lock path: ${path}` };
     }
     try {
-      const value = await lstat(path);
+      const value = await lstat(path, { bigint: true });
       if (value.isSymbolicLink() || !value.isFile()) {
         return { paths: [], error: `open lock path is a symlink or non-regular file: ${path}` };
       }
       const canonicalDirectory = await realpath(dirname(path));
       const canonicalPath = join(canonicalDirectory, basename(path));
-      paths.push(canonicalPath === intendedCanonical ? intendedLockPath : canonicalPath);
+      if (canonicalPath === intendedCanonical) {
+        return {
+          paths: [],
+          error: `open lock path names the intended lock but not its device/inode: ${path}`,
+        };
+      }
+      paths.push(canonicalPath);
     } catch (error) {
       return { paths: [], error: `open lock path is unresolved: ${errorText(error)}` };
     }
@@ -327,7 +483,7 @@ export async function lockFilesOpenedByProcess(
 }
 
 async function processTable(): Promise<Map<number, number> | null> {
-  const result = await runCommand("ps", ["-axo", "pid=,ppid="]);
+  const result = await runDiagnostic("ps", ["-ww", "-axo", "pid=,ppid="]);
   if (commandFailureText(result)) return null;
   const table = new Map<number, number>();
   if (result.status !== 0) {
