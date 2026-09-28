@@ -23,6 +23,20 @@ installation is not a supported installation path.
 Tests that exercise lock ownership require `lsof` and a host with POSIX advisory
 locks (macOS or Linux).
 
+## Implementation boundaries
+
+`inspection` collects stable OS/transcript evidence; `policy` makes a pure
+fail-closed authorization decision; `unlock` owns the operation lease,
+complete revalidation, signaling, and post-signal verification. Only private
+revalidated evidence can reach the narrow SIGTERM function. These are internal
+review/test boundaries, not public JavaScript APIs. Automation uses CLI JSON v1
+and its [type-only models](docs/json-v1.md#typescript-types).
+
+Advisory update code stays outside those safety boundaries. The
+[update security contract](docs/update-security.md) specifies cache, registry,
+lease, privacy, CI/TTY, and failure isolation. It forbids synchronous network
+access in normal diagnostic commands and forbids automatic self-update.
+
 ## Changes and pull requests
 
 Commit and pull-request titles follow Conventional Commits. Common types are
