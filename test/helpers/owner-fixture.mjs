@@ -14,6 +14,9 @@ export const OWNER_FIXTURE = resolve("test/fixtures/codex");
 export const DIAGNOSTIC_OVERRIDE = resolve("test/helpers/diagnostic-override.mjs");
 export const POST_SIGNAL_FAULT = resolve("test/helpers/post-signal-fault.mjs");
 export const SUCCESSOR_FIXTURE = resolve("test/fixtures/successor.mjs");
+const UNREAPED_PARENT =
+  "my $pid = fork(); die \"fork: $!\" unless defined $pid; " +
+  "if ($pid == 0) { exec { $ARGV[0] } @ARGV or die \"exec: $!\"; } sleep 600;";
 
 export async function fixture(lastEvent = "task_complete", settings = {}) {
   const codexHome =
@@ -41,7 +44,7 @@ export async function fixture(lastEvent = "task_complete", settings = {}) {
   // `settings.unreapedParent` runs the owner under a parent that never waits,
   // so the owner becomes a zombie after it exits.
   const [command, args] = settings.unreapedParent
-    ? ["/bin/sh", ["-c", '"$@" & exec sleep 600', "sh", OWNER_FIXTURE, ...ownerArgs]]
+    ? ["/usr/bin/perl", ["-e", UNREAPED_PARENT, OWNER_FIXTURE, ...ownerArgs]]
     : [OWNER_FIXTURE, ownerArgs];
   const child = spawn(command, args, {
     env: { ...process.env, ...(settings.ownerEnv ?? {}) },
@@ -98,12 +101,8 @@ export async function stopChild(child) {
   }
 }
 
-export async function runCli(args, env = process.env, nodeArgs = [], settings = {}) {
-  const argv = [process.execPath, ...nodeArgs, resolve("dist/cli.js"), ...args];
-  const [command, commandArgs] = settings.fdLimit
-    ? ["/bin/sh", ["-c", `ulimit -n ${settings.fdLimit} && exec "$@"`, "sh", ...argv]]
-    : [argv[0], argv.slice(1)];
-  const child = spawn(command, commandArgs, {
+export async function runCli(args, env = process.env, nodeArgs = []) {
+  const child = spawn(process.execPath, [...nodeArgs, resolve("dist/cli.js"), ...args], {
     env,
     stdio: ["ignore", "pipe", "pipe"],
   });

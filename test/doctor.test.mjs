@@ -686,7 +686,7 @@ test("an immediate successor is reported as a reacquisition, not an unreleased l
   assert.equal(validate(parsed), true, JSON.stringify(validate.errors));
 });
 
-for (const [mode, fdLimit] of [["emfile", 256], ["throw", undefined]]) {
+for (const mode of ["emfile", "throw"]) {
   test(`post-signal ${mode} failure preserves the signal in the unlock result`, async (t) => {
     const value = await fixture();
     t.after(async () => await stopChild(value.child));
@@ -709,7 +709,6 @@ for (const [mode, fdLimit] of [["emfile", 256], ["throw", undefined]]) {
         CODEX_UNLOCK_TEST_POST_SIGNAL_FAULT: mode,
       },
       ["--import", POST_SIGNAL_FAULT],
-      { fdLimit },
     );
     assert.equal(result.stderr, "");
     assert.equal(result.code, 3, result.stdout);
