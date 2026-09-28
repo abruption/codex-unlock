@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
-import { chmod, link, mkdir, mkdtemp, rename, unlink, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import {
+  chmod,
+  link,
+  mkdir,
+  mkdtemp,
+  rename,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import process from "node:process";
 import { spawn } from "node:child_process";
 import test from "node:test";
@@ -11,6 +21,7 @@ import {
   unlockInspectedThread,
   unlockThread,
 } from "../dist/doctor.js";
+import { LEASE_DIRECTORY_NAME, acquireUnlockLease } from "../dist/coordination.js";
 import {
   OWNER_FIXTURE,
   OTHER_THREAD_ID,
@@ -262,30 +273,117 @@ test("concurrent CLI unlock attempts send at most one SIGTERM", async (t) => {
   assert.deepEqual(competing?.reasons, ["concurrent_unlock_in_progress"]);
 });
 
+function unlockArgs(codexHome, stabilityMs = "250") {
+  return [
+    "unlock",
+    THREAD_ID,
+    "--json",
+    "--codex-home",
+    codexHome,
+    "--stability-ms",
+    stabilityMs,
+  ];
+}
+
+function environmentWithout(names, additions = {}) {
+  const environment = { ...process.env, ...additions };
+  for (const name of names) delete environment[name];
+  return environment;
+}
+
+test("concurrent CLI unlocks from different TMPDIR and XDG_RUNTIME_DIR send one SIGTERM", async (t) => {
+  const value = await fixture();
+  t.after(async () => await stopChild(value.child));
+  const runtimeDirectory = await mkdtemp(join(tmpdir(), "codex-unlock-runtime-"));
+  await chmod(runtimeDirectory, 0o700);
+  const first = runCli(
+    unlockArgs(value.codexHome, "1000"),
+    environmentWithout(["XDG_RUNTIME_DIR"], { TMPDIR: runtimeDirectory }),
+  );
+  await waitForUnlockLeaseContention(value.codexHome);
+  const invocations = await Promise.all([
+    first,
+    runCli(
+      unlockArgs(value.codexHome),
+      environmentWithout(["TMPDIR"], { XDG_RUNTIME_DIR: runtimeDirectory }),
+    ),
+  ]);
+  const results = invocations.map((invocation) => JSON.parse(invocation.stdout));
+  const signaled = results.filter((result) => result.signalSent === "SIGTERM");
+
+  assert.equal(signaled.length, 1, JSON.stringify(results, null, 2));
+  const competing = results.find((result) => result.signalSent === null);
+  assert.deepEqual(competing?.reasons, ["concurrent_unlock_in_progress"]);
+});
+
+test("aliased Codex homes share one unlock lease", async (t) => {
+  const value = await fixture();
+  t.after(async () => await stopChild(value.child));
+  const linkedHome = await mkdtemp(join(tmpdir(), "codex-unlock-linked-home-"));
+  await symlink(
+    join(value.codexHome, "thread-writer-locks"),
+    join(linkedHome, "thread-writer-locks"),
+  );
+  await symlink(join(value.codexHome, "sessions"), join(linkedHome, "sessions"));
+  const aliases = [linkedHome, `${value.codexHome}-alias`];
+  await symlink(value.codexHome, aliases[1]);
+  const variant = join(
+    dirname(value.codexHome),
+    basename(value.codexHome).toUpperCase(),
+  );
+  if (variant !== value.codexHome && existsSync(variant)) aliases.push(variant);
+
+  const lease = acquireUnlockLease(value.codexHome, THREAD_ID);
+  assert.equal(lease.status, "acquired");
+  if (lease.status !== "acquired") return;
+  try {
+    for (const alias of aliases) {
+      const result = await runCli(unlockArgs(alias));
+      const parsed = JSON.parse(result.stdout);
+      assert.equal(parsed.outcome, "refused", alias);
+      assert.equal(parsed.signalSent, null, alias);
+      assert.deepEqual(parsed.reasons, ["concurrent_unlock_in_progress"], alias);
+      assert.equal(value.child.exitCode, null);
+    }
+  } finally {
+    lease.lease.release();
+  }
+});
+
+test("a squatted shared temporary lease root does not deny unlock", async (t) => {
+  const value = await fixture();
+  t.after(async () => await stopChild(value.child));
+  const temporary = await mkdtemp(join(tmpdir(), "codex-unlock-shared-tmp-"));
+  const squatted = join(temporary, `codex-unlock-${process.getuid()}`);
+  await mkdir(squatted);
+  await chmod(squatted, 0o777);
+
+  const result = await runCli(
+    unlockArgs(value.codexHome),
+    environmentWithout(["XDG_RUNTIME_DIR"], { TMPDIR: temporary }),
+  );
+  const parsed = JSON.parse(result.stdout);
+
+  assert.equal(parsed.outcome, "unlocked", result.stdout);
+  assert.equal(parsed.signalSent, "SIGTERM");
+});
+
 test("coordination failure refuses without signaling the safe owner", async (t) => {
   const value = await fixture();
   t.after(async () => await stopChild(value.child));
-  const runtimeDirectory = await mkdtemp(join(tmpdir(), "codex-unlock-public-runtime-"));
-  await chmod(runtimeDirectory, 0o755);
+  const coordinationDirectory = join(value.codexHome, LEASE_DIRECTORY_NAME);
+  await mkdir(coordinationDirectory);
+  await chmod(coordinationDirectory, 0o755);
 
-  const result = await runCli(
-    [
-      "unlock",
-      THREAD_ID,
-      "--json",
-      "--codex-home",
-      value.codexHome,
-      "--stability-ms",
-      "250",
-    ],
-    { ...process.env, XDG_RUNTIME_DIR: runtimeDirectory },
-  );
+  const result = await runCli(unlockArgs(value.codexHome));
   const parsed = JSON.parse(result.stdout);
 
   assert.equal(result.code, 2);
   assert.equal(parsed.outcome, "refused");
   assert.equal(parsed.signalSent, null);
-  assert.ok(parsed.reasons[0].startsWith("unlock_coordination_failed:"));
+  assert.deepEqual(parsed.reasons, [
+    "unlock_coordination_failed:coordination_directory_is_not_private",
+  ]);
   assert.equal(value.child.exitCode, null);
 });
 
