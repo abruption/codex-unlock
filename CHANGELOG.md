@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/abruption/codex-unlock/compare/v0.3.0...v0.4.0) (2026-09-28)
+
+
+### Features
+
+* publish type-only JSON v1 declarations ([#49](https://github.com/abruption/codex-unlock/issues/49)) ([c6091e7](https://github.com/abruption/codex-unlock/commit/c6091e7fad20864a7c34da2655a77b902f873891))
+
 ## [0.3.0](https://github.com/abruption/codex-unlock/compare/v0.2.0...v0.3.0) (2026-09-23)
 
 
