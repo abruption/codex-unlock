@@ -12,6 +12,48 @@ ignore fields they do not recognize. Removing or changing the meaning or type
 of an existing field requires a new `schemaVersion` and the documented
 breaking-change process.
 
+## TypeScript types
+
+The package provides type-only JSON v1 declarations at `codex-unlock/types`.
+Version 0.3.0 and earlier do not include this entry point; the npm release
+containing this addition is required. For example, after validating a CLI result
+against the schema:
+
+```ts
+import type { InspectionResult, JsonResult } from "codex-unlock/types";
+
+function describe(result: JsonResult): string {
+  if ("errorCode" in result) return result.error;
+  if (result.command === "inspect") return result.classification;
+  return result.command;
+}
+
+function explainOwner(result: InspectionResult): number | null {
+  return result.owner?.pid ?? null;
+}
+```
+
+`JsonResult` covers `ListResult`, `InspectionResult`, `UnlockResult`,
+`CheckUpdateResult`, and `CliErrorResult`. Nested JSON evidence models, enums,
+nullability, and the optional `ClientUpdate` advisory are also exported. The
+declarations have no Node.js/native dependency imports and work with TypeScript
+NodeNext and bundler resolution. The supported entry point is the `/types`
+subpath, not the package root or generated `dist/` paths.
+
+Always use `import type`; there is no runtime implementation at `/types`.
+Runtime imports of the root, `/types`, and internal modules remain rejected.
+Internal options, constants, inspection functions, and signal/executor helpers
+are not supported exports. The package's `types` metadata lets npm identify
+the bundled declarations; it does not advertise an executable library API.
+
+Types disappear at runtime: `JSON.parse` or a type assertion does not validate
+an unknown value. Validate with the normative JSON Schema when consuming
+untrusted output. Types do not enforce integer ranges, timestamps, or safety
+policy; `live_owner` is still not authorization to unlock. Ignore unknown
+additive JSON fields as before. Public declarations follow the JSON v1
+compatibility policy above; extending an enum may require updating exhaustive
+consumer switches.
+
 ## Common rules
 
 - `schemaVersion` is the integer `1` on command results and CLI errors.

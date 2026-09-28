@@ -30,6 +30,9 @@ The stable aggregate branch-protection checks are `supported-tests`, `lint`,
 [`platform-support.md`](platform-support.md). `package-smoke` requires exact
 artifact contents, an offline clean tarball installation, CLI/JSON smoke tests,
 and rejected package-root/internal imports on both operating systems.
+It also compiles a consumer against the installed tarball's type-only JSON
+declarations in NodeNext and bundler modes, without Node.js type dependencies,
+and rejects `/types` as a runtime import.
 
 Before merging the v0.2.0 Release Please pull request:
 

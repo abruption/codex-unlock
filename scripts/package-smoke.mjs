@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { log } from "node:console";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import process from "node:process";
@@ -30,12 +30,14 @@ try {
     "dist/coordination.js",
     "dist/doctor.js",
     "dist/inspection.js",
+    "dist/json-types.d.ts",
     "dist/lock.js",
     "dist/options.js",
     "dist/policy.js",
     "dist/process.js",
     "dist/transcript.js",
     "dist/types.js",
+    "dist/types.d.ts",
     "dist/unlock.js",
     "dist/update.js",
     "dist/util.js",
@@ -94,9 +96,13 @@ try {
   const packageRoot = join(installDirectory, "node_modules", "codex-unlock");
   const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
   assert.equal(manifest.bin["codex-unlock"], "dist/cli.js");
-  assert.deepEqual(manifest.exports, { "./package.json": "./package.json" });
+  assert.deepEqual(manifest.exports, {
+    "./types": { types: "./dist/json-types.d.ts" },
+    "./package.json": "./package.json",
+  });
   assert.equal(manifest.main, undefined);
-  assert.equal(manifest.types, undefined);
+  assert.equal(manifest.types, "dist/json-types.d.ts");
+  assert.match(readFileSync(resolve(packageRoot, manifest.types), "utf8"), /export type/);
   assert.equal(manifest.scripts.prepare, "npm run build");
   assert.equal(manifest.scripts.prepack, undefined);
   assert.match(
@@ -133,7 +139,35 @@ try {
     ),
     (error) => error?.stderr?.includes("ERR_PACKAGE_PATH_NOT_EXPORTED"),
   );
-  log("Packed artifact matches the allowlist and passes offline CLI/JSON boundary checks.");
+  for (const subpath of ["types", "dist/types.js", "dist/types.d.ts"]) {
+    assert.throws(
+      () => execFileSync(
+        process.execPath,
+        ["--input-type=module", "--eval", `await import('codex-unlock/${subpath}')`],
+        { cwd: installDirectory, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      ),
+      (error) => error?.stderr?.includes("ERR_PACKAGE_PATH_NOT_EXPORTED"),
+    );
+  }
+
+  // Compile against the installed tarball, not workspace source or declarations.
+  const consumer = join(installDirectory, "json-types-consumer.mts");
+  copyFileSync(resolve("scripts/fixtures/json-types-consumer.mts"), consumer);
+  const emptyTypeRoots = join(installDirectory, "empty-types");
+  mkdirSync(emptyTypeRoots);
+  for (const [module, moduleResolution] of [["NodeNext", "NodeNext"], ["ESNext", "Bundler"]]) {
+    execFileSync(
+      process.execPath,
+      [
+        resolve("node_modules/typescript/bin/tsc"), "--noEmit", "--strict",
+        "--target", "ES2022", "--lib", "ES2022", "--module", module,
+        "--moduleResolution", moduleResolution, "--typeRoots", emptyTypeRoots,
+        "--verbatimModuleSyntax", consumer,
+      ],
+      { cwd: installDirectory, encoding: "utf8", timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] },
+    );
+  }
+  log("Packed artifact passes offline CLI/JSON and type-only consumer boundary checks.");
 } finally {
   rmSync(directory, { recursive: true, force: true });
 }
