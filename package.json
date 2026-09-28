@@ -30,6 +30,7 @@
     "dist/update.js",
     "dist/util.js",
     "schemas/codex-unlock-v1.schema.json",
+    "docs/cli-reference.md",
     "docs/json-v1.md",
     "docs/platform-support.md",
     "docs/safety-race-matrix.md",

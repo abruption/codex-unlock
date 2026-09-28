@@ -41,6 +41,7 @@ try {
     "dist/unlock.js",
     "dist/update.js",
     "dist/util.js",
+    "docs/cli-reference.md",
     "docs/json-v1.md",
     "docs/platform-support.md",
     "docs/safety-race-matrix.md",
