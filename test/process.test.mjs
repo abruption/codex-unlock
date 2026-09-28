@@ -7,6 +7,7 @@ import {
   parseLsofFiles,
   parseLsofProcesses,
   parseProcCommandLine,
+  processExitObservationFromCommand,
   processStartTimeFromCommand,
   reconcileArguments,
 } from "../dist/process.js";
@@ -152,6 +153,36 @@ test("reconciles ps arguments with kernel argv and fails closed on truncation", 
   assert.equal(
     reconcileArguments("codex exec", { status: "present", argv: ["codex", "daemon"] })
       .isSharedService,
+    true,
+  );
+});
+
+test("reads zombie state and start time from one ps sample", () => {
+  const start = "Tue Sep 29 08:21:32 2026";
+  for (const state of ["Z", "ZN", "Z+", "Zs"]) {
+    assert.deepEqual(
+      processExitObservationFromCommand({ status: 0, stdout: `${state}   ${start}    \n`, stderr: "" }),
+      { status: "present", startTime: start, zombie: true },
+    );
+  }
+  assert.deepEqual(
+    processExitObservationFromCommand({ status: 0, stdout: `Ss ${start}\n`, stderr: "" }),
+    { status: "present", startTime: start },
+  );
+  assert.deepEqual(
+    processExitObservationFromCommand({ status: 1, stdout: "", stderr: "" }),
+    { status: "absent", startTime: null },
+  );
+  assert.equal(
+    processExitObservationFromCommand({ status: 0, stdout: "Z\n", stderr: "" }).status,
+    "unknown",
+  );
+  assert.equal(
+    processExitObservationFromCommand({ status: 0, stdout: "Z garbage\n", stderr: "" }).status,
+    "unknown",
+  );
+  assert.equal(
+    originalProcessExited(start, { status: "present", startTime: start, zombie: true }),
     true,
   );
 });

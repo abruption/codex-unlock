@@ -21,6 +21,10 @@ they do not rely on timer placement.
 | `ps` or `lsof` shadowed on `PATH` | Process evidence only from fixed system paths | Shadow binary never runs | `ps and lsof on PATH cannot supply process evidence` |
 | Diagnostic spawn fails (`EMFILE`, synchronous throw) | Structured `spawn_error`, never an unhandled error | Evidence `unknown`; refuse before signal | runCommand spawn failure tests |
 | Codex home path contains non-ASCII bytes | Owner lock matched by `lsof` device/inode, not escaped name | Correct lock set; unresolvable other locks still refuse | non-ASCII Codex home tests |
+| Owner or lock changes during the final transcript hash | Start time, lock identity, and probe resampled after hashing, immediately before SIGTERM | Refuse; zero SIGTERM | existing revalidation tests (cheap resample on every unlock) |
+| Signaled owner exits but its parent never reaps it | Zombie state from the same `ps` sample as the start time | Counts as exited; `processObservation.zombie: true` | `an unreaped zombie owner counts as exited` |
+| Another process takes the lock right after the owner exits | Re-identify the current opener by PID/start time | `verification_failed`, `lock_reacquired_by_other_owner`, successor never signaled | `an immediate successor is reported as a reacquisition, not an unreleased lock` |
+| Observation fails or throws after SIGTERM (for example `EMFILE`) | Signal-boundary results keep `pid` and `signalSent` | `termination_failed`/`verification_failed`, exit 3, no stderr | `post-signal emfile/throw failure preserves the signal in the unlock result` |
 | Post-signal lock observation becomes unavailable | Confirmed OS lock release | Termination failure; never report release | post-signal lock observation test |
 
 The operation lease is separate from `~/.codex/thread-writer-locks`. It lives

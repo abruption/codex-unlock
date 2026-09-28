@@ -223,8 +223,14 @@ function printUnlock(result: UnlockResult): void {
   console.log(`Outcome:              ${result.outcome}`);
   console.log(`PID:                  ${printable(result.pid)}`);
   console.log(`Signal:               ${printable(result.signalSent)}`);
-  console.log(`Process exited:        ${printable(result.processExited === null ? null : result.processExited ? "yes" : "no")}`);
-  console.log(`Lock released:        ${result.lockReleased ? "yes" : "no"}`);
+  console.log(`Process exited:        ${printable(result.processExited === null ? null : result.processExited ? result.processObservation?.zombie ? "yes (zombie, not yet reaped by its parent)" : "yes" : "no")}`);
+  if (result.lockReacquiredBy) {
+    const holders = result.lockReacquiredBy.map((holder) => holder.pid).join(", ");
+    console.log(`Lock released:        no; the original owner exited and PID ${holders} now holds the lock`);
+    console.log("The original owner is gone. Retrying unlock would target the new holder, not the process that was signaled.");
+  } else {
+    console.log(`Lock released:        ${result.lockReleased ? "yes" : "no"}`);
+  }
   console.log(`Transcript unchanged: ${printable(result.transcriptUnchanged === null ? null : result.transcriptUnchanged ? "yes" : "no")}`);
   console.log("Lock file removed by codex-unlock: no");
   if (result.reasons.length > 0) {

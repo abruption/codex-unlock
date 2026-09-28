@@ -176,9 +176,10 @@ export function processStartTimeFromCommand(
   return { status: "present", startTime: value };
 }
 
-export async function processStartTime(pid: number): Promise<ProcessStartObservation> {
-  const result = await runDiagnostic("ps", ["-ww", "-p", String(pid), "-o", "lstart="]);
-  const observation = processStartTimeFromCommand(result);
+async function confirmAbsence(
+  pid: number,
+  observation: ProcessStartObservation,
+): Promise<ProcessStartObservation> {
   if (observation.status !== "absent") return observation;
   try {
     process.kill(pid, 0);
@@ -198,12 +199,55 @@ export async function processStartTime(pid: number): Promise<ProcessStartObserva
   }
 }
 
+export async function processStartTime(pid: number): Promise<ProcessStartObservation> {
+  const result = await runDiagnostic("ps", ["-ww", "-p", String(pid), "-o", "lstart="]);
+  return await confirmAbsence(pid, processStartTimeFromCommand(result));
+}
+
+/**
+ * Interprets `ps -o stat=,lstart=` output. The state and start time come from
+ * one sample, so a zombie is attributed to the same process instance.
+ */
+export function processExitObservationFromCommand(
+  result: CommandResult,
+): ProcessStartObservation {
+  const value = result.stdout.trim();
+  if (commandFailureText(result) || result.status !== 0 || value === "") {
+    return processStartTimeFromCommand(result);
+  }
+  const match = value.match(/^(\S+)\s+(\S.*)$/);
+  if (!match) {
+    return {
+      status: "unknown",
+      startTime: null,
+      error: "ps returned malformed process state output",
+    };
+  }
+  const observation = processStartTimeFromCommand({ ...result, stdout: match[2] });
+  return observation.status === "present" && match[1].startsWith("Z")
+    ? { ...observation, zombie: true }
+    : observation;
+}
+
+/**
+ * Post-signal observation: start time plus zombie state. A zombie has already
+ * exited and closed its descriptors; only its parent has not reaped it yet.
+ */
+export async function processExitObservation(pid: number): Promise<ProcessStartObservation> {
+  const result = await runDiagnostic("ps", ["-ww", "-p", String(pid), "-o", "stat=,lstart="]);
+  return await confirmAbsence(pid, processExitObservationFromCommand(result));
+}
+
 export function originalProcessExited(
   originalStartTime: string,
   observation: ProcessStartObservation,
 ): boolean | null {
   if (observation.status === "unknown") return null;
-  return observation.status === "absent" || observation.startTime !== originalStartTime;
+  return (
+    observation.status === "absent" ||
+    observation.startTime !== originalStartTime ||
+    observation.zombie === true
+  );
 }
 
 async function processCwd(pid: number): Promise<string | null> {

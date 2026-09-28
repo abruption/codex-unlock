@@ -1,12 +1,19 @@
 import { acquireUnlockLease } from "./coordination.js";
 import { inspectThread } from "./inspection.js";
-import { probeLock } from "./lock.js";
+import { observeLockFile, probeLock, probeObservedLock } from "./lock.js";
 import { defaultOptions, validateThreadId } from "./options.js";
-import { originalProcessExited, processStartTime } from "./process.js";
+import {
+  inspectLockOpeners,
+  originalProcessExited,
+  processExitObservation,
+  processStartTime,
+} from "./process.js";
 import { sameLastRecord, stableFileHash } from "./transcript.js";
 import type {
   DoctorOptions,
   InspectionResult,
+  LockHolder,
+  LockProbe,
   ProcessInfo,
   ProcessStartObservation,
   UnlockResult,
@@ -63,11 +70,130 @@ interface RevalidatedUnlockEvidence {
   transcriptHash: string;
 }
 
+interface PostSignalState {
+  processExited: boolean | null;
+  processObservation: ProcessStartObservation;
+  lockReleased: boolean;
+  lastLockProbe: LockProbe | null;
+  lockReacquiredBy: LockHolder[] | null;
+  lockHolderNote: string | null;
+  transcriptUnchanged: boolean | null;
+  reasons: string[];
+}
+
+type Reacquisition =
+  | { status: "other_owner"; holders: LockHolder[] }
+  | { status: "owner_descendant"; holders: LockHolder[] }
+  | { status: "inconclusive"; error?: string };
+
+/**
+ * After the original owner is confirmed exited, a held lock can only belong
+ * to a different process. Identify it by PID and start time so the report does
+ * not invite a retry that would signal the successor.
+ */
+async function identifyReacquisition(
+  lockPath: string,
+  owner: ProcessInfo & { startTime: string },
+  ownerDescendants: readonly number[],
+): Promise<Reacquisition> {
+  const openers = await inspectLockOpeners(lockPath);
+  if (openers.error) return { status: "inconclusive", error: openers.error };
+  if (openers.processes.length === 0) {
+    return { status: "inconclusive", error: "no current lock opener was observed" };
+  }
+  const different = openers.processes.every(
+    (opener) =>
+      opener.pid !== owner.pid ||
+      (opener.startTime !== null && opener.startTime !== owner.startTime),
+  );
+  if (!different) {
+    return { status: "inconclusive", error: "current opener matches the original owner" };
+  }
+  const holders = openers.processes.map((opener) => ({
+    pid: opener.pid,
+    startTime: opener.startTime,
+  }));
+  // flock belongs to the open file description, so a descendant that
+  // inherited the descriptor keeps the original owner's lock alive.
+  if (holders.some((holder) => ownerDescendants.includes(holder.pid))) {
+    return { status: "owner_descendant", holders };
+  }
+  return { status: "other_owner", holders };
+}
+
+async function observeTermination(
+  evidence: RevalidatedUnlockEvidence,
+  options: DoctorOptions,
+  state: PostSignalState,
+): Promise<void> {
+  const { inspection, owner, transcriptPath, transcriptHash } = evidence;
+  const deadline = Date.now() + options.terminationTimeoutMs;
+  while (Date.now() <= deadline) {
+    state.lockHolderNote = null;
+    const [exitObservation, lockProbe] = await Promise.all([
+      processExitObservation(owner.pid),
+      Promise.resolve(probeLock(inspection.lock.path)),
+    ]);
+    state.processObservation = exitObservation;
+    state.lastLockProbe = lockProbe;
+    state.processExited = originalProcessExited(owner.startTime, exitObservation);
+    state.lockReleased = lockProbe.status === "free";
+    if (state.processExited === true && state.lockReleased) {
+      break;
+    }
+    if (state.processExited === true && lockProbe.status === "held") {
+      const reacquisition = await identifyReacquisition(
+        inspection.lock.path,
+        owner,
+        inspection.descendantPids ?? [],
+      );
+      if (reacquisition.status === "other_owner") {
+        state.lockReacquiredBy = reacquisition.holders;
+        break;
+      }
+      state.lockHolderNote =
+        reacquisition.status === "owner_descendant"
+          ? `lock_held_by_owner_descendant:${reacquisition.holders.map((holder) => holder.pid).join(",")}`
+          : `lock_holder_unidentified:${reacquisition.error ?? "unknown"}`;
+    }
+    await delay(100);
+  }
+
+  try {
+    state.transcriptUnchanged =
+      (await stableFileHash(transcriptPath)).hash === transcriptHash;
+    if (!state.transcriptUnchanged) state.reasons.push("transcript_changed_during_unlock");
+  } catch (error) {
+    state.reasons.push(`post_unlock_transcript_hash_failed:${errorText(error)}`);
+  }
+  if (state.processExited === null) {
+    state.reasons.push(
+      `owner_exit_unknown:${state.processObservation.error ?? "process observation failed"}`,
+    );
+  } else if (!state.processExited) {
+    state.reasons.push("owner_did_not_exit_before_timeout");
+  }
+  if (state.lockReacquiredBy) {
+    state.reasons.push(
+      `lock_reacquired_by_other_owner:${state.lockReacquiredBy.map((holder) => holder.pid).join(",")}`,
+    );
+  } else if (!state.lockReleased) {
+    state.reasons.push(
+      state.lastLockProbe?.status === "unknown"
+        ? `lock_release_unknown:${state.lastLockProbe.error ?? "lock probe failed"}`
+        : "lock_was_not_released",
+    );
+    if (state.lockHolderNote && state.lastLockProbe?.status === "held") {
+      state.reasons.push(state.lockHolderNote);
+    }
+  }
+}
+
 async function terminateRevalidatedOwner(
   evidence: RevalidatedUnlockEvidence,
   options: DoctorOptions,
 ): Promise<UnlockResult> {
-  const { inspection, owner, transcriptPath, transcriptHash } = evidence;
+  const { inspection, owner } = evidence;
   try {
     process.kill(owner.pid, "SIGTERM");
   } catch (error) {
@@ -84,67 +210,45 @@ async function terminateRevalidatedOwner(
     });
   }
 
-  const deadline = Date.now() + options.terminationTimeoutMs;
-  let processExited: boolean | null = false;
-  let processObservation: ProcessStartObservation = {
-    status: "present",
-    startTime: owner.startTime,
+  // Past the signal boundary every failure must still report the signal.
+  const state: PostSignalState = {
+    processExited: null,
+    processObservation: {
+      status: "unknown",
+      startTime: null,
+      error: "owner was not observed after SIGTERM",
+    },
+    lockReleased: false,
+    lastLockProbe: null,
+    lockReacquiredBy: null,
+    lockHolderNote: null,
+    transcriptUnchanged: null,
+    reasons: [],
   };
-  let lockReleased = false;
-  let lastLockProbe = probeLock(inspection.lock.path);
-  while (Date.now() <= deadline) {
-    const [startObservation, lockProbe] = await Promise.all([
-      processStartTime(owner.pid),
-      Promise.resolve(probeLock(inspection.lock.path)),
-    ]);
-    processObservation = startObservation;
-    lastLockProbe = lockProbe;
-    processExited = originalProcessExited(owner.startTime, startObservation);
-    lockReleased = lockProbe.status === "free";
-    if (processExited === true && lockReleased) {
-      break;
-    }
-    await delay(100);
-  }
-
-  let transcriptUnchanged: boolean | null = null;
-  const reasons: string[] = [];
   try {
-    transcriptUnchanged = (await stableFileHash(transcriptPath)).hash === transcriptHash;
-    if (!transcriptUnchanged) reasons.push("transcript_changed_during_unlock");
+    await observeTermination(evidence, options, state);
   } catch (error) {
-    reasons.push(`post_unlock_transcript_hash_failed:${errorText(error)}`);
-  }
-  if (processExited === null) {
-    reasons.push(
-      `owner_exit_unknown:${processObservation.error ?? "process observation failed"}`,
-    );
-  } else if (!processExited) {
-    reasons.push("owner_did_not_exit_before_timeout");
-  }
-  if (!lockReleased) {
-    reasons.push(
-      lastLockProbe.status === "unknown"
-        ? `lock_release_unknown:${lastLockProbe.error ?? "lock probe failed"}`
-        : "lock_was_not_released",
-    );
+    state.reasons.push(`post_signal_verification_failed:${errorText(error)}`);
   }
 
-  const verified = processExited === true && lockReleased && transcriptUnchanged === true;
+  const verified =
+    state.processExited === true &&
+    state.lockReleased &&
+    state.transcriptUnchanged === true &&
+    state.reasons.length === 0;
+  const terminated =
+    state.processExited === true && (state.lockReleased || state.lockReacquiredBy !== null);
   return unlockResult(inspection, {
-    outcome: verified
-      ? "unlocked"
-      : processExited && lockReleased
-        ? "verification_failed"
-        : "termination_failed",
+    outcome: verified ? "unlocked" : terminated ? "verification_failed" : "termination_failed",
     changed: true,
     pid: owner.pid,
     signalSent: "SIGTERM",
-    processExited,
-    processObservation,
-    lockReleased,
-    transcriptUnchanged,
-    reasons,
+    processExited: state.processExited,
+    processObservation: state.processObservation,
+    lockReleased: state.lockReleased,
+    transcriptUnchanged: state.transcriptUnchanged,
+    ...(state.lockReacquiredBy ? { lockReacquiredBy: state.lockReacquiredBy } : {}),
+    reasons: unique(state.reasons),
   });
 }
 
@@ -277,6 +381,23 @@ export async function unlockInspectedThread(
       }
     } catch (error) {
       revalidationReasons.push(`transcript_revalidation_hash_failed:${errorText(error)}`);
+    }
+  }
+  if (revalidationReasons.length === 0) {
+    // The full transcript hash above can take a while; re-sample the cheap
+    // identity and lock evidence immediately before the signal boundary.
+    const [preSignalStart, preSignalLock] = await Promise.all([
+      processStartTime(owner.pid),
+      Promise.resolve(observeLockFile(inspection.lock.path)),
+    ]);
+    if (preSignalStart.status !== "present" || preSignalStart.startTime !== owner.startTime) {
+      revalidationReasons.push("owner_changed_before_signal");
+    }
+    if (
+      !sameSnapshot(finalInspection.lock.snapshot, preSignalLock.snapshot) ||
+      probeObservedLock(inspection.lock.path, preSignalLock).status !== "held"
+    ) {
+      revalidationReasons.push("lock_changed_before_signal");
     }
   }
   if (revalidationReasons.length > 0) {
