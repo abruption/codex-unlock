@@ -381,8 +381,10 @@ function parseLsofUnsigned(value: string, radix: 10 | 16): bigint | null {
 }
 
 /**
- * Parses `lsof -F0Din` file sets. Device (`D`, hexadecimal) and inode (`i`,
+ * Parses `lsof -F0fDin` file sets. Device (`D`, hexadecimal) and inode (`i`,
  * decimal) identify a file independently of how lsof renders its name.
+ * macOS lsof starts every set with `f`; Linux lsof 4.9x may omit it, so a
+ * repeated field (lsof emits `D`, `i`, then `n` in order) also starts a set.
  */
 export function parseLsofFiles(output: string): LsofFile[] {
   const files: LsofFile[] = [];
@@ -391,6 +393,11 @@ export function parseLsofFiles(output: string): LsofFile[] {
     if (current?.name) files.push(current);
     current = undefined;
   };
+  const begin = (): LsofFile => {
+    flush();
+    current = { name: "", device: null, inode: null };
+    return current;
+  };
   for (const token of output.split(/[\0\n]/)) {
     if (token.length < 1) continue;
     const field = token[0];
@@ -398,14 +405,19 @@ export function parseLsofFiles(output: string): LsofFile[] {
     if (field === "p") {
       flush();
     } else if (field === "f") {
-      flush();
-      current = { name: "", device: null, inode: null };
-    } else if (current && field === "D") {
-      current.device = parseLsofUnsigned(value, 16);
-    } else if (current && field === "i") {
-      current.inode = parseLsofUnsigned(value, 10);
-    } else if (current && field === "n") {
-      current.name = value;
+      begin();
+    } else if (field === "D") {
+      const file =
+        !current || current.name || current.device !== null || current.inode !== null
+          ? begin()
+          : current;
+      file.device = parseLsofUnsigned(value, 16);
+    } else if (field === "i") {
+      const file = !current || current.name || current.inode !== null ? begin() : current;
+      file.inode = parseLsofUnsigned(value, 10);
+    } else if (field === "n") {
+      const file = !current || current.name ? begin() : current;
+      file.name = value;
     }
   }
   flush();
@@ -423,7 +435,7 @@ export async function lockFilesOpenedByProcess(
   pid: number,
   intendedLockPath: string,
 ): Promise<{ paths: string[]; error?: string }> {
-  const result = await runDiagnostic("lsof", ["-a", "-p", String(pid), "-F0Din"]);
+  const result = await runDiagnostic("lsof", ["-a", "-p", String(pid), "-F0fDin"]);
   const failure = commandFailureText(result);
   if (failure) {
     return { paths: [], error: failure };

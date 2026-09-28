@@ -80,6 +80,27 @@ test("derives exit only from absence or a different process start time", () => {
   );
 });
 
+test("parses Linux lsof file sets that omit the f field", () => {
+  const lock = "/home/a/\\xed\\x99\\x88/thread-writer-locks/01a089e8-3731-7202-ba68-0f4b0a3b2711.lock";
+  assert.deepEqual(
+    parseLsofFiles(`p42\0D0x801\0i880\0n/tmp\0D0x801\0i1048906\0n${lock}\0i7\0n/no-device\0n/name-only\0`),
+    [
+      { name: "/tmp", device: 0x801n, inode: 880n },
+      { name: lock, device: 0x801n, inode: 1048906n },
+      { name: "/no-device", device: null, inode: 7n },
+      { name: "/name-only", device: null, inode: null },
+    ],
+  );
+  assert.deepEqual(
+    parseLsofFiles(`p42\0fcwd\0D0x801\0i1\0n/a\0f3\0D0x802\0i2\0n/b\0p43\0D0x803\0i3\0n/c\0`),
+    [
+      { name: "/a", device: 0x801n, inode: 1n },
+      { name: "/b", device: 0x802n, inode: 2n },
+      { name: "/c", device: 0x803n, inode: 3n },
+    ],
+  );
+});
+
 test("parses lsof device and inode fields independently of escaped names", () => {
   const lock = "/Users/a/\\xed\\x99\\x88/thread-writer-locks/01a089e8-3731-7202-ba68-0f4b0a3b2711.lock";
   assert.deepEqual(

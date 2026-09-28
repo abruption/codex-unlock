@@ -48,17 +48,26 @@ export const DIAGNOSTIC_COMMAND_ENV: Readonly<NodeJS.ProcessEnv> = Object.freeze
   PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
 });
 
-export type SpawnProcess = (
+type SpawnProcess = (
   command: string,
   args: readonly string[],
   options: SpawnOptions,
 ) => ChildProcess;
 
+let spawnOverride: SpawnProcess | null = null;
+
+/**
+ * Test-only seam for spawn failure injection; `null` restores
+ * `child_process.spawn`. Not part of the package's supported exports.
+ */
+export function overrideSpawnForTesting(replacement: SpawnProcess | null): void {
+  spawnOverride = replacement;
+}
+
 export async function runCommand(
   executable: string,
   args: string[],
   limits: Readonly<CommandLimits> = DEFAULT_COMMAND_LIMITS,
-  spawnProcess: SpawnProcess = spawn,
 ): Promise<CommandResult> {
   return await new Promise((resolve) => {
     const isolatedProcessGroup = process.platform !== "win32";
@@ -69,13 +78,17 @@ export async function runCommand(
       ...(error instanceof Error ? { error: error as NodeJS.ErrnoException } : {}),
       failure: { kind: "spawn_error", message: errorText(error) },
     });
+    const options: SpawnOptions = {
+      detached: isolatedProcessGroup,
+      env: { ...DIAGNOSTIC_COMMAND_ENV },
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    };
     let child: ChildProcess;
     try {
-      child = spawnProcess(executable, args, {
-        detached: isolatedProcessGroup,
-        env: { ...DIAGNOSTIC_COMMAND_ENV },
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      child = spawnOverride
+        ? spawnOverride(executable, args, options)
+        : spawn(executable, args, options);
     } catch (error) {
       resolve(spawnFailure(error));
       return;

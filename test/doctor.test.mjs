@@ -568,3 +568,33 @@ test("an unresolvable second lock under a non-ASCII home still fails closed", as
       inspection.blockers.includes("owner_holds_other_thread_locks"),
   );
 });
+
+test("matches owner locks when lsof omits file descriptor fields (Linux format)", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "codex-unlock-lsof-no-f-"));
+  const value = await fixture("task_complete", {
+    codexHome: join(root, "홈 코덱스", ".codex"),
+  });
+  t.after(async () => await stopChild(value.child));
+  const fakeLsof = join(root, "lsof");
+  await writeFile(
+    fakeLsof,
+    [
+      "#!/bin/sh",
+      "for real in /usr/sbin/lsof /usr/bin/lsof; do [ -x \"$real\" ] && break; done",
+      "\"$real\" \"$@\" | tr '\\000' '\\n' | grep -v '^f' | tr '\\n' '\\000'",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+
+  const result = await runCli(
+    ["inspect", THREAD_ID, "--json", "--codex-home", value.codexHome, "--stability-ms", "250"],
+    { ...process.env, CODEX_UNLOCK_TEST_LSOF: fakeLsof },
+    ["--import", DIAGNOSTIC_OVERRIDE],
+  );
+  assert.equal(result.stderr, "");
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.classification, "live_owner", result.stdout);
+  assert.deepEqual(parsed.ownerLockFiles, [value.lockPath]);
+  assert.equal(parsed.safeToUnlock, true, parsed.blockers.join(","));
+});

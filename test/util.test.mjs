@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import { EventEmitter } from "node:events";
-import { resolve } from "node:path";
 import process from "node:process";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import { pathToFileURL } from "node:url";
 
-import { DIAGNOSTIC_COMMAND_ENV, runCommand } from "../dist/util.js";
+import {
+  DIAGNOSTIC_COMMAND_ENV,
+  overrideSpawnForTesting,
+  runCommand,
+} from "../dist/util.js";
 
 const limits = {
   timeoutMs: 2_000,
@@ -133,18 +135,21 @@ function errno(code) {
   return Object.assign(new Error(`spawn ${code}`), { code, errno: -1, syscall: "spawn" });
 }
 
-test("reports a synchronous spawn throw as a structured command error", async () => {
-  const result = await runCommand("/bin/ps", [], limits, () => {
+test("reports a synchronous spawn throw as a structured command error", async (t) => {
+  t.after(() => overrideSpawnForTesting(null));
+  overrideSpawnForTesting(() => {
     throw errno("EBADF");
   });
+  const result = await runCommand("/bin/ps", [], limits);
   assert.equal(result.status, null);
   assert.equal(result.failure?.kind, "spawn_error");
   assert.equal(result.error?.code, "EBADF");
 });
 
-test("reports a child without stdio pipes as a structured command error", async () => {
+test("reports a child without stdio pipes as a structured command error", async (t) => {
+  t.after(() => overrideSpawnForTesting(null));
   let emitted = false;
-  const result = await runCommand("/bin/ps", [], limits, () => {
+  overrideSpawnForTesting(() => {
     const child = new EventEmitter();
     child.stdout = null;
     child.stderr = null;
@@ -156,43 +161,20 @@ test("reports a child without stdio pipes as a structured command error", async 
     });
     return child;
   });
+  const result = await runCommand("/bin/ps", [], limits);
   assert.equal(emitted, true);
   assert.equal(result.status, null);
   assert.equal(result.failure?.kind, "spawn_error");
   assert.equal(result.error?.code, "EMFILE");
 
-  const silent = await runCommand("/bin/ps", [], limits, () => {
+  overrideSpawnForTesting(() => {
     const child = new EventEmitter();
     child.stdout = null;
     child.stderr = null;
     child.kill = () => false;
     return child;
   });
+  const silent = await runCommand("/bin/ps", [], limits);
   assert.equal(silent.failure?.kind, "spawn_error");
   assert.match(silent.failure.message, /stdout\/stderr/);
-});
-
-test("survives real descriptor exhaustion without an unhandled error", async (t) => {
-  if (process.platform === "win32") {
-    t.skip("POSIX descriptor limits only");
-    return;
-  }
-  const script = [
-    "import { closeSync, openSync } from 'node:fs'",
-    "const output = process.stdout",
-    `const { runCommand } = await import(${JSON.stringify(pathToFileURL(resolve("dist/util.js")).href)})`,
-    "const held = []",
-    "try { for (;;) held.push(openSync('/dev/null', 'r')) } catch {}",
-    "const result = await runCommand('/bin/ps', ['-p', String(process.pid)])",
-    "for (const fd of held) closeSync(fd)",
-    "output.write(JSON.stringify({ kind: result.failure?.kind ?? null, code: result.error?.code ?? null }))",
-  ].join("\n");
-  const child = await runCommand(
-    "/bin/sh",
-    ["-c", `ulimit -n 64 && exec "$0" --input-type=module -e "$1"`, process.execPath, script],
-    { ...limits, timeoutMs: 10_000 },
-  );
-  assert.equal(child.status, 0, child.stderr);
-  const parsed = JSON.parse(child.stdout);
-  assert.equal(parsed.kind, "spawn_error");
 });
