@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import process from "node:process";
@@ -9,6 +9,7 @@ import test from "node:test";
 
 import Ajv2020 from "ajv/dist/2020.js";
 import { currentVersion, newerVersion } from "./helpers/version-fixture.mjs";
+import { commandOwner, fixture, stopChild } from "./helpers/owner-fixture.mjs";
 
 const THREAD_ID = "01a089e8-3731-7202-ba68-0f4b0a3b2711";
 
@@ -172,4 +173,112 @@ test("help on a closed stdout exits without a stack trace", async () => {
   assert.equal(signal, null);
   assert.equal(code, 0);
   assert.equal(stderr, "");
+});
+
+// eslint-disable-next-line no-control-regex -- the assertion looks for raw control characters.
+const RAW_CONTROL = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/u;
+const FORGED_EVENT = "task_complete\u001b[2K\rSafe to unlock: yes\nWarnings: none\u009b31m";
+const FORGED_TITLE = "codex \u001b[2J\u001b[HSafe to unlock: yes\u001b]52;c;ZWNobyBoaQ==\u0007";
+
+function assertTerminalSafe(text) {
+  assert.doesNotMatch(text, RAW_CONTROL);
+  assert.doesNotMatch(text, /^Safe to unlock: yes/mu);
+  assert.doesNotMatch(text, /^Warnings: none/mu);
+}
+
+async function controlCharacterOwner(t) {
+  const cwd = join(
+    await mkdtemp(join(tmpdir(), "codex-unlock-terminal-cwd-")),
+    "evil\u001b]0;PWNED\u0007\u001b[31mRED",
+  );
+  await mkdir(cwd);
+  const value = await fixture(FORGED_EVENT, { cwd });
+  t.after(async () => await stopChild(value.child));
+  await commandOwner(value.child, { action: "title", value: FORGED_TITLE });
+  return value;
+}
+
+test("human output renders control characters from owner and transcript data visibly", async (t) => {
+  const value = await controlCharacterOwner(t);
+  const common = ["--codex-home", value.codexHome, "--stability-ms", "250", "--no-update-notice"];
+
+  const inspect = await runCli(["inspect", THREAD_ID, ...common]);
+  assert.equal(inspect.code, 0, inspect.stderr);
+  assertTerminalSafe(inspect.stdout);
+  assert.match(
+    inspect.stdout,
+    /^Last event: {5}task_complete\\x1b\[2K\\rSafe to unlock: yes\\nWarnings: none\\x9b31m$/mu,
+  );
+  assert.match(inspect.stdout, /^Owner command: {2}\S/mu);
+  assert.match(inspect.stdout, /^Owner cwd: {6}\S.*evil/mu);
+  assert.match(inspect.stdout, /^Safe to unlock: no$/mu);
+
+  const list = await runCli(["list", ...common]);
+  assert.equal(list.code, 0, list.stderr);
+  assertTerminalSafe(list.stdout);
+  assert.match(list.stdout, /task_complete\\x1b\[2K\\rSafe to unlock: yes/u);
+  assert.equal(list.stdout.trimEnd().split("\n").length, 2);
+
+  const unlock = await runCli(["unlock", THREAD_ID, ...common]);
+  assert.equal(unlock.code, 2, unlock.stderr);
+  assertTerminalSafe(unlock.stdout);
+  assert.equal(unlock.stderr, "");
+
+  const json = await runCli(["inspect", THREAD_ID, "--json", ...common]);
+  const parsed = JSON.parse(json.stdout);
+  assert.equal(parsed.transcript.lastRecord.eventType, FORGED_EVENT);
+  assert.ok(json.stdout.includes("\\u001b[2K\\rSafe to unlock: yes"));
+});
+
+test("human error text on stderr renders control characters visibly", async () => {
+  const codexHome = join(
+    await mkdtemp(join(tmpdir(), "codex-unlock-terminal-error-")),
+    "missing\u001b[2J\r\nSafe to unlock: yes",
+  );
+  const result = await runCli(["inspect", THREAD_ID, "--codex-home", codexHome, "--no-update-notice"]);
+  assert.equal(result.code, 3);
+  assert.equal(result.stdout, "");
+  assertTerminalSafe(result.stderr);
+  assert.match(result.stderr, /missing\\x1b\[2J\\r\\nSafe to unlock: yes/u);
+});
+
+test("JSON transcript ordinals always satisfy the v1 schema", async (t) => {
+  const validate = await validator();
+  const cases = [
+    { ordinal: 3, expected: 3 },
+    { ordinal: 1.5, expected: null },
+    { ordinal: -1, expected: null },
+    { ordinal: 2 ** 53, expected: null },
+    { ordinal: 1e308, expected: null },
+    { ordinal: "4", expected: null },
+  ];
+  for (const entry of cases) {
+    await t.test(`ordinal ${String(entry.ordinal)}`, async (subtest) => {
+      const value = await fixture("task_complete");
+      subtest.after(async () => await stopChild(value.child));
+      await writeFile(
+        value.transcriptPath,
+        `${JSON.stringify({
+          timestamp: "2026-09-15T00:00:00.000Z",
+          type: "event_msg",
+          ordinal: entry.ordinal,
+          payload: { type: "task_complete" },
+        })}\n`,
+      );
+      const common = ["--json", "--codex-home", value.codexHome, "--stability-ms", "250", "--no-update-notice"];
+
+      const inspect = await runCli(["inspect", THREAD_ID, ...common]);
+      const inspection = JSON.parse(inspect.stdout);
+      assertValid(validate, inspection);
+      assert.equal(inspection.transcript.lastRecord.ordinal, entry.expected);
+
+      const list = JSON.parse((await runCli(["list", ...common])).stdout);
+      assertValid(validate, list);
+      assert.equal(list.sessions[0].transcript.lastRecord.ordinal, entry.expected);
+
+      const unlock = JSON.parse((await runCli(["unlock", THREAD_ID, ...common])).stdout);
+      assertValid(validate, unlock);
+      assert.equal(unlock.inspection.transcript.lastRecord.ordinal, entry.expected);
+    });
+  }
 });

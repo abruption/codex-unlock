@@ -102,7 +102,10 @@ function parseLastRecord(line: string | null): TranscriptRecord | null {
     recordType: typeof record.type === "string" ? record.type : null,
     eventType: payload && typeof payload.type === "string" ? payload.type : null,
     timestamp: typeof record.timestamp === "string" ? record.timestamp : null,
-    ordinal: typeof record.ordinal === "number" ? record.ordinal : null,
+    ordinal:
+      Number.isSafeInteger(record.ordinal) && (record.ordinal as number) >= 0
+        ? (record.ordinal as number)
+        : null,
   };
 }
 

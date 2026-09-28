@@ -184,15 +184,37 @@ function parseArguments(argv: string[]): ParsedArguments | "help" | "version" {
   return { command, threadId, json, noUpdateNotice, options };
 }
 
+// eslint-disable-next-line no-control-regex -- matching control characters is the purpose.
+const TERMINAL_CONTROL = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/gu;
+const NAMED_ESCAPES: Readonly<Record<string, string>> = { "\n": "\\n", "\r": "\\r", "\t": "\\t" };
+
+// Human output renders externally derived text (argv, cwd, paths, transcript
+// fields, error text) with visible escapes so it cannot drive the terminal or
+// forge lines. JSON output is left to JSON.stringify escaping.
+function terminalSafe(value: string): string {
+  return value.replace(TERMINAL_CONTROL, (character) => {
+    const named = NAMED_ESCAPES[character];
+    if (named) return named;
+    const code = character.codePointAt(0)!;
+    return code <= 0xff
+      ? `\\x${code.toString(16).padStart(2, "0")}`
+      : `\\u${code.toString(16).padStart(4, "0")}`;
+  });
+}
+
 function printable(value: string | number | null): string {
-  return value === null || value === "" ? "-" : String(value);
+  return value === null || value === "" ? "-" : terminalSafe(String(value));
+}
+
+function printableList(values: readonly string[]): string {
+  return values.map(terminalSafe).join(", ");
 }
 
 function printInspection(result: InspectionResult): void {
   console.log(`Thread:         ${result.threadId}`);
   console.log(`Classification: ${result.classification}`);
   console.log(`Lock probe:     ${result.lock.probe.status}`);
-  console.log(`Lock path:      ${result.lock.path}`);
+  console.log(`Lock path:      ${printable(result.lock.path)}`);
   if (result.owner) {
     console.log(`Owner PID:      ${result.owner.pid}`);
     console.log(`Owner command:  ${printable(result.owner.arguments)}`);
@@ -210,16 +232,16 @@ function printInspection(result: InspectionResult): void {
   console.log(`Stable:         ${result.transcript.stable === true ? "yes" : "no"}`);
   console.log(`Safe to unlock: ${result.safeToUnlock ? "yes" : "no"}`);
   if (result.blockers.length > 0) {
-    console.log(`Blockers:       ${result.blockers.join(", ")}`);
+    console.log(`Blockers:       ${printableList(result.blockers)}`);
   }
   if (result.warnings.length > 0) {
-    console.log(`Warnings:       ${result.warnings.join(", ")}`);
+    console.log(`Warnings:       ${printableList(result.warnings)}`);
   }
 }
 
 function printList(result: ListResult): void {
   if (result.sessions.length === 0) {
-    console.log(`No Codex thread lock files found under ${result.codexHome}.`);
+    console.log(`No Codex thread lock files found under ${printable(result.codexHome)}.`);
     return;
   }
   const headers = ["THREAD", "CLASSIFICATION", "PROBE", "PID", "LAST EVENT", "STABLE", "SAFE"];
@@ -257,7 +279,7 @@ function printUnlock(result: UnlockResult): void {
   console.log(`Transcript unchanged: ${printable(result.transcriptUnchanged === null ? null : result.transcriptUnchanged ? "yes" : "no")}`);
   console.log("Lock file removed by codex-unlock: no");
   if (result.reasons.length > 0) {
-    console.log(`Reasons:              ${result.reasons.join(", ")}`);
+    console.log(`Reasons:              ${printableList(result.reasons)}`);
   }
 }
 
@@ -323,7 +345,7 @@ async function checkUpdate(json: boolean): Promise<number> {
     console.log(`Update available: ${result.updateAvailable ? "yes" : "no"}`);
     if (result.updateAvailable) console.log(`Update command:   ${result.updateCommand}`);
     if (checked.cacheWarning !== null) {
-      console.error(`codex-unlock: warning: update cache not updated: ${checked.cacheWarning}`);
+      console.error(`codex-unlock: warning: update cache not updated: ${terminalSafe(checked.cacheWarning)}`);
     }
   }
   return 0;
@@ -356,7 +378,7 @@ async function main(): Promise<number> {
         ),
       );
     } else {
-      console.error(`codex-unlock: ${errorText(error)}`);
+      console.error(`codex-unlock: ${terminalSafe(errorText(error))}`);
       console.error("Run codex-unlock --help for usage.");
     }
     finishAutomaticAdvisory(advisory);
@@ -378,7 +400,7 @@ async function main(): Promise<number> {
       if (parsed.json) {
         console.log(JSON.stringify(cliError("check-update", "command_failed", 3, errorText(error)), null, 2));
       } else {
-        console.error(`codex-unlock: ${errorText(error)}`);
+        console.error(`codex-unlock: ${terminalSafe(errorText(error))}`);
       }
       return 3;
     }
@@ -421,7 +443,7 @@ async function main(): Promise<number> {
         ),
       );
     } else {
-      console.error(`codex-unlock: ${errorText(error)}`);
+      console.error(`codex-unlock: ${terminalSafe(errorText(error))}`);
     }
     finishAutomaticAdvisory(advisory);
     return 3;
