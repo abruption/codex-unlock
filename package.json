@@ -39,7 +39,8 @@
     "docs/v0.2-migration.md",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "npm-shrinkwrap.json"
   ],
   "scripts": {
     "build": "npm run clean && tsc -p tsconfig.json",
@@ -80,7 +81,7 @@
   "author": "abruption",
   "license": "MIT",
   "dependencies": {
-    "fs-ext-extra-prebuilt": "^2.2.14"
+    "fs-ext-extra-prebuilt": "2.2.14"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

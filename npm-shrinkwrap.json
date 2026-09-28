@@ -13,7 +13,7 @@
         "linux"
       ],
       "dependencies": {
-        "fs-ext-extra-prebuilt": "^2.2.14"
+        "fs-ext-extra-prebuilt": "2.2.14"
       },
       "bin": {
         "codex-unlock": "dist/cli.js"
