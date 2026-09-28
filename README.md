@@ -4,10 +4,13 @@
 
 [![npm version](https://img.shields.io/npm/v/codex-unlock?color=cb3837&logo=npm)](https://www.npmjs.com/package/codex-unlock)
 [![npm downloads](https://img.shields.io/npm/dm/codex-unlock?color=cb3837&logo=npm)](https://www.npmjs.com/package/codex-unlock)
-[![CI](https://github.com/abruption/codex-unlock/actions/workflows/ci.yml/badge.svg)](https://github.com/abruption/codex-unlock/actions/workflows/ci.yml)
+[![GitHub release](https://img.shields.io/github/v/release/abruption/codex-unlock?logo=github)](https://github.com/abruption/codex-unlock/releases/latest)
+[![CI](https://github.com/abruption/codex-unlock/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/abruption/codex-unlock/actions/workflows/ci.yml)
+[![Release workflow](https://github.com/abruption/codex-unlock/actions/workflows/release-please.yml/badge.svg?branch=main)](https://github.com/abruption/codex-unlock/actions/workflows/release-please.yml)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![node](https://img.shields.io/node/v/codex-unlock?color=339933&logo=node.js)](https://www.npmjs.com/package/codex-unlock)
 [![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](#requirements)
+[![JSON schema v1](https://img.shields.io/badge/JSON%20schema-v1-007ec6)](docs/json-v1.md)
 [![license](https://img.shields.io/npm/l/codex-unlock?color=blue)](LICENSE)
 
 **Fail-closed diagnostics and safe recovery for Codex native thread writer locks.**
