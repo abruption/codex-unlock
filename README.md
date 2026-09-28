@@ -29,6 +29,17 @@ generated `dist/` modules are intentionally unsupported and blocked by package
 exports. See the [JSON v1 contract](docs/json-v1.md) for field, error, and exit
 code compatibility rules.
 
+TypeScript consumers can use the type-only JSON models without importing or
+executing the CLI:
+
+```ts
+import type { JsonResult, InspectionResult } from "codex-unlock/types";
+```
+
+These declarations are not included in 0.3.0 or earlier; install the npm release
+containing this addition. They describe CLI JSON, not a runtime library or a
+validator. See [TypeScript usage](docs/json-v1.md#typescript-types).
+
 ## Safety model
 
 Lock-file existence is not treated as ownership. The tool independently:

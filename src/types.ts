@@ -5,6 +5,7 @@ export type CommandName = "list" | "inspect" | "unlock" | "check-update";
 export type CliErrorCode = "invalid_usage" | "command_failed";
 
 export interface CliErrorResult {
+  clientUpdate?: ClientUpdate;
   schemaVersion: typeof SCHEMA_VERSION;
   command: CommandName | null;
   status: "error";
@@ -123,6 +124,7 @@ export interface LockInspection {
 }
 
 export interface InspectionResult {
+  clientUpdate?: ClientUpdate;
   schemaVersion: typeof SCHEMA_VERSION;
   command: "inspect";
   inspectedAt: string;
@@ -142,6 +144,7 @@ export interface InspectionResult {
 }
 
 export interface ListResult {
+  clientUpdate?: ClientUpdate;
   schemaVersion: typeof SCHEMA_VERSION;
   command: "list";
   inspectedAt: string;
@@ -158,6 +161,7 @@ export type UnlockOutcome =
   | "verification_failed";
 
 export interface UnlockResult {
+  clientUpdate?: ClientUpdate;
   schemaVersion: typeof SCHEMA_VERSION;
   command: "unlock";
   attemptedAt: string;
