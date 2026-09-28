@@ -111,5 +111,7 @@ test("JSON v1 validates additive clientUpdate and explicit check-update results"
     checkedAt: "2026-09-22T00:00:00.000Z",
     updateAvailable: true,
     updateCommand: "npm install --global codex-unlock@latest",
+    cacheUpdated: false,
+    cacheWarning: "cache_directory_unavailable",
   });
 });

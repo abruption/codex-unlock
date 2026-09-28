@@ -36,6 +36,10 @@ export interface CheckUpdateResult {
   checkedAt: string;
   updateAvailable: boolean;
   updateCommand: string;
+  /** Whether this check wrote the local advisory cache. Absent before 0.4.1. */
+  cacheUpdated?: boolean;
+  /** Why the cache was not updated, or null when it was. Absent before 0.4.1. */
+  cacheWarning?: string | null;
 }
 
 export type Classification =
