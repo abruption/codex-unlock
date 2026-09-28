@@ -22,6 +22,7 @@ import test from "node:test";
 
 import {
   inspectThread,
+  listThreads,
   unlockInspectedThread,
   unlockThread,
 } from "../dist/doctor.js";
@@ -729,3 +730,69 @@ for (const mode of ["emfile", "throw"]) {
     assert.equal(validate(parsed), true, JSON.stringify(validate.errors));
   });
 }
+test("a missing Codex home is a command failure, not a confirmed-absent lock", async () => {
+  const codexHome = join(await mkdtemp(join(tmpdir(), "codex-unlock-missing-home-")), "typo");
+  const options = { codexHome, stabilityMs: 10, terminationTimeoutMs: 100 };
+  await assert.rejects(inspectThread(THREAD_ID, options), /Codex home does not exist/);
+  await assert.rejects(unlockThread(THREAD_ID, options), /Codex home does not exist/);
+  await assert.rejects(listThreads(options), /Codex home does not exist/);
+
+  const fileHome = join(await mkdtemp(join(tmpdir(), "codex-unlock-file-home-")), "home");
+  await writeFile(fileHome, "not a directory");
+  await assert.rejects(
+    inspectThread(THREAD_ID, { ...options, codexHome: fileHome }),
+    /Codex home is not a directory/,
+  );
+
+  for (const args of [
+    ["list", "--json", "--codex-home", codexHome],
+    ["inspect", THREAD_ID, "--json", "--codex-home", codexHome],
+    ["unlock", THREAD_ID, "--json", "--codex-home", codexHome],
+  ]) {
+    const result = await runCli([...args, "--no-update-notice"]);
+    assert.equal(result.code, 3, result.stdout);
+    assert.equal(result.stderr, "");
+    const value = JSON.parse(result.stdout);
+    assert.equal(value.command, args[0]);
+    assert.equal(value.errorCode, "command_failed");
+    assert.match(value.error, /Codex home does not exist/);
+    assert.equal(value.lockReleased, undefined);
+  }
+});
+
+test("a dangling thread-writer-locks symlink is unknown, not absent", async () => {
+  const codexHome = await mkdtemp(join(tmpdir(), "codex-unlock-dangling-locks-"));
+  await symlink(join(codexHome, "unmounted-volume"), join(codexHome, "thread-writer-locks"));
+  const options = { codexHome, stabilityMs: 10, terminationTimeoutMs: 100 };
+
+  const inspection = await inspectThread(THREAD_ID, options);
+  assert.equal(inspection.classification, "unknown");
+  assert.equal(inspection.lock.observation, "unknown");
+  assert.match(inspection.lock.observationError, /dangling symlink/);
+  assert.equal(inspection.safeToUnlock, false);
+
+  const unlock = await unlockThread(THREAD_ID, options);
+  assert.equal(unlock.outcome, "refused");
+  assert.equal(unlock.lockReleased, false);
+  assert.equal(unlock.signalSent, null);
+
+  await assert.rejects(listThreads(options), /dangling symlink/);
+  const list = await runCli(["list", "--json", "--no-update-notice", "--codex-home", codexHome]);
+  assert.equal(list.code, 3);
+  assert.equal(JSON.parse(list.stdout).errorCode, "command_failed");
+
+  const cli = await runCli(["unlock", THREAD_ID, "--json", "--no-update-notice", "--codex-home", codexHome]);
+  assert.equal(cli.code, 2);
+  assert.equal(JSON.parse(cli.stdout).outcome, "refused");
+});
+
+test("an existing Codex home without thread-writer-locks remains a confirmed absence", async () => {
+  const codexHome = await mkdtemp(join(tmpdir(), "codex-unlock-no-locks-yet-"));
+  const options = { codexHome, stabilityMs: 10, terminationTimeoutMs: 100 };
+  const inspection = await inspectThread(THREAD_ID, options);
+  assert.equal(inspection.classification, "absent");
+  const list = await listThreads(options);
+  assert.equal(list.count, 0);
+  const unlock = await unlockThread(THREAD_ID, options);
+  assert.equal(unlock.outcome, "not_locked");
+});

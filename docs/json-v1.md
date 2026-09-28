@@ -57,8 +57,10 @@ consumer switches.
 ## Common rules
 
 - `schemaVersion` is the integer `1` on command results and CLI errors.
-- `command` identifies `list`, `inspect`, `unlock`, or `check-update`. A usage
-  error that did not identify a command uses `null`.
+- `command` identifies `list`, `inspect`, `unlock`, or `check-update`. It is
+  set whenever the first positional argument is a known command, even when
+  options precede it. A usage error that did not identify a command uses
+  `null`.
 - Timestamps are UTC ISO 8601 strings. File sizes, inode values, process IDs,
   and times retain the types defined in the schema.
 - Nullable evidence means that the observation was unavailable or not
@@ -77,10 +79,18 @@ descendants, transcript evidence, blockers, and warnings.
 
 `classification` is one of:
 
-- `absent`: the lock path was confirmed absent;
+- `absent`: the lock path was confirmed absent inside an existing Codex home
+  whose `thread-writer-locks` directory exists or has not been created yet;
 - `stale_residue`: a regular lock file exists but the OS lock is free;
 - `live_owner`: the OS lock is held and one owner was correlated;
-- `unknown`: ownership, lock, or transcript evidence could not be established.
+- `unknown`: ownership, lock, or transcript evidence could not be established,
+  including a dangling symlink or non-directory at `thread-writer-locks`.
+
+A missing or non-directory Codex home is not an `absent` lock. `list`,
+`inspect`, and `unlock` return a CLI error with `errorCode: "command_failed"`
+and exit `3` instead of a command result. `list` also fails that way when
+`thread-writer-locks` is a dangling symlink or not a directory, because it
+cannot enumerate locks.
 
 `list` contains zero or more complete `inspect` results in `sessions`.
 
@@ -163,6 +173,10 @@ Errors retain the top-level string `error` field and add:
 - `retryable`, currently `false` because retry safety depends on new evidence;
 - `suggestedAction`, a string for usage errors and otherwise `null`.
 
+Usage validation happens before inspection. Malformed thread ids, option values
+that begin with `-`, and `--help` or `--version` combined with `--json` are
+`invalid_usage` with exit `64`, so JSON consumers never receive non-JSON stdout.
+
 JSON mode writes no human-formatted diagnostic to stderr. A caller may treat
 stderr output as an unexpected diagnostic, but must use the process exit code
 and JSON fields for decisions.
@@ -173,7 +187,7 @@ and JSON fields for decisions.
 |---:|---|---|
 | `0` | Successful read-only/update check, successful unlock, or already absent lock | `list`, `inspect`, `unlock`, or `check-update` |
 | `2` | Unlock refused because the evidence is not safe | `unlock` with `outcome: "refused"` |
-| `3` | Termination/post-check failure or an unexpected command failure | `unlock` failure outcome or `errorCode: "command_failed"` |
+| `3` | Termination/post-check failure, missing Codex home, or an unexpected command failure | `unlock` failure outcome or `errorCode: "command_failed"` |
 | `64` | Invalid command-line usage | `errorCode: "invalid_usage"` |
 
 An additive optional root field, such as a future advisory metadata block, is

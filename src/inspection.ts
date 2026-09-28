@@ -1,7 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import { observeLockFile, probeLock } from "./lock.js";
+import { observeLockDirectory, observeLockFile, probeLock } from "./lock.js";
 import { isThreadId, defaultOptions, validateThreadId } from "./options.js";
 import { evaluateSafety } from "./policy.js";
 import {
@@ -68,6 +68,16 @@ function classify(
   return "unknown";
 }
 
+// A missing Codex home is a configuration failure, never a confirmed-absent
+// lock. An unusable lock directory stays per-thread `unknown` evidence for
+// inspect/unlock, but list cannot enumerate it and fails instead.
+function assertCodexHome(lockDirectory: string): void {
+  const observation = observeLockDirectory(lockDirectory);
+  if (observation.status === "unknown" && observation.scope === "codex_home") {
+    throw new Error(observation.error);
+  }
+}
+
 export async function inspectThread(
   rawThreadId: string,
   options: DoctorOptions = defaultOptions(),
@@ -75,6 +85,7 @@ export async function inspectThread(
   const threadId = validateThreadId(rawThreadId);
   const lockDirectory = join(options.codexHome, "thread-writer-locks");
   const lockPath = join(lockDirectory, `${threadId}.lock`);
+  assertCodexHome(lockDirectory);
 
   const candidatesBefore = await findTranscriptCandidates(options.codexHome, threadId);
   const [lockBefore, probeBefore, openersBefore, transcriptBefore] = await Promise.all([
@@ -178,16 +189,9 @@ export async function listThreads(
   options: DoctorOptions = defaultOptions(),
 ): Promise<ListResult> {
   const lockDirectory = join(options.codexHome, "thread-writer-locks");
-  let names: string[];
-  try {
-    names = await readdir(lockDirectory);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      names = [];
-    } else {
-      throw error;
-    }
-  }
+  const observation = observeLockDirectory(lockDirectory);
+  if (observation.status === "unknown") throw new Error(observation.error);
+  const names = observation.status === "not_created" ? [] : await readdir(lockDirectory);
   const threadIds = unique(
     names
       .filter((name) => name.endsWith(".lock"))

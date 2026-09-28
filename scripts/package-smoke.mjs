@@ -163,8 +163,10 @@ try {
     npm(["exec", "--offline", "--", "codex-unlock", "--help"], installDirectory),
     /codex-unlock/,
   );
+  const emptyHome = join(directory, "empty-home");
+  mkdirSync(emptyHome);
   const jsonOutput = npm(
-    ["exec", "--offline", "--", "codex-unlock", "list", "--json", "--codex-home", join(directory, "empty-home")],
+    ["exec", "--offline", "--", "codex-unlock", "list", "--json", "--codex-home", emptyHome],
     installDirectory,
   );
   assert.equal(JSON.parse(jsonOutput).schemaVersion, 1);
