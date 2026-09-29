@@ -102,8 +102,24 @@ implicitly supported.
 
 - `0`: success, including an already-unlocked or absent lock
 - `2`: unlock refused because the evidence was not safe
-- `3`: termination/post-unlock verification or an unexpected command failure
+- `3`: termination/post-unlock verification, a missing or non-directory Codex
+  home, or an unexpected command failure
 - `64`: invalid command-line usage
+
+Usage is validated before any inspection. A malformed thread id, an option
+value that begins with `-` (for example `--codex-home --json`), or `--help` /
+`--version` combined with `--json` is a usage error with exit `64`. `-h`,
+`--help`, `-v`, and `--version` are honoured only as their own arguments, never
+as another option's value. Help output to a closed pipe ends quietly.
+
+The selected Codex home must be an existing directory. A missing home (for
+example a `--codex-home` typo, a different `CODEX_HOME`, or an unmounted
+volume) is a command failure with exit `3`, never an absent lock. A home that
+exists but has not yet created `thread-writer-locks` is a normal confirmed
+absence: `list` is empty and `inspect` reports `absent`. A dangling symlink or
+non-directory at `thread-writer-locks` is not evidence of absence: `inspect`
+reports `unknown`, `unlock` refuses with exit `2`, and `list` fails with exit
+`3`.
 
 With `--json`, stdout is one JSON value and human diagnostics are not mixed into
 stderr. Usage and command failures retain the top-level `error` string and add

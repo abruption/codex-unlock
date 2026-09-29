@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { defaultOptions, inspectThread, listThreads, unlockThread } from "./doctor.js";
+import { isThreadId } from "./options.js";
 import {
   SCHEMA_VERSION,
   type CliErrorCode,
@@ -61,11 +62,26 @@ interface ParsedArguments {
   options: DoctorOptions;
 }
 
+const VALUE_OPTIONS = new Set(["--codex-home", "--stability-ms", "--timeout-ms"]);
+
+function isCommandName(value: string | undefined): value is CommandName {
+  return value === "list" || value === "inspect" || value === "unlock" || value === "check-update";
+}
+
 function requestedCommand(argv: string[]): CommandName | null {
-  const candidate = argv[0];
-  return candidate === "list" || candidate === "inspect" || candidate === "unlock" || candidate === "check-update"
-    ? candidate
-    : null;
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (VALUE_OPTIONS.has(argument)) {
+      index += 1;
+    } else if (!argument.startsWith("-")) {
+      return isCommandName(argument) ? argument : null;
+    }
+  }
+  return null;
+}
+
+function optionValue(value: string | undefined): string | undefined {
+  return value === undefined || value.startsWith("-") ? undefined : value;
 }
 
 function cliError(
@@ -109,23 +125,25 @@ function integerOption(name: string, value: string | undefined, min: number, max
 }
 
 function parseArguments(argv: string[]): ParsedArguments | "help" | "version" {
-  if (argv.includes("--help") || argv.includes("-h")) return "help";
-  if (argv.includes("--version") || argv.includes("-v")) return "version";
-
   const options = defaultOptions();
   const positional: string[] = [];
   let json = false;
   let noUpdateNotice = false;
   let doctorOptionSeen = false;
+  let standalone: "help" | "version" | null = null;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
-    if (argument === "--json") {
+    if (argument === "--help" || argument === "-h") {
+      standalone ??= "help";
+    } else if (argument === "--version" || argument === "-v") {
+      standalone ??= "version";
+    } else if (argument === "--json") {
       json = true;
     } else if (argument === "--no-update-notice") {
       noUpdateNotice = true;
     } else if (argument === "--codex-home") {
       doctorOptionSeen = true;
-      const value = argv[++index];
+      const value = optionValue(argv[++index]);
       if (!value) throw new Error("--codex-home requires a path");
       options.codexHome = resolve(value);
     } else if (argument === "--stability-ms") {
@@ -141,6 +159,10 @@ function parseArguments(argv: string[]): ParsedArguments | "help" | "version" {
     }
   }
 
+  if (standalone !== null) {
+    if (json) throw new Error(`--${standalone} cannot be combined with --json`);
+    return standalone;
+  }
   const command = positional.shift();
   if (command !== "list" && command !== "inspect" && command !== "unlock" && command !== "check-update") {
     throw new Error("expected command: list, inspect, unlock, or check-update");
@@ -158,6 +180,7 @@ function parseArguments(argv: string[]): ParsedArguments | "help" | "version" {
   if (!threadId || positional.length > 0) {
     throw new Error(`${command} requires exactly one thread id`);
   }
+  if (!isThreadId(threadId)) throw new Error(`invalid Codex thread id: ${threadId}`);
   return { command, threadId, json, noUpdateNotice, options };
 }
 
@@ -404,6 +427,12 @@ async function main(): Promise<number> {
     return 3;
   }
 }
+
+// A closed stdout (for example `codex-unlock --help | head -0`) ends output
+// quietly instead of surfacing an unhandled stream error.
+process.stdout.on("error", (error: NodeJS.ErrnoException) => {
+  if (error.code !== "EPIPE") process.exitCode = 3;
+});
 
 if (process.argv.length === 3 && process.argv[2] === UPDATE_REFRESH_ARG) {
   await refreshUpdateCache().catch(() => undefined);

@@ -1,4 +1,5 @@
-import { closeSync, constants, fstatSync, lstatSync, openSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, statSync } from "node:fs";
+import { dirname } from "node:path";
 
 import { flockSync } from "fs-ext-extra-prebuilt";
 
@@ -15,6 +16,73 @@ export interface LockFileObservation {
   error?: string;
 }
 
+export type LockDirectoryObservation =
+  | { status: "present" | "not_created" }
+  | { status: "unknown"; scope: "codex_home" | "lock_directory"; error: string };
+
+function directoryState(path: string): "directory" | "missing" | "other" {
+  try {
+    return statSync(path).isDirectory() ? "directory" : "other";
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "missing";
+    throw error;
+  }
+}
+
+/**
+ * Establish whether a missing lock can be confirmed absent.
+ *
+ * The Codex home must be an existing directory. `thread-writer-locks` may be
+ * missing (Codex has not created a lock yet), but a dangling symlink or a
+ * non-directory at that path is not evidence of absence.
+ */
+export function observeLockDirectory(lockDirectory: string): LockDirectoryObservation {
+  const codexHome = dirname(lockDirectory);
+  try {
+    const home = directoryState(codexHome);
+    if (home === "missing") {
+      return {
+        status: "unknown",
+        scope: "codex_home",
+        error: `Codex home does not exist: ${codexHome}`,
+      };
+    }
+    if (home === "other") {
+      return {
+        status: "unknown",
+        scope: "codex_home",
+        error: `Codex home is not a directory: ${codexHome}`,
+      };
+    }
+  } catch (error) {
+    return { status: "unknown", scope: "codex_home", error: errorText(error) };
+  }
+  try {
+    const directory = directoryState(lockDirectory);
+    if (directory === "directory") return { status: "present" };
+    if (directory === "other") {
+      return {
+        status: "unknown",
+        scope: "lock_directory",
+        error: `lock directory is not a directory: ${lockDirectory}`,
+      };
+    }
+    try {
+      lstatSync(lockDirectory);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { status: "not_created" };
+      throw error;
+    }
+    return {
+      status: "unknown",
+      scope: "lock_directory",
+      error: `lock directory is a dangling symlink: ${lockDirectory}`,
+    };
+  } catch (error) {
+    return { status: "unknown", scope: "lock_directory", error: errorText(error) };
+  }
+}
+
 export function observeLockFile(path: string): LockFileObservation {
   try {
     const value = lstatSync(path);
@@ -28,7 +96,10 @@ export function observeLockFile(path: string): LockFileObservation {
       snapshot: publicSnapshot(value),
     };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+    const directory = (error as NodeJS.ErrnoException).code === "ENOENT"
+      ? observeLockDirectory(dirname(path))
+      : null;
+    if (directory !== null && directory.status !== "unknown") {
       return {
         status: "absent",
         exists: false,
@@ -45,7 +116,7 @@ export function observeLockFile(path: string): LockFileObservation {
       symlink: null,
       ownedByCurrentUser: null,
       snapshot: null,
-      error: errorText(error),
+      error: directory?.status === "unknown" ? directory.error : errorText(error),
     };
   }
 }
