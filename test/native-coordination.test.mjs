@@ -40,6 +40,15 @@ async function holdGuard(t, path, ms = 0) {
   return child;
 }
 
+// Keep real flock contention, but stop the retry budget's monotonic clock
+// until the guard holder has finished. Slow runners can otherwise spend the
+// whole 100 ms budget before the child processes its command.
+function freezeRetryClock(t) {
+  const frozenAt = performance.now();
+  const now = t.mock.method(performance, "now", () => frozenAt);
+  return () => now.mock.restore();
+}
+
 function snapshot(path) {
   const stat = statSync(path, { bigint: true });
   return { contents: readFileSync(path).toString("hex"), dev: stat.dev, ino: stat.ino,
@@ -89,9 +98,15 @@ test("absent native coordinator stays unknown without creating any file", async 
 test("native guard contention retries within its monotonic acquisition budget", async (t) => {
   const value = await emptyLock();
   const child = await holdGuard(t, value.path);
-  const pending = probeWithRetry(value.path);
-  setTimeout(() => child.stdin.write("release\n"), 25);
-  const result = await pending;
+  const restoreClock = freezeRetryClock(t);
+  let result;
+  try {
+    const pending = probeWithRetry(value.path);
+    setTimeout(() => child.stdin.write("release\n"), 25);
+    result = await pending;
+  } finally {
+    restoreClock();
+  }
   assert.equal(result.status, "free");
   assert.equal(result.guard.status, "acquired");
   assert.ok(result.guard.attempts > 1);
@@ -102,11 +117,17 @@ for (const action of ["unlink", "replace"]) {
     const value = await emptyLock();
     const before = statSync(value.path, { bigint: true });
     const child = await holdGuard(t, value.path);
-    const pending = probeWithRetry(value.path);
-    // The first attempt has already observed real guard contention. The child
-    // changes the fixture while still holding the guard, then releases it.
-    child.stdin.write(`${action}\n`);
-    const result = await pending;
+    const restoreClock = freezeRetryClock(t);
+    let result;
+    try {
+      const pending = probeWithRetry(value.path);
+      // The first attempt has already observed real guard contention. The child
+      // changes the fixture while still holding the guard, then releases it.
+      child.stdin.write(`${action}\n`);
+      result = await pending;
+    } finally {
+      restoreClock();
+    }
     assert.equal(result.status, "free", JSON.stringify(result));
     if (action === "unlink") {
       assert.equal(result.guard, undefined);
