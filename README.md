@@ -16,15 +16,22 @@
 
 ## Demo
 
-Find a thread, inspect its writer, then request a safe unlock:
+Find a thread and inspect whether its writer is eligible for safe recovery:
+
+![codex-unlock v0.4.2 list and inspect diagnostics showing a live writer that is not safe to unlock](https://raw.githubusercontent.com/abruption/codex-unlock/main/docs/assets/codex-unlock-v0.4.2-demo.gif)
+
+*Real macOS `list`/`inspect` output from v0.4.2, re-rendered with personal
+identifiers redacted. The live writer is not eligible for unlock; no session
+is terminated in this demo.*
 
 ```text
 codex-unlock list
 codex-unlock inspect <thread-id>
-codex-unlock unlock <thread-id>
 ```
 
 Replace `<thread-id>` with a UUID from `list`. Add `--json` for structured output.
+For an eligible completed session, `codex-unlock unlock <thread-id>` requests
+recovery only when every safety check passes.
 
 ## Quick Start
 
