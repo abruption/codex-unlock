@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/abruption/codex-unlock/compare/v0.4.1...v0.4.2) (2026-09-29)
+
+
+### Bug Fixes
+
+* publish a runtime-only npm shrinkwrap ([#83](https://github.com/abruption/codex-unlock/issues/83)) ([d279732](https://github.com/abruption/codex-unlock/commit/d27973298bd8a91a1216a444a5439fbdc59a2bba)), closes [#82](https://github.com/abruption/codex-unlock/issues/82)
+
 ## [0.4.1](https://github.com/abruption/codex-unlock/compare/v0.4.0...v0.4.1) (2026-09-29)
 
 
