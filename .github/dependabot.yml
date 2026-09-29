@@ -5,12 +5,22 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # The native runtime dependency is pinned exactly; bump that pin (and
+    # npm-shrinkwrap.json) instead of widening it into a range.
+    versioning-strategy: increase-if-necessary
     labels:
       - dependencies
     commit-message:
-      prefix: chore
+      # Consumers only receive a new runtime pin in a release, so runtime bumps
+      # are release-worthy fixes; development-only bumps stay chores.
+      prefix: fix
+      prefix-development: chore
       include: scope
     groups:
+      # Keep native runtime updates in their own PR so each version passes the
+      # full platform matrix and package smoke on its own before release.
+      runtime:
+        dependency-type: production
       minor-and-patch:
         update-types:
           - minor

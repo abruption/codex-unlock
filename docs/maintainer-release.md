@@ -12,7 +12,7 @@ records the latest released version.
 1. Merge focused Conventional Commit pull requests into `main` only after CI
    passes.
 2. Review the Release Please pull request. It owns `package.json`,
-   `package-lock.json`, `.release-please-manifest.json`, and `CHANGELOG.md`.
+   `npm-shrinkwrap.json`, `.release-please-manifest.json`, and `CHANGELOG.md`.
    For v0.2, confirm the generated notes agree with
    [`v0.2-migration.md`](v0.2-migration.md), including the CLI-only API boundary,
    concurrent-unlock serialization, and deliberately unsupported owners.
@@ -30,6 +30,9 @@ The stable aggregate branch-protection checks are `supported-tests`, `lint`,
 [`platform-support.md`](platform-support.md). `package-smoke` requires exact
 artifact contents, an offline clean tarball installation, CLI/JSON smoke tests,
 and rejected package-root/internal imports on both operating systems.
+It asserts that the native runtime dependency is an exact pin matching
+`npm-shrinkwrap.json`, that the shrinkwrap is published, and that the installed
+`fs-ext-extra-prebuilt` and `nan` versions equal the shrinkwrap pins.
 It also compiles a consumer against the installed tarball's type-only JSON
 declarations in NodeNext and bundler modes, without Node.js type dependencies,
 and rejects `/types` as a runtime import.
@@ -117,6 +120,21 @@ installed dependency tree and its counts are not a claim that the single
 `codex-unlock` tarball has the same number of signatures. Missing or invalid
 provenance, an integrity mismatch, or an invalid signature blocks release
 verification even if installation succeeds.
+
+## Runtime dependency pinning
+
+`npm-shrinkwrap.json` is the repository's single lockfile (npm ignores
+`package-lock.json` when both exist, so there is none). It is published in the
+package, so `npm install --global codex-unlock` installs exactly the
+`fs-ext-extra-prebuilt` and `nan` versions that CI validated instead of the
+newest compatible release. `package.json` also pins `fs-ext-extra-prebuilt` to
+an exact version for package managers that ignore npm's shrinkwrap.
+
+Dependabot bumps that exact pin and the shrinkwrap together in a separate
+`runtime` group with a `fix(deps)` commit, so the update runs the full platform
+matrix and package smoke before Release Please ships it. After a manual
+runtime dependency change, run `npm install` (never delete the shrinkwrap) and
+commit both files; package smoke fails if they disagree.
 
 ## npm lifecycle contract
 

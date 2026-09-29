@@ -1,13 +1,37 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { log } from "node:console";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import process from "node:process";
 
 const npmCli = process.env.npm_execpath;
 assert.ok(npmCli, "Run through npm run smoke:package");
+
+// npm-shrinkwrap.json is the single lockfile: it pins the native runtime tree for
+// consumers, so the published manifest must match it exactly.
+const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
+const workspaceManifest = readJson(resolve("package.json"));
+const shrinkwrap = readJson(resolve("npm-shrinkwrap.json"));
+const pinnedRuntime = {
+  "fs-ext-extra-prebuilt": shrinkwrap.packages["node_modules/fs-ext-extra-prebuilt"]?.version,
+  nan: shrinkwrap.packages["node_modules/nan"]?.version,
+};
+for (const [name, version] of Object.entries(pinnedRuntime)) {
+  assert.match(version ?? "", /^\d+\.\d+\.\d+$/, `npm-shrinkwrap.json must pin ${name}`);
+}
+assert.deepEqual(
+  workspaceManifest.dependencies,
+  { "fs-ext-extra-prebuilt": pinnedRuntime["fs-ext-extra-prebuilt"] },
+  "The native runtime dependency must be an exact version equal to npm-shrinkwrap.json",
+);
+assert.deepEqual(
+  shrinkwrap.packages[""].dependencies,
+  workspaceManifest.dependencies,
+  "npm-shrinkwrap.json must be regenerated after changing runtime dependencies",
+);
 
 const directory = mkdtempSync(join(tmpdir(), "codex-unlock-package-smoke-"));
 const npm = (args, cwd = process.cwd()) =>
@@ -48,6 +72,7 @@ try {
     "docs/update-security.md",
     "docs/upstream-handoff-proposal.md",
     "docs/v0.2-migration.md",
+    "npm-shrinkwrap.json",
     "package.json",
     "schemas/codex-unlock-v1.schema.json",
   ].sort();
@@ -95,7 +120,27 @@ try {
   );
 
   const packageRoot = join(installDirectory, "node_modules", "codex-unlock");
-  const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
+  const manifest = readJson(join(packageRoot, "package.json"));
+
+  // Resolve the way the installed CLI does, so a hoisted or nested copy is checked.
+  const installedVersion = (name, fromPackageRoot) => {
+    const manifestPath = createRequire(join(fromPackageRoot, "package.json"))
+      .resolve(`${name}/package.json`);
+    assert.ok(
+      !relative(realpathSync(installDirectory), manifestPath).startsWith(".."),
+      `${name} must resolve inside the clean installation`,
+    );
+    return { root: dirname(manifestPath), version: readJson(manifestPath).version };
+  };
+  const nativeDependency = installedVersion("fs-ext-extra-prebuilt", packageRoot);
+  assert.deepEqual(
+    {
+      "fs-ext-extra-prebuilt": nativeDependency.version,
+      nan: installedVersion("nan", nativeDependency.root).version,
+    },
+    pinnedRuntime,
+    "Installed runtime dependencies must equal the published npm-shrinkwrap.json pins",
+  );
   assert.equal(manifest.bin["codex-unlock"], "dist/cli.js");
   assert.deepEqual(manifest.exports, {
     "./types": { types: "./dist/json-types.d.ts" },
@@ -168,7 +213,7 @@ try {
       { cwd: installDirectory, encoding: "utf8", timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] },
     );
   }
-  log("Packed artifact passes offline CLI/JSON and type-only consumer boundary checks.");
+  log("Packed artifact passes pinned-dependency, offline CLI/JSON, and type-only consumer boundary checks.");
 } finally {
   rmSync(directory, { recursive: true, force: true });
 }

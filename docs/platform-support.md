@@ -20,6 +20,10 @@ These explicit labels and architectures follow GitHub's
 [hosted-runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
 They are intentionally not expressed as `*-latest` aliases.
 
+The published package ships `npm-shrinkwrap.json`, so an npm installation
+receives the same exact `fs-ext-extra-prebuilt` and `nan` versions that this
+matrix validated.
+
 Each matrix job performs the normal type and integration suite and then runs a
 platform smoke test that verifies all of the following on the runner itself:
 
