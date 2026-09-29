@@ -121,6 +121,14 @@ non-directory at `thread-writer-locks` is not evidence of absence: `inspect`
 reports `unknown`, `unlock` refuses with exit `2`, and `list` fails with exit
 `3`.
 
+Human-readable output renders externally derived text, such as owner
+arguments, cwd, TTY, lock and transcript paths, transcript event types,
+reasons, and error text, with visible escapes. C0 controls, DEL, C1 controls,
+and Unicode bidirectional or line-separator controls appear as `\n`, `\r`,
+`\t`, `\xHH`, or `\uHHHH`, so prompt text, directory names, or transcript
+content cannot move the cursor, change the terminal, or forge result lines.
+JSON output keeps the original values and relies on standard JSON escaping.
+
 With `--json`, stdout is one JSON value and human diagnostics are not mixed into
 stderr. Usage and command failures retain the top-level `error` string and add
 stable `errorCode`, `exitCode`, and `schemaVersion` fields.

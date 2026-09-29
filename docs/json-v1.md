@@ -65,6 +65,14 @@ consumer switches.
   and times retain the types defined in the schema.
 - Nullable evidence means that the observation was unavailable or not
   applicable. It must not be interpreted as a positive safety fact.
+- `transcript.lastRecord.ordinal` is a non-negative safe integer copied from
+  the last rollout record, or `null` when that value is missing, fractional,
+  negative, larger than `Number.MAX_SAFE_INTEGER`, or not a number. Output
+  therefore always satisfies the schema's `integer | null`, `minimum: 0`
+  constraint.
+- JSON string values are not altered for terminal display. Control characters
+  from paths, process arguments, or transcripts are preserved and appear only
+  as standard JSON escapes.
 - `classification: "live_owner"` is liveness evidence only. It is not
   permission to terminate a process. Only `safeToUnlock: true` after complete
   revalidation can authorize the `unlock` implementation.

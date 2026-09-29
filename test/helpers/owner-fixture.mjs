@@ -48,6 +48,7 @@ export async function fixture(lastEvent = "task_complete", settings = {}) {
     : [OWNER_FIXTURE, ownerArgs];
   const child = spawn(command, args, {
     env: { ...process.env, ...(settings.ownerEnv ?? {}) },
+    ...(settings.cwd ? { cwd: settings.cwd } : {}),
     stdio: ["pipe", "pipe", "pipe"],
   });
   child.stdout.setEncoding("utf8");
