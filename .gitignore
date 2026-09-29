@@ -12,3 +12,6 @@ coverage/
 .env
 .env.*
 !.env.example
+
+# Generated from package-lock.json for publication only (scripts/consumer-shrinkwrap.mjs)
+npm-shrinkwrap.json

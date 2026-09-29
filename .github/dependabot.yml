@@ -6,7 +6,7 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     # The native runtime dependency is pinned exactly; bump that pin (and
-    # npm-shrinkwrap.json) instead of widening it into a range.
+    # package-lock.json) instead of widening it into a range.
     versioning-strategy: increase-if-necessary
     labels:
       - dependencies
