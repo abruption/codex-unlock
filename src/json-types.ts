@@ -16,6 +16,7 @@ export type {
   CommandName,
   InspectionResult,
   ListResult,
+  LockHolder,
   LockInspection,
   LockProbe,
   ProbeStatus,

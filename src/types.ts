@@ -68,6 +68,8 @@ export type ProcessObservationStatus = "present" | "absent" | "unknown";
 export interface ProcessStartObservation {
   status: ProcessObservationStatus;
   startTime: string | null;
+  /** Present and true only when the observed process has exited but is unreaped. */
+  zombie?: true;
   error?: string;
 }
 
@@ -175,8 +177,19 @@ export interface UnlockResult {
   lockReleased: boolean;
   lockFileRemovedByTool: false;
   transcriptUnchanged: boolean | null;
+  /**
+   * Present only when the signaled owner exited and a different process now
+   * holds the thread lock. A retry would target these processes, not the
+   * original owner.
+   */
+  lockReacquiredBy?: LockHolder[];
   reasons: string[];
   inspection: InspectionResult;
+}
+
+export interface LockHolder {
+  pid: number;
+  startTime: string | null;
 }
 
 export interface DoctorOptions {

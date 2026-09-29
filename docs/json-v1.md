@@ -89,6 +89,42 @@ lock-release observation, transcript-invariance result, reasons, and the
 inspection that authorized or refused the operation. `lockFileRemovedByTool`
 is always `false`.
 
+`outcome` is one of:
+
+- `unlocked`: the owner exited, the OS lock is free, and the transcript is
+  unchanged;
+- `not_locked`: the lock was absent or stale residue, and nothing was signaled;
+- `refused`: the evidence was not safe, and nothing was signaled;
+- `termination_failed`: `SIGTERM` was attempted, but owner exit or lock release
+  could not be confirmed;
+- `verification_failed`: the owner exited and released its lock, but a later
+  check failed (for example, the transcript changed or another process
+  reacquired the lock).
+
+Every result past the signal boundary keeps `pid`, `signalSent: "SIGTERM"`, and
+`changed: true`, including when an observation after the signal throws
+(`post_signal_verification_failed:<error>`). Such failures use exit `3`.
+
+`processObservation.zombie` is `true` only when the signaled owner has exited
+but its parent has not reaped it. The owner then counts as exited
+(`processExited: true`): its descriptors, and therefore its lock, are closed.
+
+`lockReacquiredBy` is present only when the original owner is confirmed exited
+and a different process (a different PID, or the same PID with a different
+start time) holds the lock again. It lists that process's `pid` and
+`startTime`. The result is `verification_failed` with the reason
+`lock_reacquired_by_other_owner:<pids>` instead of `lock_was_not_released`, and
+`lockReleased` stays `false` because the lock is held now. Retrying `unlock`
+would inspect and target that new holder, not the original owner. If the
+current holder is one of the owner's known descendants (it inherited the lock
+descriptor), the reason is `lock_held_by_owner_descendant:<pids>` together with
+`lock_was_not_released`. A holder that cannot be identified adds
+`lock_holder_unidentified:<error>`.
+
+Just before signaling, `unlock` samples the owner's start time and the lock
+file's identity and probe again, after the transcript hash. A change refuses
+with `owner_changed_before_signal` or `lock_changed_before_signal`.
+
 `check-update` is the only command that performs a foreground npm registry
 request. It returns `status: "ok"`, the current and latest stable versions,
 the check timestamp, an `updateAvailable` boolean, and conservative update

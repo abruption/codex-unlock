@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import { existsSync } from "node:fs";
 import {
   access,
@@ -6,13 +7,14 @@ import {
   link,
   mkdir,
   mkdtemp,
+  readFile,
   rename,
   symlink,
   unlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { URL } from "node:url";
 import { spawn } from "node:child_process";
@@ -28,6 +30,8 @@ import {
   DIAGNOSTIC_OVERRIDE,
   OWNER_FIXTURE,
   OTHER_THREAD_ID,
+  POST_SIGNAL_FAULT,
+  SUCCESSOR_FIXTURE,
   THREAD_ID,
   commandOwner,
   fixture,
@@ -598,3 +602,130 @@ test("matches owner locks when lsof omits file descriptor fields (Linux format)"
   assert.deepEqual(parsed.ownerLockFiles, [value.lockPath]);
   assert.equal(parsed.safeToUnlock, true, parsed.blockers.join(","));
 });
+
+async function unlockResultValidator() {
+  const { default: Ajv2020 } = await import("ajv/dist/2020.js");
+  const schema = JSON.parse(
+    await readFile(resolve("schemas/codex-unlock-v1.schema.json"), "utf8"),
+  );
+  return new Ajv2020({ strict: true, allowUnionTypes: true }).compile(schema);
+}
+
+function killQuietly(pid) {
+  if (!pid) return;
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // Already gone.
+  }
+}
+
+test("an unreaped zombie owner counts as exited", async (t) => {
+  const value = await fixture("task_complete", { unreapedParent: true });
+  t.after(async () => await stopChild(value.child));
+  const inspection = await inspectThread(THREAD_ID, value.options);
+  assert.equal(inspection.safeToUnlock, true, inspection.blockers.join(","));
+  const ownerPid = inspection.owner.pid;
+  assert.notEqual(ownerPid, value.child.pid);
+  t.after(() => killQuietly(ownerPid));
+
+  const result = await runCli(
+    ["unlock", THREAD_ID, "--json", "--codex-home", value.codexHome, "--stability-ms", "250"],
+    { ...process.env, CODEX_UNLOCK_NO_UPDATE_NOTICE: "yes" },
+  );
+  assert.equal(result.stderr, "");
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(result.code, 0, result.stdout);
+  assert.equal(parsed.outcome, "unlocked");
+  assert.equal(parsed.pid, ownerPid);
+  assert.equal(parsed.processExited, true);
+  assert.equal(parsed.processObservation.zombie, true);
+  assert.equal(parsed.lockReleased, true);
+  assert.deepEqual(parsed.reasons, []);
+  const validate = await unlockResultValidator();
+  assert.equal(validate(parsed), true, JSON.stringify(validate.errors));
+});
+
+test("an immediate successor is reported as a reacquisition, not an unreleased lock", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "codex-unlock-successor-"));
+  const marker = join(root, "owner-terminated");
+  const value = await fixture("task_complete", {
+    ownerEnv: { CODEX_FIXTURE_SIGTERM_MARKER: marker },
+  });
+  t.after(async () => await stopChild(value.child));
+  const successor = spawn(process.execPath, [SUCCESSOR_FIXTURE, marker, value.lockPath], {
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  t.after(async () => await stopChild(successor));
+  successor.stdout.setEncoding("utf8");
+  let successorOutput = "";
+  successor.stdout.on("data", (chunk) => {
+    successorOutput += chunk;
+  });
+  await once(successor.stdout, "data");
+
+  const result = await runCli(
+    ["unlock", THREAD_ID, "--json", "--codex-home", value.codexHome, "--stability-ms", "250"],
+    { ...process.env, CODEX_UNLOCK_NO_UPDATE_NOTICE: "yes" },
+  );
+  assert.equal(result.stderr, "");
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(result.code, 3, result.stdout);
+  assert.equal(parsed.outcome, "verification_failed");
+  assert.equal(parsed.pid, value.child.pid);
+  assert.equal(parsed.signalSent, "SIGTERM");
+  assert.equal(parsed.processExited, true);
+  assert.equal(parsed.lockReleased, false);
+  assert.deepEqual(parsed.lockReacquiredBy.map((holder) => holder.pid), [successor.pid]);
+  assert.ok(parsed.reasons.includes(`lock_reacquired_by_other_owner:${successor.pid}`));
+  assert.ok(!parsed.reasons.includes("lock_was_not_released"));
+  assert.match(successorOutput, /acquired/);
+  assert.equal(successor.exitCode, null);
+  assert.equal(successor.signalCode, null);
+  const validate = await unlockResultValidator();
+  assert.equal(validate(parsed), true, JSON.stringify(validate.errors));
+});
+
+for (const mode of ["emfile", "throw"]) {
+  test(`post-signal ${mode} failure preserves the signal in the unlock result`, async (t) => {
+    const value = await fixture();
+    t.after(async () => await stopChild(value.child));
+
+    const result = await runCli(
+      [
+        "unlock",
+        THREAD_ID,
+        "--json",
+        "--codex-home",
+        value.codexHome,
+        "--stability-ms",
+        "250",
+        "--timeout-ms",
+        "500",
+      ],
+      {
+        ...process.env,
+        CODEX_UNLOCK_NO_UPDATE_NOTICE: "yes",
+        CODEX_UNLOCK_TEST_POST_SIGNAL_FAULT: mode,
+      },
+      ["--import", POST_SIGNAL_FAULT],
+    );
+    assert.equal(result.stderr, "");
+    assert.equal(result.code, 3, result.stdout);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.command, "unlock");
+    assert.equal(parsed.outcome, "termination_failed");
+    assert.equal(parsed.pid, value.child.pid);
+    assert.equal(parsed.signalSent, "SIGTERM");
+    assert.equal(parsed.changed, true);
+    const expectedReason =
+      mode === "throw" ? "post_signal_verification_failed:" : "owner_exit_unknown:";
+    assert.ok(
+      parsed.reasons.some((reason) => reason.startsWith(expectedReason)),
+      parsed.reasons.join(","),
+    );
+    assert.equal(parsed.processExited, null);
+    const validate = await unlockResultValidator();
+    assert.equal(validate(parsed), true, JSON.stringify(validate.errors));
+  });
+}

@@ -159,6 +159,7 @@
       "properties": {
         "status": { "enum": ["present", "absent", "unknown"] },
         "startTime": { "type": ["string", "null"] },
+        "zombie": { "const": true },
         "error": { "type": "string" }
       }
     },
@@ -179,6 +180,18 @@
         "lockReleased": { "type": "boolean" },
         "lockFileRemovedByTool": { "const": false },
         "transcriptUnchanged": { "type": ["boolean", "null"] },
+        "lockReacquiredBy": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["pid", "startTime"],
+            "properties": {
+              "pid": { "type": "integer", "minimum": 1 },
+              "startTime": { "type": ["string", "null"] }
+            }
+          }
+        },
         "reasons": { "type": "array", "items": { "type": "string" } },
         "inspection": { "$ref": "#/$defs/inspectionResult" },
         "clientUpdate": { "$ref": "#/$defs/clientUpdate" }

@@ -12,6 +12,11 @@ export const THREAD_ID = "01a089e8-3731-7202-ba68-0f4b0a3b2711";
 export const OTHER_THREAD_ID = "02b190f9-4842-8313-ca79-1f5c1b4c3822";
 export const OWNER_FIXTURE = resolve("test/fixtures/codex");
 export const DIAGNOSTIC_OVERRIDE = resolve("test/helpers/diagnostic-override.mjs");
+export const POST_SIGNAL_FAULT = resolve("test/helpers/post-signal-fault.mjs");
+export const SUCCESSOR_FIXTURE = resolve("test/fixtures/successor.mjs");
+const UNREAPED_PARENT =
+  "my $pid = fork(); die \"fork: $!\" unless defined $pid; " +
+  "if ($pid == 0) { exec { $ARGV[0] } @ARGV or die \"exec: $!\"; } sleep 600;";
 
 export async function fixture(lastEvent = "task_complete", settings = {}) {
   const codexHome =
@@ -35,7 +40,13 @@ export async function fixture(lastEvent = "task_complete", settings = {}) {
     })}\n`,
   );
   await chmod(OWNER_FIXTURE, 0o755);
-  const child = spawn(OWNER_FIXTURE, [lockPath, ...(settings.additionalLockPaths ?? [])], {
+  const ownerArgs = [lockPath, ...(settings.additionalLockPaths ?? [])];
+  // `settings.unreapedParent` runs the owner under a parent that never waits,
+  // so the owner becomes a zombie after it exits.
+  const [command, args] = settings.unreapedParent
+    ? ["/usr/bin/perl", ["-e", UNREAPED_PARENT, OWNER_FIXTURE, ...ownerArgs]]
+    : [OWNER_FIXTURE, ownerArgs];
+  const child = spawn(command, args, {
     env: { ...process.env, ...(settings.ownerEnv ?? {}) },
     stdio: ["pipe", "pipe", "pipe"],
   });
