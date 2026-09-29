@@ -17,6 +17,10 @@ they do not rely on timer placement.
 | Another local user pre-creates a shared temporary lease root | No shared or predictable temporary lease root | Unlock proceeds normally | `a squatted shared temporary lease root does not deny unlock` |
 | Operation lease cannot be established | Same-user parent, private same-user non-symlink directory, and regular single-link non-symlink lock file that still names the locked inode | Refuse; owner remains alive | `coordination failure refuses without signaling the safe owner` |
 | Process inspection becomes unavailable | Complete owner identity and confirmed process state | Refuse or verification failure; never report success | process observation failure tests |
+| Caller exports `COLUMNS`/`PS_FORMAT` or similar | Diagnostic commands use a fixed environment and `ps -ww`; truncated Linux argv is `unknown` | Shared owner refused; truncated arguments refuse | `terminal width variables cannot hide a shared app-server owner` |
+| `ps` or `lsof` shadowed on `PATH` | Process evidence only from fixed system paths | Shadow binary never runs | `ps and lsof on PATH cannot supply process evidence` |
+| Diagnostic spawn fails (`EMFILE`, synchronous throw) | Structured `spawn_error`, never an unhandled error | Evidence `unknown`; refuse before signal | runCommand spawn failure tests |
+| Codex home path contains non-ASCII bytes | Owner lock matched by `lsof` device/inode, not escaped name | Correct lock set; unresolvable other locks still refuse | non-ASCII Codex home tests |
 | Post-signal lock observation becomes unavailable | Confirmed OS lock release | Termination failure; never report release | post-signal lock observation test |
 
 The operation lease is separate from `~/.codex/thread-writer-locks`. It lives

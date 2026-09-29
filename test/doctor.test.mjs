@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import {
+  access,
   chmod,
   link,
   mkdir,
@@ -24,6 +25,7 @@ import {
 } from "../dist/doctor.js";
 import { LEASE_DIRECTORY_NAME, acquireUnlockLease } from "../dist/coordination.js";
 import {
+  DIAGNOSTIC_OVERRIDE,
   OWNER_FIXTURE,
   OTHER_THREAD_ID,
   THREAD_ID,
@@ -416,7 +418,8 @@ test("process inspection failure cannot produce a successful unlock", async (t) 
       "--stability-ms",
       "250",
     ],
-    { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+    { ...process.env, CODEX_UNLOCK_TEST_PS: fakePs },
+    ["--import", DIAGNOSTIC_OVERRIDE],
   );
   assert.equal(result.code, 2, result.stderr);
   const parsed = JSON.parse(result.stdout);
@@ -459,7 +462,8 @@ test("post-signal process observation failure cannot report success", async (t) 
       "--timeout-ms",
       "500",
     ],
-    { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+    { ...process.env, CODEX_UNLOCK_TEST_PS: fakePs },
+    ["--import", DIAGNOSTIC_OVERRIDE],
   );
   assert.equal(result.code, 3, result.stderr);
   const parsed = JSON.parse(result.stdout);
@@ -485,4 +489,112 @@ test("post-signal lock observation failure cannot report release", async (t) => 
   assert.equal(result.processExited, true);
   assert.equal(result.lockReleased, false);
   assert.ok(result.reasons.some((reason) => reason.startsWith("lock_release_unknown:")));
+});
+
+test("terminal width variables cannot hide a shared app-server owner", async (t) => {
+  const value = await fixture();
+  t.after(async () => await stopChild(value.child));
+  const title = `codex --x${"x".repeat(48)} app-server`;
+  await commandOwner(value.child, { action: "title", value: title });
+
+  const result = await runCli(
+    ["inspect", THREAD_ID, "--json", "--codex-home", value.codexHome, "--stability-ms", "250"],
+    { ...process.env, COLUMNS: "40", LINES: "5", PS_FORMAT: "pid" },
+  );
+  assert.equal(result.stderr, "");
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.owner.pid, value.child.pid);
+  assert.ok(parsed.owner.arguments === null || parsed.owner.arguments.includes("app-server"));
+  assert.equal(parsed.owner.isSharedService, true);
+  assert.equal(parsed.safeToUnlock, false);
+  assert.ok(parsed.blockers.includes("lock_owner_is_shared_service"));
+});
+
+test("ps and lsof on PATH cannot supply process evidence", async (t) => {
+  const value = await fixture();
+  t.after(async () => await stopChild(value.child));
+  const bin = await mkdtemp(join(tmpdir(), "codex-unlock-shadow-path-"));
+  const marker = join(bin, "shadow-used");
+  for (const tool of ["ps", "lsof"]) {
+    await writeFile(
+      join(bin, tool),
+      `#!/bin/sh\necho ${tool} >> '${marker}'\nexit 2\n`,
+      { mode: 0o755 },
+    );
+  }
+
+  const result = await runCli(
+    ["inspect", THREAD_ID, "--json", "--codex-home", value.codexHome, "--stability-ms", "250"],
+    { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+  );
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.classification, "live_owner", result.stdout);
+  assert.equal(parsed.owner.pid, value.child.pid);
+  assert.equal(parsed.safeToUnlock, true);
+  await assert.rejects(access(marker), { code: "ENOENT" });
+});
+
+test("matches owner locks by device and inode under a non-ASCII Codex home", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "codex-unlock-non-ascii-"));
+  const value = await fixture("task_complete", {
+    codexHome: join(root, "홈 코덱스", ".codex"),
+  });
+  t.after(async () => await stopChild(value.child));
+
+  const inspection = await inspectThread(THREAD_ID, value.options);
+  assert.equal(inspection.classification, "live_owner");
+  assert.deepEqual(inspection.ownerLockFiles, [value.lockPath]);
+  assert.ok(!inspection.blockers.includes("owner_lock_file_lookup_failed"));
+  assert.equal(inspection.safeToUnlock, true, inspection.blockers.join(","));
+
+  const result = await unlockThread(THREAD_ID, value.options);
+  assert.equal(result.outcome, "unlocked");
+  assert.equal(result.lockReleased, true);
+});
+
+test("an unresolvable second lock under a non-ASCII home still fails closed", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "codex-unlock-non-ascii-other-"));
+  const extraLock = await otherLockPath(join(root, "다른 홈"));
+  const value = await fixture("task_complete", {
+    codexHome: join(root, "홈 코덱스", ".codex"),
+    additionalLockPaths: [extraLock],
+  });
+  t.after(async () => await stopChild(value.child));
+
+  const inspection = await inspectThread(THREAD_ID, value.options);
+  assert.equal(inspection.safeToUnlock, false);
+  assert.ok(
+    inspection.blockers.includes("owner_lock_file_lookup_failed") ||
+      inspection.blockers.includes("owner_holds_other_thread_locks"),
+  );
+});
+
+test("matches owner locks when lsof omits file descriptor fields (Linux format)", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "codex-unlock-lsof-no-f-"));
+  const value = await fixture("task_complete", {
+    codexHome: join(root, "홈 코덱스", ".codex"),
+  });
+  t.after(async () => await stopChild(value.child));
+  const fakeLsof = join(root, "lsof");
+  await writeFile(
+    fakeLsof,
+    [
+      "#!/bin/sh",
+      "for real in /usr/sbin/lsof /usr/bin/lsof; do [ -x \"$real\" ] && break; done",
+      "\"$real\" \"$@\" | tr '\\000' '\\n' | grep -v '^f' | tr '\\n' '\\000'",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+
+  const result = await runCli(
+    ["inspect", THREAD_ID, "--json", "--codex-home", value.codexHome, "--stability-ms", "250"],
+    { ...process.env, CODEX_UNLOCK_TEST_LSOF: fakeLsof },
+    ["--import", DIAGNOSTIC_OVERRIDE],
+  );
+  assert.equal(result.stderr, "");
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.classification, "live_owner", result.stdout);
+  assert.deepEqual(parsed.ownerLockFiles, [value.lockPath]);
+  assert.equal(parsed.safeToUnlock, true, parsed.blockers.join(","));
 });

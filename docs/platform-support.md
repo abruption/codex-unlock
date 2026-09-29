@@ -38,12 +38,38 @@ platform smoke test that verifies all of the following on the runner itself:
 The test does not signal the owner through the unlock path. It terminates its
 own fixture during cleanup after evidence collection.
 
+## Diagnostic command execution
+
+Process evidence is collected with the same rules on every supported platform:
+
+- `ps` runs only from `/bin/ps` or `/usr/bin/ps`, and `lsof` only from
+  `/usr/sbin/lsof` or `/usr/bin/lsof`. `PATH` is never consulted; when neither
+  fixed location exists the evidence is `unknown`.
+- Commands run with a fixed environment (`LC_ALL=C`, `LANG=C`, and a system
+  `PATH`) instead of the caller's, so `COLUMNS`, `LINES`, `PS_FORMAT`,
+  `PS_PERSONALITY`, and locale variables cannot change their output.
+- `ps` is invoked with `-ww`, which disables width truncation for both macOS
+  BSD `ps` and Linux procps-ng.
+- On Linux, `ps` arguments are cross-checked against `/proc/<pid>/cmdline`. If
+  the kernel argv is unreadable, or `ps` output is a strict prefix of it, the
+  owner's arguments are `null` with an `arguments_unverified:` or
+  `arguments_truncated:` error, and identity is incomplete. A shared-service
+  token in either source marks the owner as a shared service.
+- The owner's native lock set is matched to the intended lock by the `lsof`
+  device (`D`) and inode (`i`) fields, not by the rendered name, because the
+  C locale makes `lsof` escape non-ASCII path bytes as `\xNN`. Any other lock
+  name that cannot be resolved still blocks with `owner_lock_file_lookup_failed`.
+- Every spawn failure, including a synchronous throw or an `EMFILE`/`ENFILE`
+  child without pipes, is reported as a `spawn_error` command failure.
+
 ## Failure and unsupported-platform policy
 
 A parser, command, native-module, permission, or identity failure is not
 treated as partial success. Inspection returns `unknown` or adds a blocker, and
 `unlock` must not send `SIGTERM`. The integration suite separately replaces
-`ps` with a failing command and proves that this path remains refused.
+`ps` with a failing command through a test-only in-process seam and proves
+that this path remains refused; it also proves that a shadowing `ps` or `lsof`
+on `PATH` is never executed.
 
 Windows, other Unix variants, and OS/architecture combinations absent from the
 matrix are unverified. Windows lock and process semantics require a separate

@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import type { Stats } from "node:fs";
@@ -38,6 +39,31 @@ export const DEFAULT_COMMAND_LIMITS: Readonly<CommandLimits> = {
   killGraceMs: 250,
 };
 
+// Diagnostic commands never inherit the caller's environment: variables such
+// as COLUMNS, LINES, PS_FORMAT, or PS_PERSONALITY change what ps prints, and
+// LC_*/LANG change how lsof renders names. Executables are absolute paths.
+export const DIAGNOSTIC_COMMAND_ENV: Readonly<NodeJS.ProcessEnv> = Object.freeze({
+  LC_ALL: "C",
+  LANG: "C",
+  PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+});
+
+type SpawnProcess = (
+  command: string,
+  args: readonly string[],
+  options: SpawnOptions,
+) => ChildProcess;
+
+let spawnOverride: SpawnProcess | null = null;
+
+/**
+ * Test-only seam for spawn failure injection; `null` restores
+ * `child_process.spawn`. Not part of the package's supported exports.
+ */
+export function overrideSpawnForTesting(replacement: SpawnProcess | null): void {
+  spawnOverride = replacement;
+}
+
 export async function runCommand(
   executable: string,
   args: string[],
@@ -45,11 +71,28 @@ export async function runCommand(
 ): Promise<CommandResult> {
   return await new Promise((resolve) => {
     const isolatedProcessGroup = process.platform !== "win32";
-    const child = spawn(executable, args, {
-      detached: isolatedProcessGroup,
-      env: { ...process.env, LC_ALL: "C", LANG: "C" },
-      stdio: ["ignore", "pipe", "pipe"],
+    const spawnFailure = (error: unknown): CommandResult => ({
+      status: null,
+      stdout: "",
+      stderr: "",
+      ...(error instanceof Error ? { error: error as NodeJS.ErrnoException } : {}),
+      failure: { kind: "spawn_error", message: errorText(error) },
     });
+    const options: SpawnOptions = {
+      detached: isolatedProcessGroup,
+      env: { ...DIAGNOSTIC_COMMAND_ENV },
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    };
+    let child: ChildProcess;
+    try {
+      child = spawnOverride
+        ? spawnOverride(executable, args, options)
+        : spawn(executable, args, options);
+    } catch (error) {
+      resolve(spawnFailure(error));
+      return;
+    }
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let stdoutBytes = 0;
@@ -58,6 +101,27 @@ export async function runCommand(
     let spawnError: NodeJS.ErrnoException | undefined;
     let settled = false;
     let forceKillTimer: NodeJS.Timeout | undefined;
+
+    const settle = (status: number | null): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
+      resolve({
+        status,
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+        ...(spawnError ? { error: spawnError } : {}),
+        ...(failure ? { failure } : {}),
+      });
+    };
+    // Attach before touching stdio: EMFILE/ENFILE spawns return a child
+    // without pipes and emit "error" asynchronously.
+    child.on("error", (error: NodeJS.ErrnoException) => {
+      spawnError ??= error;
+      failure ??= { kind: "spawn_error", message: errorText(error) };
+      if (!child.stdout || !child.stderr) settle(null);
+    });
 
     const signalDiagnosticProcess = (signal: NodeJS.Signals): void => {
       if (isolatedProcessGroup && child.pid !== undefined) {
@@ -68,7 +132,11 @@ export async function runCommand(
           // Fall back to the direct child when its process group is already gone.
         }
       }
-      child.kill(signal);
+      try {
+        child.kill(signal);
+      } catch {
+        // A child that never started has nothing left to signal.
+      }
     };
     const terminate = (): void => {
       signalDiagnosticProcess("SIGTERM");
@@ -82,6 +150,28 @@ export async function runCommand(
       failure = next;
       terminate();
     };
+
+    const timeout = setTimeout(() => {
+      fail({
+        kind: "timeout",
+        message: `command exceeded ${limits.timeoutMs} ms`,
+      });
+    }, limits.timeoutMs);
+    timeout.unref();
+
+    if (!child.stdout || !child.stderr) {
+      if (child.pid !== undefined) terminate();
+      // Node reports EMFILE/ENFILE through a nextTick "error"; let it land first.
+      setImmediate(() => {
+        failure ??= {
+          kind: "spawn_error",
+          message: "diagnostic command has no stdout/stderr pipes",
+        };
+        settle(null);
+      });
+      return;
+    }
+
     const capture = (
       chunk: Buffer | string,
       chunks: Buffer[],
@@ -119,29 +209,8 @@ export async function runCommand(
         "stderr_limit",
       );
     });
-    const timeout = setTimeout(() => {
-      fail({
-        kind: "timeout",
-        message: `command exceeded ${limits.timeoutMs} ms`,
-      });
-    }, limits.timeoutMs);
-    timeout.unref();
-    child.on("error", (error: NodeJS.ErrnoException) => {
-      spawnError = error;
-      failure ??= { kind: "spawn_error", message: errorText(error) };
-    });
-    child.on("close", (status) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      if (forceKillTimer) clearTimeout(forceKillTimer);
-      resolve({
-        status,
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: Buffer.concat(stderr).toString("utf8"),
-        ...(spawnError ? { error: spawnError } : {}),
-        ...(failure ? { failure } : {}),
-      });
+    child.on("close", (status: number | null) => {
+      settle(status);
     });
   });
 }
