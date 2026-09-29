@@ -102,6 +102,25 @@ cannot enumerate locks.
 
 `list` contains zero or more complete `inspect` results in `sessions`.
 
+`lock.probe.method` remains `flock_exclusive_nonblocking`. An optional
+`lock.probe.guard` object records the native coordinator observation:
+
+| `guard.status` | Meaning |
+|---|---|
+| `acquired` | Guard acquired and released around this probe |
+| `busy` | Guard contention exhausted this probe's acquisition budget |
+| `absent` | Existing thread lock has no native coordinator |
+| `unsafe` | Guard type, owner, access, or cleanup could not be validated |
+| `changed` | Guard or parent identity changed during observation |
+
+`guard.attempts`, when present, is a positive integer. This is evidence about
+the completed probe, not a currently held guard or proof of a live writer.
+`acquired` can accompany an `unknown` thread state. Consumers must use the
+existing `classification`, `status`, and `safeToUnlock` contracts.
+Verified absent thread locks omit guard evidence. An existing thread lock with
+an absent or unusable coordinator is `unknown`; no unguarded fallback is used.
+These fields are additive under schema version 1.
+
 `unlock` contains the final outcome, signal attempt, process-exit observation,
 lock-release observation, transcript-invariance result, reasons, and the
 inspection that authorized or refused the operation. `lockFileRemovedByTool`
@@ -142,6 +161,9 @@ descriptor), the reason is `lock_held_by_owner_descendant:<pids>` together with
 Just before signaling, `unlock` samples the owner's start time and the lock
 file's identity and probe again, after the transcript hash. A change refuses
 with `owner_changed_before_signal` or `lock_changed_before_signal`.
+Native guard contention at that last synchronous probe adds
+`native_coordination_busy_before_signal`; nothing is signaled. No asynchronous
+retry is inserted between that last identity sample and SIGTERM.
 
 `check-update` is the only command that performs a foreground npm registry
 request. It returns `status: "ok"`, the current and latest stable versions,
@@ -193,7 +215,7 @@ and JSON fields for decisions.
 
 | Exit | Meaning | JSON result |
 |---:|---|---|
-| `0` | Successful read-only/update check, successful unlock, or already absent lock | `list`, `inspect`, `unlock`, or `check-update` |
+| `0` | Successful diagnostic/update check, successful unlock, or already absent lock | `list`, `inspect`, `unlock`, or `check-update` |
 | `2` | Unlock refused because the evidence is not safe | `unlock` with `outcome: "refused"` |
 | `3` | Termination/post-check failure, missing Codex home, or an unexpected command failure | `unlock` failure outcome or `errorCode: "command_failed"` |
 | `64` | Invalid command-line usage | `errorCode: "invalid_usage"` |

@@ -8,15 +8,21 @@ import process from "node:process";
 
 const addon = createRequire(import.meta.url)("fs-ext-extra-prebuilt");
 const open = fs.openSync;
+const close = fs.closeSync;
 const flock = addon.flockSync;
 const leases = new Set();
 const release = process.env.CODEX_UNLOCK_TEST_LEASE_RELEASE;
 fs.openSync = (path, ...args) => {
   const fd = open(path, ...args);
-  if (typeof path === "string" && basename(dirname(path)) === "codex-unlock") {
+  if (typeof path === "string" && basename(dirname(path)) === "codex-unlock" &&
+    /^[a-f0-9]{64}\.lock$/.test(basename(path))) {
     leases.add(fd);
   }
   return fd;
+};
+fs.closeSync = (fd) => {
+  leases.delete(fd);
+  return close(fd);
 };
 syncBuiltinESMExports();
 addon.flockSync = (fd, operation) => {

@@ -31,7 +31,8 @@ Replace `<thread-id>` with a UUID from `list`. Add `--json` for structured outpu
 Requires macOS or Linux, Node.js **22.13+ (22.x) or 24.x**, and `lsof`.
 Windows and Node.js 26 are not supported.
 
-`list` and `inspect` are read-only. `unlock` sends only `SIGTERM`, and only
+`list` and `inspect` leave files unchanged and briefly take Codex's coordination
+lock for each probe. `unlock` sends only `SIGTERM`, and only
 to a revalidated same-user, single-thread owner whose stable transcript ends in
 `task_complete`. Shared app-server, Remote Control, daemon, and uncertain owners
 are refused. It never deletes native lock files, forces an unlock, or sends

@@ -1,7 +1,8 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import { observeLockDirectory, observeLockFile, probeLock } from "./lock.js";
+import { observeLockDirectory, observeLockFile } from "./lock.js";
+import { probeWithRetry } from "./native-coordination.js";
 import { isThreadId, defaultOptions, validateThreadId } from "./options.js";
 import { evaluateSafety } from "./policy.js";
 import {
@@ -90,7 +91,7 @@ export async function inspectThread(
   const candidatesBefore = await findTranscriptCandidates(options.codexHome, threadId);
   const [lockBefore, probeBefore, openersBefore, transcriptBefore] = await Promise.all([
     Promise.resolve(observeLockFile(lockPath)),
-    Promise.resolve(probeLock(lockPath)),
+    probeWithRetry(lockPath),
     inspectLockOpeners(lockPath),
     inspectTranscriptCandidates(candidatesBefore),
   ]);
@@ -100,7 +101,7 @@ export async function inspectThread(
   const candidatesAfter = await findTranscriptCandidates(options.codexHome, threadId);
   const [lockAfter, probeAfter, openersAfter, transcriptAfter] = await Promise.all([
     Promise.resolve(observeLockFile(lockPath)),
-    Promise.resolve(probeLock(lockPath)),
+    probeWithRetry(lockPath),
     inspectLockOpeners(lockPath),
     inspectTranscriptCandidates(candidatesAfter),
   ]);

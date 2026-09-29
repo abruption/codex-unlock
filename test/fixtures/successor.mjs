@@ -2,6 +2,7 @@
 // same native thread lock, modelling a user resuming the thread elsewhere.
 import fs from "node:fs";
 import process from "node:process";
+import { dirname, join } from "node:path";
 import { setInterval, setTimeout } from "node:timers";
 
 import { flockSync } from "fs-ext-extra-prebuilt";
@@ -13,7 +14,14 @@ const wait = () => {
     return;
   }
   const fd = fs.openSync(lockPath, "r+");
-  flockSync(fd, "ex");
+  const guard = fs.openSync(join(dirname(lockPath), ".coordination.lock"), "r");
+  flockSync(guard, "ex");
+  try {
+    flockSync(fd, "exnb");
+  } finally {
+    flockSync(guard, "un");
+    fs.closeSync(guard);
+  }
   process.stdout.write("acquired\n");
 };
 process.stdout.write("waiting\n");

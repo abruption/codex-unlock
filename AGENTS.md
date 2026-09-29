@@ -3,7 +3,8 @@
 ## Purpose and scope
 
 `codex-unlock` is a fail-closed diagnostic CLI for Codex native thread writer
-locks. Keep the default commands read-only. Changes to `unlock` must preserve
+locks. Default diagnostics must not modify files; their OS probes may briefly
+take the existing native coordination lock. Changes to `unlock` must preserve
 the safety invariants below and must include tests that exercise real advisory
 locks rather than lock-file existence alone.
 
@@ -22,6 +23,11 @@ committing changes that affect runtime, packaging, or automation.
 
 - A lock file is not proof of a live lock. Keep the OS lock probe independent
   from `lsof` process correlation.
+- Serialize each thread probe with the existing native `.coordination.lock`.
+  A missing or unsafe coordinator for an existing thread lock is `unknown`.
+  Never create native files or use an unguarded fallback. Keep guard critical
+  sections synchronous and release them before any await, spawn, or signal.
+  Lock order is operation lease, native guard, then thread probe.
 - Fail closed as `unknown` when owner identity, lock state, or transcript state
   cannot be established.
 - Only signal the exact, revalidated same-user Codex PID that owns one thread
