@@ -41,6 +41,23 @@ regular, non-symlink, single-link file with mode `0600` and a maximum size of
 4,096 bytes. An unsafe directory or file is rejected; it is not followed or
 used as an authority.
 
+The cache and lease paths are `lstat`-checked as regular files before they are
+opened, opened with `O_NOFOLLOW | O_NONBLOCK`, and revalidated with `fstat`
+against the same device and inode. A FIFO, socket, device, or other special
+file is classified as invalid or unavailable immediately and never delays the
+primary command.
+
+The cache is never read, created, or modified by a process running as UID 0,
+or when the nearest existing ancestor of the application directory (the
+application directory itself, the cache root, or the home directory above it)
+is not a directory owned by the current UID. This keeps an elevated process
+with a preserved `HOME`, or a foreign `XDG_CACHE_HOME`, from creating
+root-owned or foreign-owned cache directories. In that case automatic notices
+and refreshes are skipped without creating directories. Existing
+foreign-owned or elevated-context cache directories are never `chown`- or
+`chmod`-repaired; only an application directory already owned by the current
+non-root user may be tightened to `0700`.
+
 The exact cache schema is:
 
 ```json
@@ -114,7 +131,14 @@ The CLI applies these defaults:
   the primary result and may schedule a refresh only after command completion;
 - an explicit `check-update` command may perform the bounded foreground request
   because the user requested network access. `--no-update-notice` does not
-  suppress that explicit request.
+  suppress that explicit request. The cache stays advisory for this command: if
+  the refresh lease or cache write is unavailable (a read-only or foreign-owned
+  cache root, an elevated run, or a special file), the registry result is still
+  reported with `status: "ok"` and exit `0`, and the result records
+  `cacheUpdated: false` with a `cacheWarning` reason. Human output adds one
+  warning line on stderr; JSON output keeps stderr empty. Lease contention
+  reports a fresh cache written by the concurrent refresh, or fails as before
+  when no fresh cache exists.
 
 JSON schema v1 permits additive root fields. `clientUpdate` remains optional
 and ignorable and appears only when a fresh cache proves that `latest` is newer
@@ -132,8 +156,9 @@ The update command is conservative and does not modify the installation:
 
 ## Required regression coverage
 
-The security suite covers fresh/stale/future/malformed/oversized/symlinked and
-non-private caches, exact schema and file permissions, atomic replacement,
+The security suite covers fresh/stale/future/malformed/oversized/symlinked,
+FIFO, and non-private caches, elevated and foreign-owned cache roots with and
+without an existing `~/.cache`, unwritable cache roots during `check-update`, exact schema and file permissions, atomic replacement,
 hard-link refusal, concurrent refreshes, unlocked stale lock residue, fixed
 registry host, redirects, timeouts, registry failures, content type, malformed
 and oversized responses, strict stable versions, CI/TTY/opt-out policy, and a

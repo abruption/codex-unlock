@@ -27,6 +27,7 @@ import {
   UPDATE_REFRESH_ARG,
   UPDATE_REGISTRY_URL,
   acquireUpdateRefreshLease,
+  checkForUpdate,
   compareStableVersions,
   emitHumanUpdateNotice,
   fetchNpmLatest,
@@ -69,6 +70,26 @@ async function writeRawCache(target, value, mode = 0o600) {
 
 function cacheRecord(latest, checkedAt) {
   return JSON.stringify({ schemaVersion: 1, latest, checkedAt });
+}
+
+function makeFifo(path) {
+  childProcess.execFileSync("mkfifo", ["-m", "600", path]);
+}
+
+async function exists(path) {
+  return await lstat(path).then(() => true, () => false);
+}
+
+async function runCliWithin(args, environment, timeoutMs) {
+  let timer;
+  const deadline = new Promise((_resolve, reject) => {
+    timer = globalThis.setTimeout(() => reject(new Error(`CLI did not finish within ${timeoutMs} ms`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([runCli(args, environment), deadline]);
+  } finally {
+    globalThis.clearTimeout(timer);
+  }
 }
 
 function jsonResponse(value, init = {}) {
@@ -671,6 +692,8 @@ test("check-update performs the explicit bounded refresh and returns structured 
     checkedAt: JSON.parse(await readFile(location(root).cacheFile, "utf8")).checkedAt,
     updateAvailable: true,
     updateCommand: "git -C <source-checkout> pull --ff-only && npm --prefix <source-checkout> ci",
+    cacheUpdated: true,
+    cacheWarning: null,
   });
 
   await writeFile(preload, `globalThis.fetch = async () => { throw new Error("offline"); };\n`);
@@ -731,4 +754,192 @@ test("the safety-critical unlock path starts no registry request or update refre
     childProcess.spawn = originalSpawn;
     syncBuiltinESMExports();
   }
+});
+
+test("special files at cache and lease paths are rejected without blocking", async (t) => {
+  await t.test("cache FIFO", async () => {
+    const target = await temporaryLocation("codex-unlock-update-fifo-");
+    await mkdir(target.directory, { mode: 0o700 });
+    await chmod(target.directory, 0o700);
+    makeFifo(target.cacheFile);
+    assert.deepEqual(readUpdateCache(target, NOW), {
+      status: "invalid",
+      reason: "cache_file_is_not_private",
+    });
+  });
+
+  await t.test("lease FIFO", async () => {
+    const target = await temporaryLocation("codex-unlock-refresh-fifo-");
+    await mkdir(target.directory, { mode: 0o700 });
+    await chmod(target.directory, 0o700);
+    makeFifo(target.lockFile);
+    assert.deepEqual(acquireUpdateRefreshLease(target), {
+      status: "unavailable",
+      reason: "refresh_lock_is_not_private",
+    });
+    assert.equal((await lstat(target.lockFile)).isFIFO(), true);
+  });
+
+  await t.test("list --json with a cache FIFO", async () => {
+    const root = await mkdtemp(join(tmpdir(), "codex-unlock-update-cli-fifo-"));
+    const target = location(root);
+    await mkdir(target.directory, { mode: 0o700 });
+    await chmod(target.directory, 0o700);
+    makeFifo(target.cacheFile);
+    const codexHome = await mkdtemp(join(tmpdir(), "codex-unlock-update-cli-fifo-home-"));
+    const result = await runCliWithin(
+      ["list", "--json", "--codex-home", codexHome],
+      { ...process.env, CI: "false", XDG_CACHE_HOME: root, CODEX_UNLOCK_NO_UPDATE_NOTICE: "0" },
+      10_000,
+    );
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stderr, "");
+    const value = JSON.parse(result.stdout);
+    assert.equal(value.command, "list");
+    assert.equal(value.clientUpdate, undefined);
+  });
+});
+
+test("explicit check-update reports the registry result when the cache is unwritable", async (t) => {
+  const readOnlyRoot = async (prefix) => {
+    const root = await mkdtemp(join(tmpdir(), prefix));
+    await chmod(root, 0o500);
+    t.after(async () => await chmod(root, 0o700));
+    return root;
+  };
+  const expectedWarning = process.getuid() === 0
+    ? "cache_user_is_elevated"
+    : "cache_directory_unavailable";
+
+  const root = await readOnlyRoot("codex-unlock-check-readonly-");
+  let fetches = 0;
+  const checked = await checkForUpdate({
+    location: location(root),
+    nowMs: NOW,
+    fetchImpl: async () => {
+      fetches += 1;
+      return jsonResponse({ version: "0.2.1" });
+    },
+  });
+  assert.equal(fetches, 1);
+  assert.deepEqual(checked, {
+    status: "ok",
+    record: { schemaVersion: 1, latest: "0.2.1", checkedAt: "2026-09-22T00:00:00.000Z" },
+    cacheUpdated: false,
+    cacheWarning: expectedWarning,
+  });
+  assert.deepEqual(await readdir(root), []);
+
+  const offline = await checkForUpdate({
+    location: location(root),
+    nowMs: NOW,
+    fetchImpl: async () => { throw new Error("offline"); },
+  });
+  assert.deepEqual(offline, { status: "error", reason: "network_error" });
+
+  const cliRoot = await readOnlyRoot("codex-unlock-check-readonly-cli-");
+  const preload = join(await mkdtemp(join(tmpdir(), "codex-unlock-check-readonly-preload-")), "registry.mjs");
+  await writeFile(
+    preload,
+    `globalThis.fetch = async () => new Response(JSON.stringify({ version: "${newerVersion}" }), { headers: { "content-type": "application/json" } });\n`,
+  );
+  const environment = {
+    ...process.env,
+    XDG_CACHE_HOME: cliRoot,
+    NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`,
+  };
+  const json = await runCli(["check-update", "--json"], environment);
+  assert.equal(json.code, 0, json.stdout);
+  assert.equal(json.stderr, "");
+  const value = JSON.parse(json.stdout);
+  assert.equal(value.status, "ok");
+  assert.equal(value.latestVersion, newerVersion);
+  assert.equal(value.updateAvailable, true);
+  assert.equal(value.cacheUpdated, false);
+  assert.equal(value.cacheWarning, expectedWarning);
+
+  const human = await runCli(["check-update"], environment);
+  assert.equal(human.code, 0, human.stderr);
+  assert.match(human.stdout, new RegExp(`Latest version:  ${newerVersion.replaceAll(".", "\\.")}`));
+  assert.equal(
+    human.stderr,
+    `codex-unlock: warning: update cache not updated: ${expectedWarning}\n`,
+  );
+  assert.deepEqual(await readdir(cliRoot), []);
+});
+
+test("elevated or foreign-owned cache roots are never created or repaired", async (t) => {
+  const foreignUid = process.getuid() + 1;
+  const scenarios = [
+    { name: "UID 0 without ~/.cache", uid: 0, cacheExists: false, reason: "cache_user_is_elevated" },
+    { name: "UID 0 with ~/.cache", uid: 0, cacheExists: true, reason: "cache_user_is_elevated" },
+    { name: "foreign UID without ~/.cache", uid: foreignUid, cacheExists: false, reason: "cache_root_owner_mismatch" },
+    { name: "foreign UID with ~/.cache", uid: foreignUid, cacheExists: true, reason: "cache_root_owner_mismatch" },
+  ];
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, async () => {
+      const home = await mkdtemp(join(tmpdir(), "codex-unlock-update-home-"));
+      if (scenario.cacheExists) await mkdir(join(home, ".cache"), { mode: 0o700 });
+      const target = updateCacheLocation({}, home);
+      const before = await readdir(home);
+
+      const advisory = prepareUpdateAdvisory({
+        currentVersion: "0.2.0",
+        json: false,
+        noUpdateNotice: false,
+        stdoutIsTTY: true,
+        stderrIsTTY: true,
+        environment: {},
+        location: target,
+        nowMs: NOW,
+        uid: scenario.uid,
+        guidance: { sourceCheckout: false, environment: {} },
+      });
+      assert.deepEqual(advisory, { clientUpdate: null, humanNotice: null, scheduleRefresh: false });
+      assert.deepEqual(readUpdateCache(target, NOW, scenario.uid), {
+        status: "unavailable",
+        reason: scenario.reason,
+      });
+
+      let fetches = 0;
+      const fetchImpl = async () => {
+        fetches += 1;
+        return jsonResponse({ version: "0.2.1" });
+      };
+      assert.deepEqual(
+        await refreshUpdateCache({ location: target, nowMs: NOW, uid: scenario.uid, fetchImpl }),
+        { status: "error", reason: scenario.reason },
+      );
+      assert.equal(fetches, 0);
+      assert.deepEqual(writeUpdateCache("0.2.1", target, NOW, scenario.uid), {
+        status: "error",
+        reason: scenario.reason,
+      });
+      assert.deepEqual(acquireUpdateRefreshLease(target, scenario.uid), {
+        status: "unavailable",
+        reason: scenario.reason,
+      });
+
+      const checked = await checkForUpdate({ location: target, nowMs: NOW, uid: scenario.uid, fetchImpl });
+      assert.equal(checked.status, "ok");
+      assert.equal(checked.cacheUpdated, false);
+      assert.equal(checked.cacheWarning, scenario.reason);
+      assert.equal(fetches, 1);
+
+      assert.deepEqual(await readdir(home), before);
+      assert.equal(await exists(target.directory), false);
+    });
+  }
+
+  await t.test("existing loose directory is not repaired for a foreign UID", async () => {
+    const target = await temporaryLocation("codex-unlock-update-foreign-mode-");
+    await mkdir(target.directory, { mode: 0o755 });
+    await chmod(target.directory, 0o755);
+    assert.deepEqual(writeUpdateCache("0.2.1", target, NOW, foreignUid), {
+      status: "error",
+      reason: "cache_root_owner_mismatch",
+    });
+    assert.equal((await stat(target.directory)).mode & 0o777, 0o755);
+    assert.deepEqual(await readdir(target.directory), []);
+  });
 });

@@ -17,10 +17,10 @@ import {
 } from "./types.js";
 import {
   UPDATE_REFRESH_ARG,
+  checkForUpdate,
   compareStableVersions,
   emitHumanUpdateNotice,
   prepareUpdateAdvisory,
-  readUpdateCache,
   refreshUpdateCache,
   scheduleUpdateRefresh,
   updateCommand,
@@ -268,19 +268,9 @@ function finishAutomaticAdvisory(advisory: PreparedUpdateAdvisory): void {
 }
 
 async function checkUpdate(json: boolean): Promise<number> {
-  const refreshed = await refreshUpdateCache();
-  const observation = refreshed.status === "updated"
-    ? { status: "fresh" as const, record: refreshed.record }
-    : refreshed.status === "skipped"
-      ? readUpdateCache()
-      : null;
-  if (observation?.status !== "fresh") {
-    const reason = refreshed.status === "error"
-      ? refreshed.reason
-      : refreshed.status === "skipped"
-        ? "refresh_in_progress"
-        : "update_check_failed";
-    throw new Error(`update check failed: ${reason}`);
+  const checked = await checkForUpdate();
+  if (checked.status === "error") {
+    throw new Error(`update check failed: ${checked.reason}`);
   }
   const currentVersion = packageVersion();
   const result: CheckUpdateResult = {
@@ -289,15 +279,17 @@ async function checkUpdate(json: boolean): Promise<number> {
     status: "ok",
     source: "npm",
     currentVersion,
-    latestVersion: observation.record.latest,
-    checkedAt: observation.record.checkedAt,
+    latestVersion: checked.record.latest,
+    checkedAt: checked.record.checkedAt,
     updateAvailable:
-      compareStableVersions(currentVersion, observation.record.latest) < 0,
+      compareStableVersions(currentVersion, checked.record.latest) < 0,
     updateCommand: updateCommand({
       environment: process.env,
       cliPath: process.argv[1],
       sourceCheckout: sourceCheckout(),
     }),
+    cacheUpdated: checked.cacheUpdated,
+    cacheWarning: checked.cacheWarning,
   };
   if (json) {
     console.log(JSON.stringify(result, null, 2));
@@ -307,6 +299,9 @@ async function checkUpdate(json: boolean): Promise<number> {
     console.log(`Checked at:      ${result.checkedAt}`);
     console.log(`Update available: ${result.updateAvailable ? "yes" : "no"}`);
     if (result.updateAvailable) console.log(`Update command:   ${result.updateCommand}`);
+    if (checked.cacheWarning !== null) {
+      console.error(`codex-unlock: warning: update cache not updated: ${checked.cacheWarning}`);
+    }
   }
   return 0;
 }

@@ -209,7 +209,9 @@
         "latestVersion": { "type": "string" },
         "checkedAt": { "type": "string" },
         "updateAvailable": { "type": "boolean" },
-        "updateCommand": { "type": "string" }
+        "updateCommand": { "type": "string" },
+        "cacheUpdated": { "type": "boolean" },
+        "cacheWarning": { "type": ["string", "null"] }
       }
     },
     "cliErrorResult": {

@@ -128,8 +128,17 @@ with `owner_changed_before_signal` or `lock_changed_before_signal`.
 `check-update` is the only command that performs a foreground npm registry
 request. It returns `status: "ok"`, the current and latest stable versions,
 the check timestamp, an `updateAvailable` boolean, and conservative update
-guidance. Registry, timeout, response, or cache-write failures use the normal
-structured command error and exit `3`.
+guidance. Registry, timeout, and response failures use the normal structured
+command error and exit `3`.
+
+Since 0.4.1, `check-update` also adds two optional fields. `cacheUpdated` is
+`true` when the result was written to the local advisory cache. When it is
+`false`, `cacheWarning` is a stable reason string such as
+`cache_directory_unavailable`, `cache_user_is_elevated`,
+`cache_root_owner_mismatch`, or `refresh_in_progress`; otherwise it is `null`.
+A cache that cannot be written no longer turns a successful registry check into
+an error. Consumers must treat unknown `cacheWarning` values as opaque and must
+tolerate both fields being absent in output from earlier versions.
 
 ## Cached update advisory
 

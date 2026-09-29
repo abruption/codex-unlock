@@ -13,12 +13,13 @@ import {
   openSync,
   readFileSync,
   renameSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import type { Stats } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 
 import type { ClientUpdate } from "./types.js";
@@ -91,11 +92,21 @@ export interface FetchLatestOptions {
 
 export interface RefreshUpdateCacheOptions extends FetchLatestOptions {
   location?: UpdateCacheLocation;
+  uid?: number | null;
 }
 
 export type RefreshUpdateCacheResult =
   | { status: "updated"; record: UpdateCacheRecord }
   | { status: "skipped"; reason: "refresh_in_progress" }
+  | { status: "error"; reason: string };
+
+export type CheckForUpdateResult =
+  | {
+      status: "ok";
+      record: UpdateCacheRecord;
+      cacheUpdated: boolean;
+      cacheWarning: string | null;
+    }
   | { status: "error"; reason: string };
 
 export interface UpdateAutomationContext {
@@ -133,6 +144,7 @@ export interface PrepareUpdateAdvisoryOptions extends UpdateAutomationContext {
   location?: UpdateCacheLocation;
   nowMs?: number;
   guidance?: UpdateGuidanceContext;
+  uid?: number | null;
 }
 
 export interface ScheduleUpdateRefreshOptions {
@@ -156,6 +168,29 @@ function currentUid(): number | null {
 
 function noFollowFlag(): number {
   return constants.O_NOFOLLOW ?? 0;
+}
+
+function nonBlockingFlag(): number {
+  return constants.O_NONBLOCK ?? 0;
+}
+
+// The nearest existing ancestor decides who would own created directories.
+// Elevated runs and foreign-owned roots never create or repair cache state.
+function cacheBoundaryError(location: UpdateCacheLocation, uid: number): string | null {
+  if (uid === 0) return "cache_user_is_elevated";
+  let path = location.directory;
+  while (true) {
+    try {
+      const value = statSync(path);
+      if (!value.isDirectory()) return "cache_root_is_unsafe";
+      return value.uid === uid ? null : "cache_root_owner_mismatch";
+    } catch (error) {
+      if (errno(error) !== "ENOENT") return "cache_root_unavailable";
+    }
+    const parent = dirname(path);
+    if (parent === path) return "cache_root_unavailable";
+    path = parent;
+  }
 }
 
 function privateDirectory(path: string, uid: number): boolean {
@@ -283,12 +318,14 @@ export function updateCacheLocation(
 export function readUpdateCache(
   location: UpdateCacheLocation = updateCacheLocation(),
   nowMs: number = Date.now(),
+  uid: number | null = currentUid(),
 ): UpdateCacheObservation {
-  const uid = currentUid();
   if (uid === null) return { status: "unavailable", reason: "current_user_is_unavailable" };
   if (!Number.isFinite(nowMs) || nowMs < 0) {
     return { status: "unavailable", reason: "current_time_is_invalid" };
   }
+  const boundaryError = cacheBoundaryError(location, uid);
+  if (boundaryError) return { status: "unavailable", reason: boundaryError };
 
   try {
     if (!privateDirectory(location.directory, uid)) {
@@ -302,10 +339,22 @@ export function readUpdateCache(
 
   let descriptor: number | undefined;
   try {
-    descriptor = openSync(location.cacheFile, constants.O_RDONLY | noFollowFlag());
+    // Reject FIFOs and other special files before an open that could block.
+    const initial = lstatSync(location.cacheFile);
+    if (initial.isSymbolicLink()) return { status: "invalid", reason: "cache_file_is_symlink" };
+    if (!privateRegularFile(initial, uid)) {
+      return { status: "invalid", reason: "cache_file_is_not_private" };
+    }
+    descriptor = openSync(
+      location.cacheFile,
+      constants.O_RDONLY | noFollowFlag() | nonBlockingFlag(),
+    );
     const before = fstatSync(descriptor);
     if (!privateRegularFile(before, uid)) {
       return { status: "invalid", reason: "cache_file_is_not_private" };
+    }
+    if (before.dev !== initial.dev || before.ino !== initial.ino) {
+      return { status: "invalid", reason: "cache_changed_during_read" };
     }
     if (before.size <= 0 || before.size > UPDATE_CACHE_MAX_BYTES) {
       return { status: "invalid", reason: "cache_size_is_invalid" };
@@ -355,8 +404,8 @@ export function writeUpdateCache(
   latest: string,
   location: UpdateCacheLocation = updateCacheLocation(),
   nowMs: number = Date.now(),
+  uid: number | null = currentUid(),
 ): UpdateCacheWriteResult {
-  const uid = currentUid();
   if (uid === null) return { status: "error", reason: "current_user_is_unavailable" };
   if (stableVersion(latest) === null) {
     return { status: "error", reason: "latest_version_is_invalid" };
@@ -364,6 +413,8 @@ export function writeUpdateCache(
   if (!Number.isFinite(nowMs) || nowMs < 0) {
     return { status: "error", reason: "current_time_is_invalid" };
   }
+  const boundaryError = cacheBoundaryError(location, uid);
+  if (boundaryError) return { status: "error", reason: boundaryError };
   const directoryError = ensurePrivateDirectory(location.directory, uid);
   if (directoryError) return { status: "error", reason: directoryError };
   const targetError = validateExistingTarget(location.cacheFile, uid);
@@ -412,7 +463,10 @@ export function writeUpdateCache(
     closeSync(directoryDescriptor);
     directoryDescriptor = undefined;
 
-    const finalDescriptor = openSync(location.cacheFile, constants.O_RDONLY | noFollowFlag());
+    const finalDescriptor = openSync(
+      location.cacheFile,
+      constants.O_RDONLY | noFollowFlag() | nonBlockingFlag(),
+    );
     try {
       if (!privateRegularFile(fstatSync(finalDescriptor), uid)) {
         return { status: "error", reason: "cache_file_is_not_private" };
@@ -450,19 +504,29 @@ export function writeUpdateCache(
 
 export function acquireUpdateRefreshLease(
   location: UpdateCacheLocation = updateCacheLocation(),
+  uid: number | null = currentUid(),
 ): UpdateRefreshLeaseAttempt {
-  const uid = currentUid();
   if (uid === null) {
     return { status: "unavailable", reason: "current_user_is_unavailable" };
   }
+  const boundaryError = cacheBoundaryError(location, uid);
+  if (boundaryError) return { status: "unavailable", reason: boundaryError };
   const directoryError = ensurePrivateDirectory(location.directory, uid);
   if (directoryError) return { status: "unavailable", reason: directoryError };
 
   let descriptor: number | undefined;
   try {
+    // An existing special file is refused before an open that could block.
+    const existing = lstatSync(location.lockFile, { throwIfNoEntry: false });
+    if (existing?.isSymbolicLink()) {
+      return { status: "unavailable", reason: "refresh_lock_is_symlink" };
+    }
+    if (existing && !privateRegularFile(existing, uid)) {
+      return { status: "unavailable", reason: "refresh_lock_is_not_private" };
+    }
     descriptor = openSync(
       location.lockFile,
-      constants.O_CREAT | constants.O_RDWR | noFollowFlag(),
+      constants.O_CREAT | constants.O_RDWR | noFollowFlag() | nonBlockingFlag(),
       0o600,
     );
     const value = fstatSync(descriptor);
@@ -663,7 +727,8 @@ export async function refreshUpdateCache(
   options: RefreshUpdateCacheOptions = {},
 ): Promise<RefreshUpdateCacheResult> {
   const location = options.location ?? updateCacheLocation();
-  const leaseAttempt = acquireUpdateRefreshLease(location);
+  const uid = options.uid === undefined ? currentUid() : options.uid;
+  const leaseAttempt = acquireUpdateRefreshLease(location, uid);
   if (leaseAttempt.status === "contended") {
     return { status: "skipped", reason: "refresh_in_progress" };
   }
@@ -677,12 +742,57 @@ export async function refreshUpdateCache(
       fetched.record.latest,
       location,
       Date.parse(fetched.record.checkedAt),
+      uid,
     );
     return written.status === "written"
       ? { status: "updated", record: written.record }
       : written;
   } finally {
     leaseAttempt.lease.release();
+  }
+}
+
+// Explicit checks treat the cache as advisory: an unavailable lease or cache
+// write is reported as a warning instead of suppressing the registry result.
+export async function checkForUpdate(
+  options: RefreshUpdateCacheOptions = {},
+): Promise<CheckForUpdateResult> {
+  const location = options.location ?? updateCacheLocation();
+  const uid = options.uid === undefined ? currentUid() : options.uid;
+  const leaseAttempt = acquireUpdateRefreshLease(location, uid);
+  if (leaseAttempt.status === "contended") {
+    const observation = readUpdateCache(location, options.nowMs ?? Date.now(), uid);
+    return observation.status === "fresh"
+      ? {
+          status: "ok",
+          record: observation.record,
+          cacheUpdated: false,
+          cacheWarning: "refresh_in_progress",
+        }
+      : { status: "error", reason: "refresh_in_progress" };
+  }
+  try {
+    const fetched = await fetchNpmLatest(options);
+    if (fetched.status === "error") return fetched;
+    if (leaseAttempt.status === "unavailable") {
+      return {
+        status: "ok",
+        record: fetched.record,
+        cacheUpdated: false,
+        cacheWarning: leaseAttempt.reason,
+      };
+    }
+    const written = writeUpdateCache(
+      fetched.record.latest,
+      location,
+      Date.parse(fetched.record.checkedAt),
+      uid,
+    );
+    return written.status === "written"
+      ? { status: "ok", record: written.record, cacheUpdated: true, cacheWarning: null }
+      : { status: "ok", record: fetched.record, cacheUpdated: false, cacheWarning: written.reason };
+  } finally {
+    if (leaseAttempt.status === "acquired") leaseAttempt.lease.release();
   }
 }
 
@@ -745,9 +855,18 @@ export function prepareUpdateAdvisory(
     return { clientUpdate: null, humanNotice: null, scheduleRefresh: false };
   }
 
-  const observation = policy.readCache
-    ? readUpdateCache(options.location, options.nowMs)
-    : { status: "missing" as const, reason: "cache_read_suppressed" };
+  const location = options.location ?? updateCacheLocation();
+  const uid = options.uid === undefined ? currentUid() : options.uid;
+  const boundaryError = policy.readCache
+    ? uid === null
+      ? "current_user_is_unavailable"
+      : cacheBoundaryError(location, uid)
+    : null;
+  const observation: UpdateCacheObservation = !policy.readCache
+    ? { status: "missing", reason: "cache_read_suppressed" }
+    : boundaryError
+      ? { status: "unavailable", reason: boundaryError }
+      : readUpdateCache(location, options.nowMs, uid);
   const command = updateCommand(options.guidance);
   let clientUpdate: ClientUpdate | null = null;
   let humanNotice: string | null = null;
@@ -775,7 +894,8 @@ export function prepareUpdateAdvisory(
   return {
     clientUpdate: policy.attachJson ? clientUpdate : null,
     humanNotice,
-    scheduleRefresh: policy.scheduleRefresh && observation.status !== "fresh",
+    scheduleRefresh:
+      policy.scheduleRefresh && boundaryError === null && observation.status !== "fresh",
   };
 }
 
