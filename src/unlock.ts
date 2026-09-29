@@ -405,7 +405,7 @@ export async function unlockInspectedThread(
     }
     if (
       !sameSnapshot(finalInspection.lock.snapshot, preSignalLock.snapshot) ||
-      preSignalProbe.status !== "held"
+      (preSignalProbe.status !== "held" && preSignalProbe.guard?.status !== "busy")
     ) {
       revalidationReasons.push("lock_changed_before_signal");
     }

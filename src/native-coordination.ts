@@ -135,10 +135,11 @@ export function guardedProbeOnce(
 /** Retry only contention, outside the synchronous guard, on a monotonic clock. */
 export async function probeWithRetry(lockPath: string, callerDeadline = Infinity): Promise<LockProbe> {
   const deadline = Math.min(performance.now() + NATIVE_COORDINATION_RETRY_MS, callerDeadline);
-  const observation = observeLockFile(lockPath);
   let attempts = 0;
   while (true) {
-    const result = guardedProbeOnce(lockPath, observation);
+    // A coordinated writer may remove or replace the thread file while busy.
+    // Re-observe each attempt; the synchronous signal boundary never retries.
+    const result = guardedProbeOnce(lockPath, observeLockFile(lockPath));
     attempts += 1;
     if (result.guard) result.guard.attempts = attempts;
     const remaining = deadline - performance.now();

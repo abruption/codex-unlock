@@ -97,6 +97,28 @@ test("native guard contention retries within its monotonic acquisition budget", 
   assert.ok(result.guard.attempts > 1);
 });
 
+for (const action of ["unlink", "replace"]) {
+  test(`native retry re-observes a coordinated thread ${action}`, async (t) => {
+    const value = await emptyLock();
+    const before = statSync(value.path, { bigint: true });
+    const child = await holdGuard(t, value.path);
+    const pending = probeWithRetry(value.path);
+    // The first attempt has already observed real guard contention. The child
+    // changes the fixture while still holding the guard, then releases it.
+    child.stdin.write(`${action}\n`);
+    const result = await pending;
+    assert.equal(result.status, "free", JSON.stringify(result));
+    if (action === "unlink") {
+      assert.equal(result.guard, undefined);
+      assert.throws(() => statSync(value.path), /ENOENT/);
+    } else {
+      assert.equal(result.guard.status, "acquired");
+      assert.ok(result.guard.attempts > 1);
+      assert.notEqual(statSync(value.path, { bigint: true }).ino, before.ino);
+    }
+  });
+}
+
 test("native busy guard exhausts the budget and respects a shorter caller deadline", async (t) => {
   const value = await emptyLock();
   await holdGuard(t, value.path);
@@ -292,6 +314,7 @@ for (const mode of ["verify", "busy"]) {
       assert.equal(parsed.outcome, "refused");
       assert.equal(parsed.signalSent, null);
       assert.ok(parsed.reasons.includes("native_coordination_busy_before_signal"));
+      assert.ok(!parsed.reasons.includes("lock_changed_before_signal"));
       assert.equal(value.child.exitCode, null);
       assert.throws(() => statSync(marker), /ENOENT/);
     } else {

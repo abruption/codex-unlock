@@ -15,7 +15,14 @@ if (mode === "hold") {
   process.stdout.write("ready\n");
   const finish = () => { fs.closeSync(guard); process.exit(0); };
   if (Number(countOrMs) > 0) setTimeout(finish, Number(countOrMs));
-  else readline.createInterface({ input: process.stdin }).once("line", finish);
+  else readline.createInterface({ input: process.stdin }).once("line", (command) => {
+    if (command === "unlink") fs.unlinkSync(lockPath);
+    if (command === "replace") {
+      fs.renameSync(lockPath, `${lockPath}.old`);
+      fs.writeFileSync(lockPath, "replacement inode");
+    }
+    finish();
+  });
 } else if (mode === "probe") {
   try {
     flockSync(guard, "exnb");
