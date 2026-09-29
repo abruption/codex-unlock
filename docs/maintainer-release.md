@@ -12,7 +12,7 @@ records the latest released version.
 1. Merge focused Conventional Commit pull requests into `main` only after CI
    passes.
 2. Review the Release Please pull request. It owns `package.json`,
-   `npm-shrinkwrap.json`, `.release-please-manifest.json`, and `CHANGELOG.md`.
+   `package-lock.json`, `.release-please-manifest.json`, and `CHANGELOG.md`.
    For v0.2, confirm the generated notes agree with
    [`v0.2-migration.md`](v0.2-migration.md), including the CLI-only API boundary,
    concurrent-unlock serialization, and deliberately unsupported owners.
@@ -30,9 +30,12 @@ The stable aggregate branch-protection checks are `supported-tests`, `lint`,
 [`platform-support.md`](platform-support.md). `package-smoke` requires exact
 artifact contents, an offline clean tarball installation, CLI/JSON smoke tests,
 and rejected package-root/internal imports on both operating systems.
-It asserts that the native runtime dependency is an exact pin matching
-`npm-shrinkwrap.json`, that the shrinkwrap is published, and that the installed
-`fs-ext-extra-prebuilt` and `nan` versions equal the shrinkwrap pins.
+It generates the runtime-only `npm-shrinkwrap.json` from `package-lock.json`,
+asserts that the native runtime dependency is an exact pin matching the
+lockfile, that the shrinkwrap is published without development entries, that a
+regular dependency installation contains exactly `codex-unlock`,
+`fs-ext-extra-prebuilt`, and `nan`, and that their installed versions equal the
+pins. The generated shrinkwrap is removed afterwards.
 It also compiles a consumer against the installed tarball's type-only JSON
 declarations in NodeNext and bundler modes, without Node.js type dependencies,
 and rejects `/types` as a runtime import.
@@ -123,18 +126,27 @@ verification even if installation succeeds.
 
 ## Runtime dependency pinning
 
-`npm-shrinkwrap.json` is the repository's single lockfile (npm ignores
-`package-lock.json` when both exist, so there is none). It is published in the
-package, so `npm install --global codex-unlock` installs exactly the
-`fs-ext-extra-prebuilt` and `nan` versions that CI validated instead of the
-newest compatible release. `package.json` also pins `fs-ext-extra-prebuilt` to
-an exact version for package managers that ignore npm's shrinkwrap.
+`package-lock.json` is the repository lockfile. The publish job runs
+`node scripts/consumer-shrinkwrap.mjs` to generate `npm-shrinkwrap.json` with
+only the runtime tree, and `prepublishOnly` runs the same script with `--check`,
+so `npm publish` fails if the shrinkwrap is missing, stale, or contains
+development entries. The published shrinkwrap makes `npm install codex-unlock`
+(global or as a dependency) install exactly the `fs-ext-extra-prebuilt` and
+`nan` versions that CI validated instead of the newest compatible release.
+`package.json` also pins `fs-ext-extra-prebuilt` to an exact version for
+package managers that ignore npm's shrinkwrap.
 
-Dependabot bumps that exact pin and the shrinkwrap together in a separate
+Never publish the full lockfile as a shrinkwrap: npm installs every entry of a
+dependency's shrinkwrap, so 0.4.1 installed its development tooling into
+dependency consumers (#82). `npm-shrinkwrap.json` is git-ignored; do not commit
+it, because npm would then prefer it over `package-lock.json` for local
+installs.
+
+Dependabot bumps the exact pin and `package-lock.json` together in a separate
 `runtime` group with a `fix(deps)` commit, so the update runs the full platform
 matrix and package smoke before Release Please ships it. After a manual
-runtime dependency change, run `npm install` (never delete the shrinkwrap) and
-commit both files; package smoke fails if they disagree.
+runtime dependency change, run `npm install` and commit both files; package
+smoke fails if they disagree.
 
 ## npm lifecycle contract
 

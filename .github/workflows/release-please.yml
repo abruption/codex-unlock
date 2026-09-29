@@ -46,4 +46,7 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run smoke:package
+      # Publish a runtime-only shrinkwrap generated from package-lock.json;
+      # prepublishOnly verifies it before npm publish packs the artifact.
+      - run: node scripts/consumer-shrinkwrap.mjs
       - run: npm publish --provenance --access public

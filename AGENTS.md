@@ -48,11 +48,14 @@ committing changes that affect runtime, packaging, or automation.
 - Use Conventional Commit subjects such as `feat:`, `fix:`, `docs:`, `test:`,
   `refactor:`, `ci:`, and `chore:`. Mark breaking changes with `!` and a
   `BREAKING CHANGE:` footer.
-- Let Release Please update `package.json`, `npm-shrinkwrap.json`,
+- Let Release Please update `package.json`, `package-lock.json`,
   `.release-please-manifest.json`, `CHANGELOG.md`, tags, and GitHub releases.
-- `npm-shrinkwrap.json` is the only lockfile and is published so consumers get
-  the CI-validated native tree. Keep `fs-ext-extra-prebuilt` pinned to an exact
-  version equal to the shrinkwrap; do not add a `package-lock.json`.
+- `package-lock.json` is the repository lockfile. The published
+  `npm-shrinkwrap.json` is generated from it with only the runtime tree by
+  `scripts/consumer-shrinkwrap.mjs`; never commit it, and never publish the full
+  lockfile as a shrinkwrap (npm installs every entry of a dependency's
+  shrinkwrap). Keep `fs-ext-extra-prebuilt` pinned to an exact version equal to
+  the lockfile.
 - Never place npm tokens in files, commit messages, logs, or command arguments.
   Publication uses the package's npm Trusted Publisher OIDC binding to
   `.github/workflows/release-please.yml`; keep `id-token: write` on the publish
