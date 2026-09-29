@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.1](https://github.com/abruption/codex-unlock/compare/v0.4.0...v0.4.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* classify post-signal owner exit and lock reacquisition ([#77](https://github.com/abruption/codex-unlock/issues/77)) ([98a25c7](https://github.com/abruption/codex-unlock/commit/98a25c78c935a15e5757c3ec441a406c16f63f29))
+* coordinate native thread lock probes ([#79](https://github.com/abruption/codex-unlock/issues/79)) ([1d529c3](https://github.com/abruption/codex-unlock/commit/1d529c3bd5da9c49fafc095746d2d921e276ddc3))
+* escape terminal controls and bound transcript ordinals ([#76](https://github.com/abruption/codex-unlock/issues/76)) ([938a65a](https://github.com/abruption/codex-unlock/commit/938a65a4b0306a999639f2a9b33fa5b1a3ce116f)), closes [#54](https://github.com/abruption/codex-unlock/issues/54) [#56](https://github.com/abruption/codex-unlock/issues/56)
+* harden diagnostic command execution ([#74](https://github.com/abruption/codex-unlock/issues/74)) ([ce2105c](https://github.com/abruption/codex-unlock/commit/ce2105c9c9f6e990478a393f5f3cd0c34de83a75)), closes [#68](https://github.com/abruption/codex-unlock/issues/68) [#66](https://github.com/abruption/codex-unlock/issues/66)
+* harden update cache boundary ([#72](https://github.com/abruption/codex-unlock/issues/72)) ([72d2b6e](https://github.com/abruption/codex-unlock/commit/72d2b6eb52d139ec952e42452e9c5828acb7d851)), closes [#57](https://github.com/abruption/codex-unlock/issues/57) [#62](https://github.com/abruption/codex-unlock/issues/62) [#70](https://github.com/abruption/codex-unlock/issues/70)
+* key unlock leases by native lock identity ([#73](https://github.com/abruption/codex-unlock/issues/73)) ([9e97142](https://github.com/abruption/codex-unlock/commit/9e9714235e0c94fe6d0954a355e12f2b2c126ced))
+* pin native runtime dependencies for consumer installs ([#71](https://github.com/abruption/codex-unlock/issues/71)) ([2c7e045](https://github.com/abruption/codex-unlock/commit/2c7e045bdfa30af2f2b723342f56f046c963d875)), closes [#69](https://github.com/abruption/codex-unlock/issues/69)
+* validate CLI usage and Codex home before inspection ([#75](https://github.com/abruption/codex-unlock/issues/75)) ([81e26dd](https://github.com/abruption/codex-unlock/commit/81e26dd40c0f0fe44128312b4d86d2b24f8a86a2)), closes [#58](https://github.com/abruption/codex-unlock/issues/58) [#67](https://github.com/abruption/codex-unlock/issues/67)
+
 ## [0.4.0](https://github.com/abruption/codex-unlock/compare/v0.3.0...v0.4.0) (2026-09-28)
 
 
