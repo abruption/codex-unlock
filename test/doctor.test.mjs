@@ -105,7 +105,14 @@ test("terminates a completed idle owner and verifies transcript invariance", asy
   assert.equal(result.outcome, "unlocked");
   assert.equal(result.signalSent, "SIGTERM");
   assert.equal(result.processExited, true);
-  assert.equal(result.processObservation.status, "absent");
+  // The OS can expose the exited child as a zombie before Node reaps it.
+  // Both observations prove exit under the existing post-signal contract.
+  if (result.processObservation.status === "present") {
+    assert.equal(result.processObservation.zombie, true);
+    assert.equal(result.processObservation.startTime, inspection.owner.startTime);
+  } else {
+    assert.equal(result.processObservation.status, "absent");
+  }
   assert.equal(result.lockReleased, true);
   assert.equal(result.transcriptUnchanged, true);
   assert.equal(result.lockFileRemovedByTool, false);

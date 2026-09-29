@@ -122,15 +122,27 @@ for (const action of ["unlink", "replace"]) {
 test("native busy guard exhausts the budget and respects a shorter caller deadline", async (t) => {
   const value = await emptyLock();
   await holdGuard(t, value.path);
-  let start = performance.now();
+  const start = performance.now();
   const result = await probeWithRetry(value.path);
   assert.equal(result.status, "unknown");
   assert.equal(result.error, "native_coordination_busy");
   assert.ok(performance.now() - start >= NATIVE_COORDINATION_RETRY_MS - 5);
-  start = performance.now();
-  const shorter = await probeWithRetry(value.path, start + 20);
-  assert.equal(shorter.guard.status, "busy");
-  assert.ok(shorter.guard.attempts <= 4);
+  // Timer rounding can produce different attempt counts in 20 real ms. Keep
+  // actual flock contention, but advance the monotonic clock deterministically
+  // to prove that the caller's 20 ms deadline wins over the 100 ms default.
+  let clock = 0;
+  const now = t.mock.method(performance, "now", () => {
+    const value = clock;
+    clock += 10;
+    return value;
+  });
+  try {
+    const shorter = await probeWithRetry(value.path, 20);
+    assert.equal(shorter.guard.status, "busy");
+    assert.equal(shorter.guard.attempts, 2);
+  } finally {
+    now.mock.restore();
+  }
 });
 
 test("unsafe native coordination types and hard links fail closed", async (t) => {
