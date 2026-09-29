@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import process from "node:process";
+import { URL } from "node:url";
 import { spawn } from "node:child_process";
 import test from "node:test";
 
@@ -260,9 +261,7 @@ test("concurrent CLI unlock attempts send at most one SIGTERM", async (t) => {
     "1000",
   ];
   const competingArgs = [...firstArgs.slice(0, -1), "250"];
-  const first = runCli(firstArgs);
-  await waitForUnlockLeaseContention(value.codexHome);
-  const invocations = await Promise.all([first, runCli(competingArgs)]);
+  const invocations = await overlappingUnlocks(value.codexHome, firstArgs, competingArgs);
   const results = invocations.map((invocation) => JSON.parse(invocation.stdout));
   const signaled = results.filter((result) => result.signalSent === "SIGTERM");
 
@@ -291,23 +290,36 @@ function environmentWithout(names, additions = {}) {
   return environment;
 }
 
+async function overlappingUnlocks(codexHome, firstArgs, competingArgs,
+  firstEnv = process.env, competingEnv = process.env) {
+  const release = join(codexHome, "test-lease-release");
+  const first = runCli(firstArgs, {
+    ...firstEnv,
+    CODEX_UNLOCK_TEST_LEASE_RELEASE: release,
+  }, ["--import", new URL("./helpers/lease-barrier.mjs", import.meta.url).href]);
+  let competing;
+  try {
+    await waitForUnlockLeaseContention(codexHome);
+    competing = await runCli(competingArgs, competingEnv);
+  } finally {
+    await writeFile(release, "release");
+    await first;
+  }
+  return [await first, competing];
+}
+
 test("concurrent CLI unlocks from different TMPDIR and XDG_RUNTIME_DIR send one SIGTERM", async (t) => {
   const value = await fixture();
   t.after(async () => await stopChild(value.child));
   const runtimeDirectory = await mkdtemp(join(tmpdir(), "codex-unlock-runtime-"));
   await chmod(runtimeDirectory, 0o700);
-  const first = runCli(
+  const invocations = await overlappingUnlocks(
+    value.codexHome,
     unlockArgs(value.codexHome, "1000"),
+    unlockArgs(value.codexHome),
     environmentWithout(["XDG_RUNTIME_DIR"], { TMPDIR: runtimeDirectory }),
+    environmentWithout(["TMPDIR"], { XDG_RUNTIME_DIR: runtimeDirectory }),
   );
-  await waitForUnlockLeaseContention(value.codexHome);
-  const invocations = await Promise.all([
-    first,
-    runCli(
-      unlockArgs(value.codexHome),
-      environmentWithout(["TMPDIR"], { XDG_RUNTIME_DIR: runtimeDirectory }),
-    ),
-  ]);
   const results = invocations.map((invocation) => JSON.parse(invocation.stdout));
   const signaled = results.filter((result) => result.signalSent === "SIGTERM");
 
