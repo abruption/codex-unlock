@@ -1,6 +1,9 @@
 import { acquireUnlockLease } from "./coordination.js";
 import { inspectThread } from "./inspection.js";
-import { observeLockFile, probeLock, probeObservedLock } from "./lock.js";
+import { performance } from "node:perf_hooks";
+
+import { observeLockFile } from "./lock.js";
+import { guardedProbeOnce, probeWithRetry } from "./native-coordination.js";
 import { defaultOptions, validateThreadId } from "./options.js";
 import {
   inspectLockOpeners,
@@ -128,11 +131,12 @@ async function observeTermination(
 ): Promise<void> {
   const { inspection, owner, transcriptPath, transcriptHash } = evidence;
   const deadline = Date.now() + options.terminationTimeoutMs;
-  while (Date.now() <= deadline) {
+  const probeDeadline = performance.now() + options.terminationTimeoutMs;
+  while (Date.now() <= deadline && performance.now() <= probeDeadline) {
     state.lockHolderNote = null;
     const [exitObservation, lockProbe] = await Promise.all([
       processExitObservation(owner.pid),
-      Promise.resolve(probeLock(inspection.lock.path)),
+      probeWithRetry(inspection.lock.path, probeDeadline),
     ]);
     state.processObservation = exitObservation;
     state.lastLockProbe = lockProbe;
@@ -156,7 +160,7 @@ async function observeTermination(
           ? `lock_held_by_owner_descendant:${reacquisition.holders.map((holder) => holder.pid).join(",")}`
           : `lock_holder_unidentified:${reacquisition.error ?? "unknown"}`;
     }
-    await delay(100);
+    await delay(Math.min(100, Math.max(0, probeDeadline - performance.now())));
   }
 
   try {
@@ -393,9 +397,15 @@ export async function unlockInspectedThread(
     if (preSignalStart.status !== "present" || preSignalStart.startTime !== owner.startTime) {
       revalidationReasons.push("owner_changed_before_signal");
     }
+    // No await from this try-once probe through process.kill. Its native guard
+    // is released before returning; a busy coordinator refuses immediately.
+    const preSignalProbe = guardedProbeOnce(inspection.lock.path, preSignalLock);
+    if (preSignalProbe.guard?.status === "busy") {
+      revalidationReasons.push("native_coordination_busy_before_signal");
+    }
     if (
       !sameSnapshot(finalInspection.lock.snapshot, preSignalLock.snapshot) ||
-      probeObservedLock(inspection.lock.path, preSignalLock).status !== "held"
+      (preSignalProbe.status !== "held" && preSignalProbe.guard?.status !== "busy")
     ) {
       revalidationReasons.push("lock_changed_before_signal");
     }

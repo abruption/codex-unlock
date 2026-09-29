@@ -126,14 +126,11 @@ function isContentionError(error: unknown): boolean {
   return code === "EAGAIN" || code === "EACCES" || code === "EWOULDBLOCK";
 }
 
-export function probeLock(path: string): LockProbe {
-  const before = observeLockFile(path);
-  return probeObservedLock(path, before);
-}
-
-export function probeObservedLock(
+/** Internal primitive: callers must hold the native coordination guard. */
+export function probeThreadLockOnce(
   path: string,
   before: LockFileObservation,
+  afterAcquireForTesting?: () => void,
 ): LockProbe {
   if (before.status === "unknown") {
     return {
@@ -154,53 +151,61 @@ export function probeObservedLock(
   }
 
   let fd: number | undefined;
+  let acquired = false;
+  let result: LockProbe;
   try {
     const noFollow = constants.O_NOFOLLOW ?? 0;
-    fd = openSync(path, constants.O_RDWR | noFollow);
-    const opened = publicSnapshot(fstatSync(fd));
+    fd = openSync(path, constants.O_RDWR | noFollow | constants.O_NONBLOCK);
+    const value = fstatSync(fd);
+    const opened = publicSnapshot(value);
     if (
+      !value.isFile() ||
       opened.device !== before.snapshot.device ||
       opened.inode !== before.snapshot.inode
     ) {
-      return {
-        status: "unknown",
-        method: "flock_exclusive_nonblocking",
-        error: "lock file changed while it was opened",
-      };
+      throw new Error("lock file changed while it was opened");
     }
-
     try {
       flockSync(fd, "exnb");
+      acquired = true;
+      afterAcquireForTesting?.();
+      result = { status: "free", method: "flock_exclusive_nonblocking" };
     } catch (error) {
-      if (isContentionError(error)) {
-        return { status: "held", method: "flock_exclusive_nonblocking" };
-      }
-      return {
+      result = isContentionError(error) && !acquired
+        ? { status: "held", method: "flock_exclusive_nonblocking" }
+        : {
         status: "unknown",
         method: "flock_exclusive_nonblocking",
         error: errorText(error),
       };
     }
-
-    try {
-      flockSync(fd, "un");
-    } catch (error) {
-      return {
-        status: "unknown",
-        method: "flock_exclusive_nonblocking",
-        error: `probe acquired the lock but unlock failed: ${errorText(error)}`,
-      };
+    const after = publicSnapshot(lstatSync(path));
+    if (after.device !== opened.device || after.inode !== opened.inode) {
+      throw new Error("lock file changed during the probe");
     }
-    return { status: "free", method: "flock_exclusive_nonblocking" };
   } catch (error) {
-    return {
+    result = {
       status: "unknown",
       method: "flock_exclusive_nonblocking",
       error: errorText(error),
     };
   } finally {
     if (fd !== undefined) {
-      closeSync(fd);
+      if (acquired) {
+        try {
+          flockSync(fd, "un");
+        } catch (error) {
+          result = { status: "unknown", method: "flock_exclusive_nonblocking",
+            error: `thread_probe_release_failed:${errorText(error)}` };
+        }
+      }
+      try {
+        closeSync(fd);
+      } catch (error) {
+        result = { status: "unknown", method: "flock_exclusive_nonblocking",
+          error: `thread_probe_close_failed:${errorText(error)}` };
+      }
     }
   }
+  return result;
 }

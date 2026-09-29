@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { observeLockFile, probeLock, probeObservedLock } from "../dist/lock.js";
+import { observeLockFile } from "../dist/lock.js";
+import { guardedProbeOnce as probeObservedLock } from "../dist/native-coordination.js";
+
+const probeLock = (path) => probeObservedLock(path);
 
 test("distinguishes confirmed absence from lock observation failure", async () => {
   const root = await mkdtemp(join(tmpdir(), "codex-unlock-lock-observation-"));
@@ -35,6 +38,7 @@ test("reports replacement between observation and open as unknown", async () => 
   const root = await mkdtemp(join(tmpdir(), "codex-unlock-lock-replacement-"));
   const path = join(root, "thread.lock");
   await writeFile(path, "first");
+  await writeFile(join(root, ".coordination.lock"), "");
   const observation = observeLockFile(path);
   await rename(path, `${path}.old`);
   await writeFile(path, "second");

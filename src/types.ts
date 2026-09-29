@@ -61,10 +61,16 @@ export interface PublicFileSnapshot {
   modifiedMs: number;
 }
 
+export interface NativeGuardEvidence {
+  status: "acquired" | "busy" | "absent" | "unsafe" | "changed";
+  attempts?: number;
+}
+
 export interface LockProbe {
   status: ProbeStatus;
   method: "flock_exclusive_nonblocking";
   error?: string;
+  guard?: NativeGuardEvidence;
 }
 
 export type ProcessObservationStatus = "present" | "absent" | "unknown";

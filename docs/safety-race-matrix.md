@@ -26,13 +26,25 @@ they do not rely on timer placement.
 | Another process takes the lock right after the owner exits | Re-identify the current opener by PID/start time | `verification_failed`, `lock_reacquired_by_other_owner`, successor never signaled | `an immediate successor is reported as a reacquisition, not an unreleased lock` |
 | Observation fails or throws after SIGTERM (for example `EMFILE`) | Signal-boundary results keep `pid` and `signalSent` | `termination_failed`/`verification_failed`, exit 3, no stderr | `post-signal emfile/throw failure preserves the signal in the unlock result` |
 | Post-signal lock observation becomes unavailable | Confirmed OS lock release | Termination failure; never report release | post-signal lock observation test |
+| Probe overlaps a coordinated writer acquisition | Existing native guard serializes thread try-lock | No probe-induced WouldBlock | deterministic barrier and bounded native writer stress tests |
+| Existing thread has no usable native coordinator | No unguarded fallback or native file creation | Unknown; zero SIGTERM | absent/unsafe/busy native coordinator tests |
+| Native guard or its parent is replaced | Same path/FD and parent device/inode | Unknown; descriptors released | native guard/directory replacement test |
+| Native or thread descriptor cleanup fails | Successful release and close | Unknown; never report free | native release and cleanup fault tests |
+| Native guard is busy at the signal boundary | One synchronous try-once, no await before kill | Refuse; zero SIGTERM | signal boundary busy test |
+| Guard probe precedes SIGTERM | Guard released/closed, no microtask boundary | Verified signal timing | signal boundary verify test |
+| Owner drop briefly holds native coordinator | Retry only within remaining termination budget | Eventually unlocked with unchanged transcript | shutdown guard contention test |
 
 The operation lease is separate from `~/.codex/thread-writer-locks`. It lives
 in a codex-unlock-owned `codex-unlock/` directory beside the canonical native
 lock directory (normally `$CODEX_HOME/codex-unlock/`) and never inside
 `thread-writer-locks`. Its file is harmless residue protected by an advisory
-lock; codex-unlock never deletes or interprets a native Codex lock file as
-coordination state.
+lock; its existence is never evidence of a native writer. The native guard is
+separate: the existing `thread-writer-locks/.coordination.lock` is taken for one
+synchronous probe at a time, in operation lease -> native guard -> thread probe
+order. No native files are created, deleted, or rewritten. A diagnostic paused
+with SIGSTOP or a debugger while holding the native guard can delay coordinated
+writers until it resumes or exits; the acquisition retry timeout does not bound
+that pause.
 
 Known limitations:
 

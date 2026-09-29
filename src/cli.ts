@@ -48,7 +48,8 @@ Options:
   -v, --version            Show version
 
 Safety:
-  list and inspect are read-only. unlock never deletes a lock file and never
+  list and inspect leave files unchanged and briefly take the native coordinator.
+  unlock never deletes a lock file and never
   sends SIGKILL. It refuses unless the lock has one stable Codex owner, that
   owner holds no other thread locks, and the stable transcript ends in
   task_complete. Shared app-server and Remote Control owners are refused.

@@ -21,7 +21,8 @@ codex-unlock check-update [options]
   then verify process exit, actual lock release, and transcript invariance.
 - `check-update`: explicitly check npm for a newer stable version; never install it.
 
-`list` and `inspect` are read-only. Use `--json` on any command for one
+`list` and `inspect` leave files unchanged but briefly take Codex's native
+coordination lock for each probe. Use `--json` on any command for one
 versioned JSON value. A `live_owner` classification is liveness evidence,
 not permission to unlock.
 
@@ -74,6 +75,41 @@ and a failed handoff must never automatically chain to process termination.
 Stale residue—an existing file with no actual OS lock—is reported but left in
 place. Codex handles stale lock-file cleanup during its coordinated startup.
 See the [safety race matrix](safety-race-matrix.md) for regression coverage.
+
+### Native coordination during probes
+
+Each probe of an existing thread lock first takes the existing
+`thread-writer-locks/.coordination.lock` with nonblocking exclusive `flock`.
+Writers following Codex's coordination protocol then wait for the probe instead
+of seeing a probe-induced `WouldBlock` on their thread `try_lock`.
+
+Inspection retries a busy coordinator for up to 100 ms per probe, on a monotonic
+clock, with waits outside the guard. Inspection samples twice per thread; busy
+homes can therefore add up to roughly 200 ms of acquisition waits per inspected
+thread. Post-signal polling also retries within the remaining termination
+budget. The final pre-signal probe tries only once: contention refuses with
+`native_coordination_busy_before_signal`, keeping the last identity check and
+signal contiguous in the JavaScript turn.
+
+If a thread lock exists but the coordinator is absent, unsafe, changed, or
+unavailable, its lock state is `unknown` and `unlock` refuses. The tool does not
+create a coordinator or fall back to probing without it. A verified absent
+thread lock still has the usual `absent` result. Copied or older homes lacking
+the coordinator can consequently change from `live_owner` or `stale_residue`
+to `unknown`.
+
+The coordinator must be a current-user regular non-symlink file with one link;
+its path and descriptor identities and parent directory are checked around
+each probe. Normal `0644` and group-writable modes are allowed. Files are never
+rewritten, removed, or repaired. Contents, ownership, permissions, and mtime are
+unchanged; reading can affect atime.
+
+The guard covers one synchronous probe, not a transcript scan, subprocess,
+signal, or exit wait. Pausing the diagnostic with SIGSTOP, a debugger, or a
+stalled process while it holds the guard can delay all coordinated writers in
+that home until the process continues or exits. The retry budget limits
+acquisition waits, not time spent paused while holding the lock. Custom writers
+that bypass native coordination are outside the interference guarantee.
 
 ## Requirements
 

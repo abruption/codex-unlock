@@ -24,6 +24,9 @@ export async function fixture(lastEvent = "task_complete", settings = {}) {
   const lockDirectory = join(codexHome, "thread-writer-locks");
   const sessionDirectory = join(codexHome, "sessions", "2026", "09", "15");
   await mkdir(lockDirectory, { recursive: true });
+  if (settings.coordination !== false) {
+    await writeFile(join(lockDirectory, ".coordination.lock"), "", { mode: 0o644 });
+  }
   await mkdir(sessionDirectory, { recursive: true });
   const lockPath = join(lockDirectory, `${THREAD_ID}.lock`);
   const transcriptPath = join(
@@ -90,6 +93,7 @@ export async function commandOwner(child, command) {
 export async function otherLockPath(root, label = "other") {
   const directory = join(root, label, "thread-writer-locks");
   await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, ".coordination.lock"), "", { mode: 0o644 });
   const path = join(directory, `${OTHER_THREAD_ID}.lock`);
   await writeFile(path, "");
   return path;

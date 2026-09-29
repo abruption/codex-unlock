@@ -26,6 +26,7 @@ try {
   assert.equal(inspection.safeToUnlock, true);
   assert.equal(inspection.lock.observation, "present");
   assert.equal(inspection.lock.probe.status, "held");
+  assert.equal(inspection.lock.probe.guard?.status, "acquired");
   assert.equal(inspection.lock.regularFile, true);
   assert.equal(inspection.lock.symlink, false);
   assert.equal(inspection.lock.ownedByCurrentUser, true);

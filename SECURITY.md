@@ -28,3 +28,15 @@ sanitized diagnostic privately if it is needed to reproduce the report.
 
 General bugs that do not expose sensitive data can use the public
 [issue tracker](https://github.com/abruption/codex-unlock/issues).
+
+## Native coordination
+
+Diagnostics leave file contents, ownership, permissions, and mtime unchanged,
+but acquire the existing Codex native coordinator briefly for each thread probe.
+A missing or unsafe coordinator for an existing thread lock fails closed.
+Guard sections are synchronous and finish before subprocesses, waits, or signals.
+If a diagnostic is paused with SIGSTOP or a debugger while holding that guard,
+coordinated writers in the home can wait until it continues or exits. Acquisition
+timeouts do not bound a pause while holding the guard. Access times can change.
+The zero-interference guarantee applies to writers using Codex's native
+coordination protocol. See the [probe contract](docs/cli-reference.md#native-coordination-during-probes).

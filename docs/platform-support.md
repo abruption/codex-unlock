@@ -2,7 +2,8 @@
 
 `codex-unlock` supports macOS and Linux only. Support means that the published
 CLI can load its native advisory-lock dependency and that CI proves the full
-read-only evidence path against a real lock owner. It does not mean that every
+non-mutating evidence path, including native coordination, against a real lock
+owner. It does not mean that every
 Unix-like platform or architecture is assumed safe.
 
 ## Verified matrix
@@ -30,6 +31,7 @@ platform smoke test that verifies all of the following on the runner itself:
 - `fs-ext-extra-prebuilt` loads for the active OS, architecture, and Node ABI;
 - a separate process holds a real exclusive advisory `flock`;
 - the nonblocking lock probe observes `held` independently of `lsof`;
+- the probe acquires and releases the existing native coordinator safely;
 - `lsof` correlates exactly one owner PID and its only native thread lock;
 - `ps` supplies a stable process start time, PPID, uid, command, and arguments;
 - the lock's device, inode, ownership, type, and link count are available;

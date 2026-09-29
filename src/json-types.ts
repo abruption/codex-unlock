@@ -19,6 +19,7 @@ export type {
   LockHolder,
   LockInspection,
   LockProbe,
+  NativeGuardEvidence,
   ProbeStatus,
   ProcessInfo,
   ProcessObservationStatus,

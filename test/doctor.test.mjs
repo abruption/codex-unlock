@@ -105,7 +105,14 @@ test("terminates a completed idle owner and verifies transcript invariance", asy
   assert.equal(result.outcome, "unlocked");
   assert.equal(result.signalSent, "SIGTERM");
   assert.equal(result.processExited, true);
-  assert.equal(result.processObservation.status, "absent");
+  // The OS can expose the exited child as a zombie before Node reaps it.
+  // Both observations prove exit under the existing post-signal contract.
+  if (result.processObservation.status === "present") {
+    assert.equal(result.processObservation.zombie, true);
+    assert.equal(result.processObservation.startTime, inspection.owner.startTime);
+  } else {
+    assert.equal(result.processObservation.status, "absent");
+  }
   assert.equal(result.lockReleased, true);
   assert.equal(result.transcriptUnchanged, true);
   assert.equal(result.lockFileRemovedByTool, false);
@@ -650,11 +657,12 @@ test("an unreaped zombie owner counts as exited", async (t) => {
 test("an immediate successor is reported as a reacquisition, not an unreleased lock", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "codex-unlock-successor-"));
   const marker = join(root, "owner-terminated");
+  const acquiredMarker = join(root, "successor-acquired");
   const value = await fixture("task_complete", {
     ownerEnv: { CODEX_FIXTURE_SIGTERM_MARKER: marker },
   });
   t.after(async () => await stopChild(value.child));
-  const successor = spawn(process.execPath, [SUCCESSOR_FIXTURE, marker, value.lockPath], {
+  const successor = spawn(process.execPath, [SUCCESSOR_FIXTURE, marker, value.lockPath, acquiredMarker], {
     stdio: ["ignore", "pipe", "inherit"],
   });
   t.after(async () => await stopChild(successor));
@@ -667,7 +675,9 @@ test("an immediate successor is reported as a reacquisition, not an unreleased l
 
   const result = await runCli(
     ["unlock", THREAD_ID, "--json", "--codex-home", value.codexHome, "--stability-ms", "250"],
-    { ...process.env, CODEX_UNLOCK_NO_UPDATE_NOTICE: "yes" },
+    { ...process.env, CODEX_UNLOCK_NO_UPDATE_NOTICE: "yes",
+      CODEX_UNLOCK_TEST_SUCCESSOR_ACQUIRED: acquiredMarker },
+    ["--import", resolve("test/helpers/successor-barrier.mjs")],
   );
   assert.equal(result.stderr, "");
   const parsed = JSON.parse(result.stdout);

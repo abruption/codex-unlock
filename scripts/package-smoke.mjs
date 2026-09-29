@@ -56,6 +56,7 @@ try {
     "dist/inspection.js",
     "dist/json-types.d.ts",
     "dist/lock.js",
+    "dist/native-coordination.js",
     "dist/options.js",
     "dist/policy.js",
     "dist/process.js",

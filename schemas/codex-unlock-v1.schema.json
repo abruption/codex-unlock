@@ -46,6 +46,14 @@
       "properties": {
         "status": { "enum": ["held", "free", "unknown"] },
         "method": { "const": "flock_exclusive_nonblocking" },
+        "guard": {
+          "type": "object",
+          "required": ["status"],
+          "properties": {
+            "status": { "enum": ["acquired", "busy", "absent", "unsafe", "changed"] },
+            "attempts": { "type": "integer", "minimum": 1 }
+          }
+        },
         "error": { "type": "string" }
       }
     },
