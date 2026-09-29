@@ -89,8 +89,8 @@ export async function stopChild(child) {
   }
 }
 
-export async function runCli(args, env = process.env) {
-  const child = spawn(process.execPath, [resolve("dist/cli.js"), ...args], {
+export async function runCli(args, env = process.env, nodeArgs = []) {
+  const child = spawn(process.execPath, [...nodeArgs, resolve("dist/cli.js"), ...args], {
     env,
     stdio: ["ignore", "pipe", "pipe"],
   });

@@ -43,10 +43,20 @@ Lock-file existence is not treated as ownership. The tool independently:
    transcript hash did not change.
 
 Before a safe candidate can reach final revalidation and signaling, `unlock`
-acquires a private same-user advisory operation lease keyed by the canonical
-Codex home and thread UUID. A concurrent `unlock` is refused; this coordination
-file is outside native lock paths, and its existence is never lock evidence.
-Unsafe and already-unlocked cases do not create it.
+acquires a private same-user advisory operation lease keyed by the native lock
+directory's device/inode and the thread UUID. A concurrent `unlock` is refused;
+this coordination file is outside native lock paths, and its existence is never
+lock evidence. Unsafe and already-unlocked cases do not create it.
+
+The lease file lives in a `codex-unlock/` directory beside the canonical
+(`realpath`) `thread-writer-locks` directory, which is normally
+`$CODEX_HOME/codex-unlock/`. Its location does not depend on `TMPDIR`,
+`XDG_RUNTIME_DIR`, or the spelling of `--codex-home`, so symlinked,
+case-variant, and differently configured shells coordinate on the same lease.
+The parent directory must be owned by the current user, the lease directory
+must be a same-user non-symlink directory with mode `0700`, and the lease file
+must be a same-user regular single-link file with mode `0600`; otherwise
+`unlock` refuses with `unlock_coordination_failed:<reason>`.
 
 `unlock` never deletes native lock files, never sends `SIGKILL`, and has no
 force flag. Missing, ambiguous, or changing evidence fails closed. Persistent
