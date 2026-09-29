@@ -162,10 +162,11 @@ test("descriptor cleanup errors never report a successful probe", async () => {
   const open = fs.openSync;
   const close = fs.closeSync;
   for (const target of [value.path, value.guard]) {
+    const canonicalTarget = fs.realpathSync.native(target);
     let descriptor;
     fs.openSync = (path, ...args) => {
       const fd = open(path, ...args);
-      if (path === target) descriptor = fd;
+      if (path === target || path === canonicalTarget) descriptor = fd;
       return fd;
     };
     fs.closeSync = (fd) => {

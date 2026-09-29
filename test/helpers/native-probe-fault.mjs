@@ -11,7 +11,9 @@ const descriptors = new Map();
 const mode = process.env.CODEX_UNLOCK_TEST_NATIVE_FAULT;
 fs.openSync = (path, ...args) => {
   const fd = open(path, ...args);
-  descriptors.set(fd, basename(path) === ".coordination.lock" ? "guard" : "thread");
+  if (typeof path === "string" && path.endsWith(".lock")) {
+    descriptors.set(fd, basename(path) === ".coordination.lock" ? "guard" : "thread");
+  }
   return fd;
 };
 fs.closeSync = (fd) => {

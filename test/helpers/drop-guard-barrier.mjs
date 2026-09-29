@@ -14,7 +14,7 @@ const guards = new Set();
 let signaled = false;
 fs.openSync = (path, ...args) => {
   const fd = open(path, ...args);
-  if (basename(path) === ".coordination.lock") guards.add(fd);
+  if (typeof path === "string" && basename(path) === ".coordination.lock") guards.add(fd);
   return fd;
 };
 fs.closeSync = (fd) => { guards.delete(fd); return close(fd); };

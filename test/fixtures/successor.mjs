@@ -7,7 +7,7 @@ import { setInterval, setTimeout } from "node:timers";
 
 import { flockSync } from "fs-ext-extra-prebuilt";
 
-const [marker, lockPath] = process.argv.slice(2);
+const [marker, lockPath, acquiredMarker] = process.argv.slice(2);
 const wait = () => {
   if (!fs.existsSync(marker)) {
     setTimeout(wait, 5);
@@ -22,6 +22,7 @@ const wait = () => {
     flockSync(guard, "un");
     fs.closeSync(guard);
   }
+  if (acquiredMarker) fs.writeFileSync(acquiredMarker, "acquired\n");
   process.stdout.write("acquired\n");
 };
 process.stdout.write("waiting\n");
