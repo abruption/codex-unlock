@@ -26,6 +26,12 @@ coordination lock for each probe. Use `--json` on any command for one
 versioned JSON value. A `live_owner` classification is liveness evidence,
 not permission to unlock.
 
+`list` inspects at most four threads concurrently and preserves sorted thread
+order. Each thread still gets independent before/after observations; no
+transcript discovery or safety evidence is shared between inspections. If an
+inspection fails, pending threads are not started and active inspections finish
+before the command returns its existing error result.
+
 ## Safety model
 
 Lock-file existence is not treated as ownership. The tool independently:

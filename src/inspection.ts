@@ -186,6 +186,11 @@ export async function inspectThread(
   return { ...base, ...safety };
 }
 
+// Each inspection independently traverses both transcript trees twice and
+// starts diagnostic subprocesses. Four workers bound aggregate descriptor
+// pressure without sharing evidence across threads or observation windows.
+const LIST_INSPECTION_CONCURRENCY = 4;
+
 export async function listThreads(
   options: DoctorOptions = defaultOptions(),
 ): Promise<ListResult> {
@@ -200,7 +205,30 @@ export async function listThreads(
       .filter((id) => isThreadId(id))
       .map((id) => id.toLowerCase()),
   ).sort();
-  const sessions = await Promise.all(threadIds.map((id) => inspectThread(id, options)));
+  const sessions = new Array<InspectionResult>(threadIds.length);
+  let nextIndex = 0;
+  let failed = false;
+  let firstError: unknown;
+  async function worker(): Promise<void> {
+    while (!failed && nextIndex < threadIds.length) {
+      const index = nextIndex++;
+      try {
+        sessions[index] = await inspectThread(threadIds[index], options);
+      } catch (error) {
+        if (!failed) firstError = error;
+        failed = true;
+      }
+    }
+  }
+  await Promise.all(
+    Array.from(
+      { length: Math.min(LIST_INSPECTION_CONCURRENCY, threadIds.length) },
+      () => worker(),
+    ),
+  );
+  // Drain the already-started observations before returning the original
+  // failure. No new inspections are dispatched once a worker has failed.
+  if (failed) throw firstError;
   return {
     schemaVersion: SCHEMA_VERSION,
     command: "list",
