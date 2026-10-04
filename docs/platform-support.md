@@ -53,10 +53,25 @@ Process evidence is collected with the same rules on every supported platform:
 - `ps` is invoked with `-ww`, which disables width truncation for both macOS
   BSD `ps` and Linux procps-ng.
 - On Linux, `ps` arguments are cross-checked against `/proc/<pid>/cmdline`. If
-  the kernel argv is unreadable, or `ps` output is a strict prefix of it, the
+  the kernel argv is unreadable, or `ps` output disagrees with it, the
   owner's arguments are `null` with an `arguments_unverified:` or
-  `arguments_truncated:` error, and identity is incomplete. A shared-service
-  token in either source marks the owner as a shared service.
+  `arguments_truncated:` error, and identity is incomplete. Verified kernel
+  argument boundaries distinguish execution modes from prompts and known
+  single-value options: `codex exec 'fix the daemon'` or
+  `codex -C /work/app-server` is not a shared-service invocation. Actual
+  `app-server`, `remote-control`, `daemon`, `exec-server`, and remote connection
+  options remain refused. The bounded grammar follows `codex-cli 0.159.2`
+  help for interactive, exec, resume, and fork modes; unknown options,
+  variadic image options, unsupported modes (including service-looking root
+  tokens such as `daemon-worker`), and ambiguous operands make
+  identity incomplete. Exact service/subcommand-looking operands after `--`
+  also remain conservatively refused; delimiter precedence has not been
+  verified for every Codex version. Direct Node shebang execution is recognized only as
+  `node /path/to/codex ...`, without arbitrary wrapper or interpreter flags.
+- macOS supplies a flattened `ps` argument string without verified argument
+  boundaries. Shared-service words anywhere in that string remain a
+  conservative refusal, including words inside prompts or paths. The tool
+  does not infer a shell quoting grammar or split this string into argv.
 - The owner's native lock set is matched to the intended lock by the `lsof`
   device (`D`) and inode (`i`) fields, not by the rendered name, because the
   C locale makes `lsof` escape non-ASCII path bytes as `\xNN`. Any other lock

@@ -6,7 +6,9 @@ import readline from "node:readline";
 
 import { flockSync } from "fs-ext-extra-prebuilt";
 
-const lockPaths = process.argv.slice(2);
+const lockPaths = process.env.CODEX_FIXTURE_LOCK_PATH
+  ? [process.env.CODEX_FIXTURE_LOCK_PATH]
+  : process.argv.slice(2);
 if (lockPaths.length === 0) {
   process.stderr.write("lock path required\n");
   process.exit(64);

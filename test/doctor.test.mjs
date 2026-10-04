@@ -522,6 +522,68 @@ test("terminal width variables cannot hide a shared app-server owner", async (t)
   assert.ok(parsed.blockers.includes("lock_owner_is_shared_service"));
 });
 
+test("real kernel argv separates prompt and path words on Linux, while macOS remains conservative", async (t) => {
+  for (const args of [
+    ["exec", "fix the daemon"],
+    ["-C", "/work/app-server", "fix the remote-control"],
+    ["--config", "label='daemon'", "resume", "--last", "fix the app-server"],
+  ]) {
+    const value = await fixture("task_complete", { ownerArgs: args });
+    t.after(async () => await stopChild(value.child));
+    const result = await runCli([
+      "inspect", THREAD_ID, "--json", "--codex-home", value.codexHome, "--stability-ms", "250",
+    ]);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.owner.pid, value.child.pid);
+    assert.equal(parsed.lock.probe.status, "held");
+    assert.equal(parsed.owner.identityComplete, true);
+    assert.equal(parsed.owner.isSharedService, process.platform !== "linux", result.stdout);
+    assert.equal(parsed.safeToUnlock, process.platform === "linux", result.stdout);
+    assert.equal(value.child.exitCode, null);
+    await stopChild(value.child);
+  }
+});
+
+test("real-lock service modes and uncertain argv refuse unlock without SIGTERM", async (t) => {
+  for (const args of [
+    ["--config", "model='example'", "app-server"],
+    ["-C", "/work/ordinary", "remote-control"],
+    ["daemon"],
+    ["exec-server"],
+    ["--remote", "unix:///example"],
+    ["--unknown", "app-server"],
+  ]) {
+    // macOS has no kernel argv proof for exec-server or --remote. Its original
+    // flattened policy does not recognize those forms, so exercise them only
+    // where exact argument evidence supports the new mode classification.
+    if (process.platform !== "linux" &&
+      (args.includes("exec-server") || args.includes("--remote"))) continue;
+    const codexHome = await mkdtemp(join(tmpdir(), "codex-unlock-mode-test-"));
+    const marker = join(codexHome, "signal-received");
+    // The fixture records any SIGTERM, including its later cleanup; assertions
+    // are made before cleanup so the refusal must have sent none.
+    const guarded = await fixture("task_complete", {
+      codexHome,
+      ownerArgs: args,
+      ownerEnv: { CODEX_FIXTURE_SIGTERM_MARKER: marker },
+    });
+    t.after(async () => await stopChild(guarded.child));
+    const result = await runCli([
+      "unlock", THREAD_ID, "--json", "--codex-home", guarded.codexHome, "--stability-ms", "250",
+    ]);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(result.code, 2, result.stdout);
+    assert.equal(parsed.inspection.lock.probe.status, "held");
+    assert.equal(parsed.outcome, "refused");
+    assert.equal(parsed.signalSent, null);
+    assert.equal(guarded.child.exitCode, null);
+    await assert.rejects(access(marker), { code: "ENOENT" });
+    assert.ok(parsed.reasons.includes("lock_owner_is_shared_service") ||
+      parsed.reasons.includes("lock_owner_identity_incomplete"));
+    await stopChild(guarded.child);
+  }
+});
+
 test("ps and lsof on PATH cannot supply process evidence", async (t) => {
   const value = await fixture();
   t.after(async () => await stopChild(value.child));

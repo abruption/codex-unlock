@@ -157,6 +157,91 @@ test("reconciles ps arguments with kernel argv and fails closed on truncation", 
   );
 });
 
+function argvEvidence(argv) {
+  return reconcileArguments(argv.join(" "), { status: "present", argv });
+}
+
+test("verified argv distinguishes shared words in prompts and known option values", () => {
+  for (const argv of [
+    ["/work/daemon/codex", "resume"],
+    ["codex", "fix the daemon"],
+    ["codex", "--cd", "/work/app-server", "fix the daemon"],
+    ["codex", "-C/work/app-server", "fix remote-control"],
+    ["codex", "--config=label='app-server'", "fix the daemon"],
+    ["codex", "--model", "daemon-model", "fix app-server"],
+    ["codex", "--no-daemon", "exec", "fix the daemon"],
+    ["codex", "exec", "--cd", "/work/app-server", "fix the daemon"],
+    ["codex", "e", "--output-last-message", "/work/daemon", "fix app-server"],
+    ["codex", "exec", "--", "--daemon"],
+    ["codex", "resume", "--last", "fix the daemon"],
+    ["codex", "resume", "session-daemon", "fix the app-server"],
+    ["codex", "fork", "--last", "fix remote-control"],
+    ["/usr/bin/node", "/tools/codex", "exec", "fix the daemon"],
+  ]) {
+    assert.deepEqual(argvEvidence(argv), {
+      arguments: argv.join(" "), isSharedService: false,
+    }, JSON.stringify(argv));
+  }
+});
+
+test("verified argv still refuses service modes and remote connections after global options", () => {
+  for (const mode of ["app-server", "remote-control", "daemon", "exec-server"]) {
+    for (const prefix of [[], ["-c", "model='example'", "--strict-config"], ["-C/work/app-server"]]) {
+      const argv = ["codex", ...prefix, mode];
+      assert.equal(argvEvidence(argv).isSharedService, true, JSON.stringify(argv));
+    }
+  }
+  for (const argv of [
+    ["/tools/codex-daemon", "exec"],
+    ["/tools/codex-app-server"],
+    ["codex", "--remote", "unix:///work/endpoint"],
+    ["codex", "--remote=wss://example.invalid"],
+    ["codex", "resume", "--remote-auth-token-env", "EXAMPLE_TOKEN_NAME"],
+    ["codex", "--", "app-server"],
+  ]) assert.equal(argvEvidence(argv).isSharedService, true, JSON.stringify(argv));
+});
+
+test("unsupported or incomplete argv cannot authorize an owner", () => {
+  for (const argv of [
+    [], ["codex", "-C"], ["codex", "--config="],
+    ["codex", "--config", "--no-daemon", "app-server"],
+    ["codex", "--unknown", "app-server"],
+    ["codex", "--unknown=daemon", "fix the prompt"],
+    ["codex", "-xy", "fix daemon"],
+    ["codex", "--image", "image.png", "app-server"],
+    ["codex", "first operand", "daemon"],
+    ["codex", "exec", "resume", "session-id", "fix daemon"],
+    ["codex", "review", "fix daemon"],
+    ["codex", "daemon-worker"],
+    ["codex", "app-server-preview"],
+    ["codex", "remote-control-next"],
+    ["codex app-server"], // A flattened process title is not kernel argv evidence.
+    ["/usr/bin/node", "--require", "anything", "/tools/codex", "app-server"],
+    ["/usr/bin/sh", "/tools/codex", "app-server"],
+  ]) {
+    const evidence = argvEvidence(argv);
+    assert.equal(evidence.arguments, null, JSON.stringify(argv));
+    assert.match(evidence.error, /^arguments_unverified:/);
+  }
+  assert.equal(argvEvidence(["codex", "--unknown", "app-server"]).isSharedService, true);
+  assert.equal(argvEvidence(["codex", "daemon-worker"]).isSharedService, true);
+});
+
+test("conflicting, missing, and flattened evidence remains conservative", () => {
+  for (const ps of ["codex exec", "codex --no-daemon", "different exec fix daemon"]) {
+    const evidence = reconcileArguments(ps, { status: "present", argv: ["codex", "app-server"] });
+    assert.equal(evidence.arguments, null);
+    assert.equal(evidence.isSharedService, true);
+    assert.match(evidence.error, /^arguments_unverified:/);
+  }
+  assert.equal(reconcileArguments("codex exec fix daemon", null).isSharedService, true);
+  assert.equal(reconcileArguments("codex -C /work/app-server", null).isSharedService, true);
+  const unreadable = reconcileArguments("codex exec fix daemon", { status: "unknown", error: "unreadable" });
+  assert.equal(unreadable.arguments, null);
+  assert.equal(unreadable.isSharedService, true);
+  assert.equal(reconcileArguments(null, { status: "present", argv: ["codex", "app-server"] }).arguments, null);
+});
+
 test("reads zombie state and start time from one ps sample", () => {
   const start = "Tue Sep 29 08:21:32 2026";
   for (const state of ["Z", "ZN", "Z+", "Zs"]) {
