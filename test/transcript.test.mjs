@@ -44,6 +44,21 @@ test("distinguishes missing and ambiguous transcript candidates", async () => {
   assert.equal(ambiguous.path, null);
 });
 
+test("malformed transcript errors never include record contents", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "codex-unlock-transcript-error-"));
+  const path = join(directory, "rollout.jsonl");
+  const marker = "SECRET88";
+  for (const line of [marker, `{"private":"${marker}",}`, `{"private":"${marker}"`]) {
+    await writeFile(path, `${line}\n`);
+    const result = await inspectTranscriptPath(path);
+    assert.equal(result.status, "unreadable");
+    assert.equal(result.error, "last rollout record is not valid JSON");
+    assert.equal(result.lastRecord, null);
+    assert.equal(result.stable, null);
+    assert.equal(JSON.stringify(result).includes(marker), false);
+  }
+});
+
 test("compares normalized last-record evidence", () => {
   const record = {
     recordType: "event_msg",
