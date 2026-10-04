@@ -43,7 +43,9 @@ export async function fixture(lastEvent = "task_complete", settings = {}) {
     })}\n`,
   );
   await chmod(OWNER_FIXTURE, 0o755);
-  const ownerArgs = settings.ownerArgs ?? [lockPath, ...(settings.additionalLockPaths ?? [])];
+  // Locks are fixture inputs, not Codex positional operands. Keep argv valid
+  // even when the fixture opens several locks or a non-ASCII home path.
+  const ownerArgs = settings.ownerArgs ?? [];
   // `settings.unreapedParent` runs the owner under a parent that never waits,
   // so the owner becomes a zombie after it exits.
   const [command, args] = settings.unreapedParent
@@ -52,7 +54,9 @@ export async function fixture(lastEvent = "task_complete", settings = {}) {
   const child = spawn(command, args, {
     env: {
       ...process.env,
-      ...(settings.ownerArgs ? { CODEX_FIXTURE_LOCK_PATH: lockPath } : {}),
+      CODEX_FIXTURE_LOCK_PATHS: JSON.stringify([
+        lockPath, ...(settings.additionalLockPaths ?? []),
+      ]),
       ...(settings.ownerEnv ?? {}),
     },
     ...(settings.cwd ? { cwd: settings.cwd } : {}),

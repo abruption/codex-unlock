@@ -68,6 +68,8 @@ Process evidence is collected with the same rules on every supported platform:
   also remain conservatively refused; delimiter precedence has not been
   verified for every Codex version. Direct Node shebang execution is recognized only as
   `node /path/to/codex ...`, without arbitrary wrapper or interpreter flags.
+  Non-ASCII or control bytes that `ps` renders differently from the kernel
+  argv remain refused; the tool does not guess a lossy de-escaping rule.
 - macOS supplies a flattened `ps` argument string without verified argument
   boundaries. Shared-service words anywhere in that string remain a
   conservative refusal, including words inside prompts or paths. The tool

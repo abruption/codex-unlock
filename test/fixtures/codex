@@ -6,8 +6,8 @@ import readline from "node:readline";
 
 import { flockSync } from "fs-ext-extra-prebuilt";
 
-const lockPaths = process.env.CODEX_FIXTURE_LOCK_PATH
-  ? [process.env.CODEX_FIXTURE_LOCK_PATH]
+const lockPaths = process.env.CODEX_FIXTURE_LOCK_PATHS
+  ? JSON.parse(process.env.CODEX_FIXTURE_LOCK_PATHS)
   : process.argv.slice(2);
 if (lockPaths.length === 0) {
   process.stderr.write("lock path required\n");

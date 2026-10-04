@@ -240,6 +240,11 @@ test("conflicting, missing, and flattened evidence remains conservative", () => 
   assert.equal(unreadable.arguments, null);
   assert.equal(unreadable.isSharedService, true);
   assert.equal(reconcileArguments(null, { status: "present", argv: ["codex", "app-server"] }).arguments, null);
+  const renderedDifferently = reconcileArguments("codex exec ?? prompt", {
+    status: "present", argv: ["codex", "exec", "한글 prompt"],
+  });
+  assert.equal(renderedDifferently.arguments, null);
+  assert.match(renderedDifferently.error, /^arguments_unverified:/);
 });
 
 test("reads zombie state and start time from one ps sample", () => {
