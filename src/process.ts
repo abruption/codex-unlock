@@ -308,10 +308,115 @@ export interface ArgumentEvidence {
   error?: string;
 }
 
+// Deliberately bounded grammar from `codex-cli 0.159.2 --help`, `exec --help`,
+// and `resume --help`. Unknown options/modes (including variadic --image) do
+// not authorize an owner. New Codex grammar requires explicit verification.
+const ROOT_VALUE_OPTIONS = new Set([
+  "--config", "-c", "--enable", "--disable", "--model", "-m",
+  "--profile", "-p", "--sandbox", "-s", "--ask-for-approval", "-a",
+  "--cd", "-C", "--add-dir", "--local-provider",
+]);
+const ROOT_FLAGS = new Set([
+  // Include the upstream hidden aliases in the canonical flags' scopes.
+  "--strict-config", "--oss", "--approve-for-me", "--not-so-yolo",
+  "--dangerously-bypass-approvals-and-sandbox", "--yolo", "--dangerously-bypass-hook-trust",
+  "--worktree", "--search", "--no-alt-screen", "--no-daemon",
+]);
+const SHARED_MODES = new Set(["app-server", "remote-control", "daemon", "exec-server"]);
+const OTHER_MODES = new Set([
+  "agents", "review", "login", "logout", "mcp", "plugin", "app", "completion",
+  "update", "doctor", "sandbox", "debug", "apply", "a", "queue", "archive",
+  "delete", "migrate-rollouts", "unarchive", "cloud", "features", "help",
+]);
+const EXEC_VALUE_OPTIONS = new Set([
+  "--thread-source", "--output-schema", "--color", "--output-last-message", "-o",
+]);
+const EXEC_FLAGS = new Set([
+  "--skip-git-repo-check", "--ephemeral", "--ignore-user-config", "--ignore-rules",
+  "--json", "--experimental-json",
+]);
+const RESUME_FLAGS = new Set(["--last", "--all", "--include-non-interactive"]);
+
+function codexArgumentOffset(argv: readonly string[]): number | null {
+  const executable = basename(argv[0] ?? "").toLowerCase();
+  if (executable === "codex" || /^codex-[a-z0-9_-]+$/.test(executable)) return 1;
+  // A direct Node shebang invocation, including the synthetic lock fixture.
+  // Do not search later arguments or skip arbitrary interpreter flags.
+  if ((executable === "node" || executable === "nodejs") && basename(argv[1] ?? "") === "codex") {
+    return 2;
+  }
+  return null;
+}
+
+function classifyCodexMode(argv: readonly string[]): { shared: boolean; error?: string } {
+  const offset = codexArgumentOffset(argv);
+  if (offset === null) return { shared: false, error: "unsupported executable argv" };
+  if (SHARED_SERVICE_PATTERN.test(basename(argv[0]))) return { shared: true };
+  let mode = "interactive";
+  let modeChosen = false;
+  let literalOperands = false;
+  let operands = 0;
+  for (let index = offset; index < argv.length; index += 1) {
+    const token = argv[index];
+    if (!literalOperands && token === "--") {
+      literalOperands = true;
+      continue;
+    }
+    if (!literalOperands && token.startsWith("-") && token !== "-") {
+      const equals = token.indexOf("=");
+      // Only known single-value short options can have an attached value.
+      const option = token.startsWith("--")
+        ? (equals < 0 ? token : token.slice(0, equals))
+        : token.slice(0, 2);
+      if (option === "--remote" || option === "--remote-auth-token-env") return { shared: true };
+      const valueOption = ROOT_VALUE_OPTIONS.has(option) ||
+        (mode === "exec" && EXEC_VALUE_OPTIONS.has(option));
+      if (valueOption) {
+        const attached = token.startsWith("--")
+          ? (equals < 0 ? null : token.slice(equals + 1))
+          : (token.length === 2 ? null : token.slice(2));
+        const value = attached ?? argv[++index];
+        if (!value || value.startsWith("-")) return { shared: false, error: "missing option value" };
+        continue;
+      }
+      if (token !== option || !(ROOT_FLAGS.has(option) ||
+        (mode === "exec" && EXEC_FLAGS.has(option)) ||
+        ((mode === "resume" || mode === "fork") && RESUME_FLAGS.has(option)))) {
+        return { shared: false, error: "unsupported option or option form" };
+      }
+      continue;
+    }
+    if (!modeChosen) {
+      modeChosen = true;
+      if (SHARED_MODES.has(token)) return { shared: true };
+      if (OTHER_MODES.has(token)) return { shared: false, error: "unsupported execution mode" };
+      // Preserve refusal for an unrecognized service-looking root mode. A
+      // newer Codex may introduce a service subcommand this grammar lacks.
+      if (!/\s/.test(token) && SHARED_SERVICE_PATTERN.test(token)) {
+        return { shared: false, error: "unverified service-like execution mode" };
+      }
+      if (!literalOperands && ["exec", "e", "resume", "fork"].includes(token)) {
+        mode = token === "e" ? "exec" : token;
+        continue;
+      }
+    }
+    // Nested exec commands have their own grammar. Do not treat an unknown
+    // nested mode as an ordinary prompt and infer safety from it.
+    if (mode === "exec" && operands === 0 && ["resume", "fork", "review", "help"].includes(token)) {
+      return { shared: false, error: "unsupported nested execution mode" };
+    }
+    operands += 1;
+    const maximum = mode === "resume" || mode === "fork" ? 2 : 1;
+    if (operands > maximum) return { shared: false, error: "ambiguous positional arguments" };
+  }
+  return { shared: false };
+}
+
 /**
  * Combines `ps` arguments with the kernel argv when one is available (Linux).
- * Truncated or unverifiable arguments become unknown, and a shared-service
- * token in either source classifies the owner as shared.
+ * Linux can distinguish option values and prompts from execution modes only
+ * after both sources agree. Flattened macOS arguments remain conservative;
+ * they must never be split into invented argv boundaries.
  */
 export function reconcileArguments(
   psArguments: string | null,
@@ -342,7 +447,22 @@ export function reconcileArguments(
       error: "arguments_truncated:ps output is shorter than the kernel argv",
     };
   }
-  return { arguments: psArguments, isSharedService };
+  if (kernelArguments.trim() !== psArguments) {
+    return {
+      arguments: null,
+      isSharedService,
+      error: "arguments_unverified:ps output disagrees with the kernel argv",
+    };
+  }
+  const mode = classifyCodexMode(commandLine.argv);
+  if (mode.error) {
+    return {
+      arguments: null,
+      isSharedService,
+      error: `arguments_unverified:${mode.error}`,
+    };
+  }
+  return { arguments: psArguments, isSharedService: mode.shared };
 }
 
 export async function inspectProcess(
