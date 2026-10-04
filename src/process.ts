@@ -317,8 +317,9 @@ const ROOT_VALUE_OPTIONS = new Set([
   "--cd", "-C", "--add-dir", "--local-provider",
 ]);
 const ROOT_FLAGS = new Set([
-  "--strict-config", "--oss", "--approve-for-me",
-  "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust",
+  // Include the upstream hidden aliases in the canonical flags' scopes.
+  "--strict-config", "--oss", "--approve-for-me", "--not-so-yolo",
+  "--dangerously-bypass-approvals-and-sandbox", "--yolo", "--dangerously-bypass-hook-trust",
   "--worktree", "--search", "--no-alt-screen", "--no-daemon",
 ]);
 const SHARED_MODES = new Set(["app-server", "remote-control", "daemon", "exec-server"]);
@@ -331,7 +332,8 @@ const EXEC_VALUE_OPTIONS = new Set([
   "--thread-source", "--output-schema", "--color", "--output-last-message", "-o",
 ]);
 const EXEC_FLAGS = new Set([
-  "--skip-git-repo-check", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--json",
+  "--skip-git-repo-check", "--ephemeral", "--ignore-user-config", "--ignore-rules",
+  "--json", "--experimental-json",
 ]);
 const RESUME_FLAGS = new Set(["--last", "--all", "--include-non-interactive"]);
 

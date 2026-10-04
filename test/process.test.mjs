@@ -161,6 +161,55 @@ function argvEvidence(argv) {
   return reconcileArguments(argv.join(" "), { status: "present", argv });
 }
 
+test("official option aliases preserve canonical mode evidence", () => {
+  const aliases = [
+    { alias: "--yolo", canonical: "--dangerously-bypass-approvals-and-sandbox", prefix: [] },
+    { alias: "--not-so-yolo", canonical: "--approve-for-me", prefix: [] },
+    { alias: "--experimental-json", canonical: "--json", prefix: ["exec"] },
+  ];
+  for (const { alias, canonical, prefix } of aliases.flatMap((entry) =>
+    entry.prefix.length ? [entry] : [entry, { ...entry, prefix: ["exec"] }])) {
+    const aliasArgv = ["codex", ...prefix, alias, ...(prefix.length ? [] : ["exec"]), "fix bugs"];
+    const canonicalArgv = aliasArgv.map((token) => token === alias ? canonical : token);
+    const observed = argvEvidence(aliasArgv);
+    const expected = argvEvidence(canonicalArgv);
+    assert.equal(expected.arguments, canonicalArgv.join(" "));
+    assert.equal(observed.arguments, aliasArgv.join(" "), alias);
+    assert.equal(observed.isSharedService, expected.isSharedService, alias);
+    assert.equal(observed.error, expected.error, alias);
+  }
+
+  for (const [alias, canonical] of [
+    ["--yolo", "--dangerously-bypass-approvals-and-sandbox"],
+    ["--not-so-yolo", "--approve-for-me"],
+  ]) {
+    const service = argvEvidence(["codex", alias, "app-server"]);
+    assert.equal(service.isSharedService,
+      argvEvidence(["codex", canonical, "app-server"]).isSharedService);
+    assert.equal(service.isSharedService, true);
+  }
+
+  for (const argv of [
+    ["codex", "--yoloish", "exec", "fix bugs"],
+    ["codex", "--not-so-yoloish", "exec", "fix bugs"],
+    ["codex", "exec", "--experimental-jsonish", "fix bugs"],
+    ["codex", "--experimental-json", "exec", "fix bugs"],
+  ]) {
+    const evidence = argvEvidence(argv);
+    assert.equal(evidence.arguments, null, JSON.stringify(argv));
+    assert.match(evidence.error, /^arguments_unverified:/);
+  }
+
+  for (const argv of [
+    ["codex", "exec", "resume", "--yolo", "session-id"],
+    ["codex", "exec", "resume", "--not-so-yolo", "session-id"],
+    ["codex", "exec", "resume", "--experimental-json", "session-id"],
+  ]) {
+    // Unsupported nested grammar stays refused for either spelling.
+    assert.equal(argvEvidence(argv).arguments, null, JSON.stringify(argv));
+  }
+});
+
 test("verified argv distinguishes shared words in prompts and known option values", () => {
   for (const argv of [
     ["/work/daemon/codex", "resume"],

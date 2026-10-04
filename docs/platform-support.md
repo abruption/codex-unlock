@@ -61,7 +61,10 @@ Process evidence is collected with the same rules on every supported platform:
   `codex -C /work/app-server` is not a shared-service invocation. Actual
   `app-server`, `remote-control`, `daemon`, `exec-server`, and remote connection
   options remain refused. The bounded grammar follows `codex-cli 0.159.2`
-  help for interactive, exec, resume, and fork modes; unknown options,
+  help and CLI source for interactive, exec, resume, and fork modes. The
+  official `--yolo` and `--not-so-yolo` aliases share the recognized scope of
+  their canonical flags, and exec accepts `--experimental-json` as an alias
+  of `--json`. Unknown options,
   variadic image options, unsupported modes (including service-looking root
   tokens such as `daemon-worker`), and ambiguous operands make
   identity incomplete. Exact service/subcommand-looking operands after `--`

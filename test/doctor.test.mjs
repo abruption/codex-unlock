@@ -525,6 +525,9 @@ test("terminal width variables cannot hide a shared app-server owner", async (t)
 test("real kernel argv separates prompt and path words on Linux, while macOS remains conservative", async (t) => {
   for (const args of [
     ["exec", "fix the daemon"],
+    ["--yolo", "exec", "fix the daemon"],
+    ["--not-so-yolo", "exec", "fix the daemon"],
+    ["exec", "--experimental-json", "fix the daemon"],
     ["-C", "/work/app-server", "fix the remote-control"],
     ["--config", "label='daemon'", "resume", "--last", "fix the app-server"],
   ]) {
