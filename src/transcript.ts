@@ -89,7 +89,14 @@ function parseLastRecord(line: string | null): TranscriptRecord | null {
   if (line === null) {
     return null;
   }
-  const value: unknown = JSON.parse(line);
+  let value: unknown;
+  try {
+    value = JSON.parse(line);
+  } catch {
+    // Node's parser errors can include transcript excerpts. Never propagate
+    // the original exception (including its cause) into diagnostic output.
+    throw new Error("last rollout record is not valid JSON");
+  }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("last rollout record is not a JSON object");
   }
