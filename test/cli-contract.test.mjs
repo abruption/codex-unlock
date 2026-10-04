@@ -282,3 +282,46 @@ test("JSON transcript ordinals always satisfy the v1 schema", async (t) => {
     });
   }
 });
+
+test("malformed transcript contents never appear in inspect, list, or unlock JSON", async (t) => {
+  const codexHome = await mkdtemp(join(tmpdir(), "codex-unlock-private-transcript-"));
+  const signalMarker = join(codexHome, "termination-marker");
+  const value = await fixture("task_complete", {
+    codexHome,
+    ownerEnv: { CODEX_FIXTURE_SIGTERM_MARKER: signalMarker },
+  });
+  t.after(async () => await stopChild(value.child));
+  const common = ["--json", "--codex-home", codexHome, "--stability-ms", "250", "--no-update-notice"];
+  const before = JSON.parse((await runCli(["inspect", THREAD_ID, ...common])).stdout);
+  assert.equal(before.lock.probe.status, "held");
+  assert.equal(before.safeToUnlock, true);
+
+  const marker = "SECRET88";
+  await writeFile(value.transcriptPath, `${marker}\n`);
+  const validate = await validator();
+  for (const command of ["inspect", "list", "unlock"]) {
+    const args = command === "list" ? [command, ...common] : [command, THREAD_ID, ...common];
+    const result = await runCli(args);
+    assert.equal(result.signal, null);
+    assert.equal(result.stderr, "");
+    assert.equal(result.stdout.includes(marker), false, command);
+    const json = JSON.parse(result.stdout);
+    assertValid(validate, json);
+    const inspection = command === "list" ? json.sessions[0] : command === "unlock" ? json.inspection : json;
+    assert.equal(inspection.transcript.status, "unreadable", command);
+    assert.equal(inspection.transcript.error, "last rollout record is not valid JSON", command);
+    assert.equal(inspection.safeToUnlock, false, command);
+    if (command === "unlock") {
+      assert.equal(result.code, 2);
+      assert.equal(json.outcome, "refused");
+      assert.equal(json.signalSent, null);
+    } else {
+      assert.equal(result.code, 0);
+    }
+    assert.equal(value.child.exitCode, null, command);
+    assert.equal(value.child.signalCode, null, command);
+    process.kill(value.child.pid, 0);
+    await assert.rejects(readFile(signalMarker), { code: "ENOENT" });
+  }
+  assert.equal(await readFile(value.transcriptPath, "utf8"), `${marker}\n`);
+});
