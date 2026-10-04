@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.3](https://github.com/abruption/codex-unlock/compare/v0.4.2...v0.4.3) (2026-10-04)
+
+
+### Bug Fixes
+
+* bound concurrent list inspections ([#93](https://github.com/abruption/codex-unlock/issues/93)) ([1ba3290](https://github.com/abruption/codex-unlock/commit/1ba329074364f3ddba964bf376088b2ba6a923a8))
+* classify Linux Codex service modes from verified argv ([#91](https://github.com/abruption/codex-unlock/issues/91)) ([f1915dd](https://github.com/abruption/codex-unlock/commit/f1915dd8522b032554c8e9584b5d03cce146c09f))
+* redact malformed transcript parser errors ([#90](https://github.com/abruption/codex-unlock/issues/90)) ([ab33856](https://github.com/abruption/codex-unlock/commit/ab33856e4f944216a6999bd01e8c92c2ef5b1441))
+
 ## [0.4.2](https://github.com/abruption/codex-unlock/compare/v0.4.1...v0.4.2) (2026-09-29)
 
 
