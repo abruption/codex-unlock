@@ -142,6 +142,13 @@ Every result past the signal boundary keeps `pid`, `signalSent: "SIGTERM"`, and
 `changed: true`, including when an observation after the signal throws
 (`post_signal_verification_failed:<error>`). Such failures use exit `3`.
 
+If the SIGTERM attempt itself throws (for example, `ESRCH` or `EPERM`), the
+result is `termination_failed` with `signalSent: null`, `changed: false`, and
+the reason `sigterm_failed:<error>`. Without an independent exit observation,
+both `processExited` and `processObservation` are `null`. A signal exception
+does not prove that the owner is still running, exited, or released its lock.
+This clarifies nullable evidence within the existing v1 schema.
+
 `processObservation.zombie` is `true` only when the signaled owner has exited
 but its parent has not reaped it. The owner then counts as exited
 (`processExited: true`): its descriptors, and therefore its lock, are closed.
@@ -158,12 +165,28 @@ descriptor), the reason is `lock_held_by_owner_descendant:<pids>` together with
 `lock_was_not_released`. A holder that cannot be identified adds
 `lock_holder_unidentified:<error>`.
 
-Just before signaling, `unlock` samples the owner's start time and the lock
-file's identity and probe again, after the transcript hash. A change refuses
-with `owner_changed_before_signal` or `lock_changed_before_signal`.
+After the final transcript hash, `unlock` repeats the exact single-element
+owner lock set. Changed evidence refuses with
+`owner_lock_set_changed_before_signal`; unavailable evidence refuses with
+`owner_lock_set_unknown_before_signal:<error>`. It then awaits the owner's
+start-time sample and synchronously samples the transcript through a regular,
+non-symlink file descriptor, comparing its path/descriptor identity and
+snapshot with the final hash and inspection evidence. A change refuses with
+`transcript_changed_before_signal`; a failed observation refuses with
+`transcript_observation_failed_before_signal:<error>`.
+
+The final lock-file identity sample and guarded probe follow these observations.
+An owner or lock change refuses with `owner_changed_before_signal` or
+`lock_changed_before_signal`; a failed process sample refuses with
+`owner_observation_failed_before_signal:<error>`.
 Native guard contention at that last synchronous probe adds
-`native_coordination_busy_before_signal`; nothing is signaled. No asynchronous
-retry is inserted between that last identity sample and SIGTERM.
+`native_coordination_busy_before_signal`; nothing is signaled. The native guard
+and transcript descriptor are released before signaling. There is no await,
+spawn, or asynchronous retry between the final guarded probe and SIGTERM.
+These repeated observations narrow race windows; owner lock sets, transcript
+writes, and signaling cannot be observed atomically. An independent writer can
+still change evidence after its final sample, so post-signal verification
+remains necessary.
 
 `check-update` is the only command that performs a foreground npm registry
 request. It returns `status: "ok"`, the current and latest stable versions,

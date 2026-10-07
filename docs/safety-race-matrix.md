@@ -21,7 +21,11 @@ they do not rely on timer placement.
 | `ps` or `lsof` shadowed on `PATH` | Process evidence only from fixed system paths | Shadow binary never runs | `ps and lsof on PATH cannot supply process evidence` |
 | Diagnostic spawn fails (`EMFILE`, synchronous throw) | Structured `spawn_error`, never an unhandled error | Evidence `unknown`; refuse before signal | runCommand spawn failure tests |
 | Codex home path contains non-ASCII bytes | Owner lock matched by `lsof` device/inode, not escaped name | Correct lock set; unresolvable other locks still refuse | non-ASCII Codex home tests |
-| Owner or lock changes during the final transcript hash | Start time, lock identity, and probe resampled after hashing, immediately before SIGTERM | Refuse; zero SIGTERM | existing revalidation tests (cheap resample on every unlock) |
+| Owner acquires another lock during the final transcript hash | Exact single-element owner lock set repeated after hashing | Refuse; zero SIGTERM; both advisory locks remain held | `late evidence refuses an extra advisory lock acquired during the final hash` |
+| Transcript appends after hashing during the awaited process sample | Safe synchronous path/descriptor snapshot matches final hash and inspection before final guarded probe | Refuse; zero SIGTERM | `late evidence refuses an append after hashing during the final process sample` |
+| Late owner lock-set, process, or transcript evidence fails | Unavailable evidence never authorizes signaling | Refuse; owner remains untouched | `late evidence refuses` fault cases |
+| Owner or lock changes during the final transcript hash | Start time, lock identity, and probe resampled after hashing, immediately before SIGTERM | Refuse; zero SIGTERM | revalidation tests and unchanged-owner control |
+| SIGTERM attempt throws ESRCH or EPERM | Failed signaling provides no independent exit evidence | `termination_failed`; null signal/exit evidence; no stronger signal | `SIGTERM ESRCH/EPERM leaves process exit evidence unavailable` |
 | Signaled owner exits but its parent never reaps it | Zombie state from the same `ps` sample as the start time | Counts as exited; `processObservation.zombie: true` | `an unreaped zombie owner counts as exited` |
 | Another process takes the lock right after the owner exits | Re-identify the current opener by PID/start time | `verification_failed`, `lock_reacquired_by_other_owner`, successor never signaled | `an immediate successor is reported as a reacquisition, not an unreleased lock` |
 | Observation fails or throws after SIGTERM (for example `EMFILE`) | Signal-boundary results keep `pid` and `signalSent` | `termination_failed`/`verification_failed`, exit 3, no stderr | `post-signal emfile/throw failure preserves the signal in the unlock result` |
@@ -48,6 +52,13 @@ that pause.
 
 Known limitations:
 
+- The final owner lock-set lookup, process sample, transcript snapshot, and
+  native lock probe are separate observations. Repeating them after hashing
+  narrows independent-writer windows but does not make them atomic with
+  SIGTERM. A writer can still acquire a lock or modify the transcript after
+  its last observation. The transcript snapshot checks metadata and file
+  identity; it is not another full hash. Post-signal verification remains
+  necessary and cannot retroactively turn such a race into pre-signal refusal.
 - Versions 0.4.0 and earlier placed the lease under `$XDG_RUNTIME_DIR` or the
   temporary directory. An older and a newer `codex-unlock` running at the same
   time for the same thread do not see each other's lease. Upgrade every copy
