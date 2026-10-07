@@ -33,6 +33,7 @@
     "schemas/codex-unlock-v1.schema.json",
     "docs/cli-reference.md",
     "docs/json-v1.md",
+    "docs/maintainer-release.md",
     "docs/platform-support.md",
     "docs/safety-race-matrix.md",
     "docs/update-security.md",
@@ -41,7 +42,9 @@
     "README.md",
     "README.ko.md",
     "CHANGELOG.md",
+    "CONTRIBUTING.md",
     "LICENSE",
+    "SECURITY.md",
     "npm-shrinkwrap.json"
   ],
   "scripts": {

@@ -86,9 +86,11 @@ try {
   );
   const expectedFiles = [
     "CHANGELOG.md",
+    "CONTRIBUTING.md",
     "LICENSE",
     "README.ko.md",
     "README.md",
+    "SECURITY.md",
     "dist/cli.js",
     "dist/coordination.js",
     "dist/doctor.js",
@@ -107,6 +109,7 @@ try {
     "dist/util.js",
     "docs/cli-reference.md",
     "docs/json-v1.md",
+    "docs/maintainer-release.md",
     "docs/platform-support.md",
     "docs/safety-race-matrix.md",
     "docs/update-security.md",
@@ -167,6 +170,26 @@ try {
   );
   const packageRoot = join(installDirectory, "node_modules", "codex-unlock");
   const manifest = readJson(join(packageRoot, "package.json"));
+  for (const readme of ["README.md", "README.ko.md"]) {
+    const source = readFileSync(resolve(readme), "utf8");
+    const artifact = readFileSync(join(packageRoot, readme), "utf8");
+    assert.equal(artifact, source, `${readme} content must be preserved in the packed artifact`);
+    for (const match of artifact.matchAll(/!?\[[^\]]*\]\(([^)]+)\)/g)) {
+      const href = match[1].trim().split(/\s+/)[0].replace(/^<|>$/g, "");
+      if (/^(?:[a-z]+:|\/\/)/i.test(href) || href.startsWith("#")) continue;
+      const target = decodeURIComponent(href.split(/[?#]/, 1)[0]);
+      if (!target) continue;
+      const targetPath = resolve(packageRoot, target);
+      assert.ok(
+        !relative(packageRoot, targetPath).startsWith(".."),
+        `${readme} link must stay within the packed artifact: ${href}`,
+      );
+      assert.ok(
+        existsSync(targetPath),
+        `${readme} relative link target must be included in the packed artifact: ${href}`,
+      );
+    }
+  }
   assertConsumerShrinkwrap(readJson(join(packageRoot, "npm-shrinkwrap.json")), manifest);
 
   // Resolve the way the installed CLI does, so a hoisted or nested copy is checked.
@@ -262,7 +285,7 @@ try {
       { cwd: installDirectory, encoding: "utf8", timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] },
     );
   }
-  log("Packed artifact passes pinned-dependency, offline CLI/JSON, and type-only consumer boundary checks.");
+  log("Packed artifact passes README content/link, pinned-dependency, offline CLI/JSON, and type-only consumer boundary checks.");
 } finally {
   rmSync(directory, { recursive: true, force: true });
   if (previousShrinkwrap === null) rmSync(shrinkwrapPath, { force: true });
