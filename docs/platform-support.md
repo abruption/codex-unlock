@@ -74,8 +74,15 @@ Process evidence is collected with the same rules on every supported platform:
   Non-ASCII or control bytes that `ps` renders differently from the kernel
   argv remain refused; the tool does not guess a lossy de-escaping rule.
 - macOS supplies a flattened `ps` argument string without verified argument
-  boundaries. Shared-service words anywhere in that string remain a
-  conservative refusal, including words inside prompts or paths. The tool
+  boundaries. `app-server`, `remote-control`, `daemon`, and `exec-server`
+  words anywhere in that string remain a conservative refusal, including
+  words inside prompts or paths. Standalone `--remote` and
+  `--remote-auth-token-env` spellings also refuse, with whitespace-separated
+  values or equals forms, including occurrences inside flattened prompts.
+  Unrelated longer option names such as `--remote-extra` do not match those
+  spellings. Synthetic owners holding real advisory locks exercise each
+  service mode and remote option form on both macOS and Linux, asserting
+  refusal and no `SIGTERM` before fixture cleanup. The tool
   does not infer a shell quoting grammar or split this string into argv.
 - The owner's native lock set is matched to the intended lock by the `lsof`
   device (`D`) and inode (`i`) fields, not by the rendered name, because the

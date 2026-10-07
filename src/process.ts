@@ -279,7 +279,16 @@ function parseInteger(value: string | null): number | null {
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
-const SHARED_SERVICE_PATTERN = /\b(?:app-server|remote-control|daemon)\b/i;
+const SHARED_SERVICE_PATTERN = /\b(?:app-server|remote-control|daemon|exec-server)\b/i;
+// Flattened evidence has no verified argv boundaries. Recognize standalone
+// remote option spellings (including equals forms), even inside prompt text,
+// without treating unrelated longer option names as these options.
+const FLATTENED_REMOTE_OPTION_PATTERN = /(?:^|\s)--(?:remote|remote-auth-token-env)(?=\s|=|$)/i;
+
+function flattenedSharedService(argumentsText: string): boolean {
+  return SHARED_SERVICE_PATTERN.test(argumentsText) ||
+    FLATTENED_REMOTE_OPTION_PATTERN.test(argumentsText);
+}
 
 export type CommandLineObservation =
   | { status: "present"; argv: string[] }
@@ -425,8 +434,8 @@ export function reconcileArguments(
   const kernelArguments =
     commandLine?.status === "present" ? commandLine.argv.join(" ") : "";
   const isSharedService =
-    SHARED_SERVICE_PATTERN.test(psArguments ?? "") ||
-    SHARED_SERVICE_PATTERN.test(kernelArguments);
+    flattenedSharedService(psArguments ?? "") ||
+    flattenedSharedService(kernelArguments);
   if (psArguments === null || commandLine === null) {
     return { arguments: psArguments, isSharedService };
   }

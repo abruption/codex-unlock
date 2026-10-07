@@ -161,6 +161,53 @@ function argvEvidence(argv) {
   return reconcileArguments(argv.join(" "), { status: "present", argv });
 }
 
+test("flattened evidence conservatively refuses shared-service markers and remote forms", () => {
+  for (const ps of [
+    "codex app-server",
+    "codex remote-control",
+    "codex daemon",
+    "codex exec-server",
+    "codex --remote unix:///example",
+    "codex --remote=unix:///example",
+    "codex --remote",
+    "codex --remote=",
+    "codex --remote-auth-token-env EXAMPLE_TOKEN_NAME",
+    "codex --remote-auth-token-env=EXAMPLE_TOKEN_NAME",
+    "codex --remote-auth-token-env",
+    "codex --remote-auth-token-env=",
+    "codex\t--remote=unix:///example",
+    "codex --REMOTE-AUTH-TOKEN-ENV=EXAMPLE_TOKEN_NAME",
+    "/work/exec-server/codex exec fix bugs",
+    "codex -C /work/exec-server exec fix bugs",
+    "codex exec fix the exec-server",
+    "codex exec document --remote usage",
+    "codex exec document --remote-auth-token-env=EXAMPLE_TOKEN_NAME usage",
+  ]) {
+    assert.deepEqual(reconcileArguments(ps, null), {
+      arguments: ps, isSharedService: true,
+    }, ps);
+  }
+});
+
+test("flattened markers respect service-word and remote-option boundaries", () => {
+  for (const ps of [
+    "codex exec fix bugs",
+    "codex exec-serverless",
+    "codex preexec-server",
+    "codex --remotely unix:///example",
+    "codex --remote-extra=unix:///example",
+    "codex --remote_auth_token_env=EXAMPLE_TOKEN_NAME",
+    "codex --remote-auth-token-env-extra=EXAMPLE_TOKEN_NAME",
+    "codex --remote-auth-token-environment=EXAMPLE_TOKEN_NAME",
+    "codex prefix--remote=unix:///example",
+    "codex ---remote=unix:///example",
+  ]) {
+    assert.deepEqual(reconcileArguments(ps, null), {
+      arguments: ps, isSharedService: false,
+    }, ps);
+  }
+});
+
 test("official option aliases preserve canonical mode evidence", () => {
   const aliases = [
     { alias: "--yolo", canonical: "--dangerously-bypass-approvals-and-sandbox", prefix: [] },
@@ -226,6 +273,11 @@ test("verified argv distinguishes shared words in prompts and known option value
     ["codex", "resume", "session-daemon", "fix the app-server"],
     ["codex", "fork", "--last", "fix remote-control"],
     ["/usr/bin/node", "/tools/codex", "exec", "fix the daemon"],
+    ["/work/exec-server/codex", "exec", "fix the exec-server"],
+    ["codex", "--cd", "/work/exec-server", "fix the exec-server"],
+    ["codex", "--config=label='exec-server'", "exec", "fix bugs"],
+    ["codex", "exec", "document --remote usage"],
+    ["codex", "exec", "document --remote-auth-token-env=EXAMPLE_TOKEN_NAME usage"],
   ]) {
     assert.deepEqual(argvEvidence(argv), {
       arguments: argv.join(" "), isSharedService: false,
@@ -246,6 +298,7 @@ test("verified argv still refuses service modes and remote connections after glo
     ["codex", "--remote", "unix:///work/endpoint"],
     ["codex", "--remote=wss://example.invalid"],
     ["codex", "resume", "--remote-auth-token-env", "EXAMPLE_TOKEN_NAME"],
+    ["codex", "--remote-auth-token-env=EXAMPLE_TOKEN_NAME"],
     ["codex", "--", "app-server"],
   ]) assert.equal(argvEvidence(argv).isSharedService, true, JSON.stringify(argv));
 });
@@ -289,6 +342,30 @@ test("conflicting, missing, and flattened evidence remains conservative", () => 
   assert.equal(unreadable.arguments, null);
   assert.equal(unreadable.isSharedService, true);
   assert.equal(reconcileArguments(null, { status: "present", argv: ["codex", "app-server"] }).arguments, null);
+  for (const serviceArgs of [
+    ["exec-server"], ["--remote", "unix:///example"], ["--remote=unix:///example"],
+    ["--remote-auth-token-env", "EXAMPLE_TOKEN_NAME"], ["--remote-auth-token-env=EXAMPLE_TOKEN_NAME"],
+  ]) {
+    const marker = serviceArgs.join(" ");
+    const unreadableService = reconcileArguments(`codex ${marker}`, {
+      status: "unknown", error: "unreadable",
+    });
+    assert.equal(unreadableService.arguments, null);
+    assert.equal(unreadableService.isSharedService, true, marker);
+    assert.match(unreadableService.error, /^arguments_unverified:/);
+    const conflictingService = reconcileArguments("different exec", {
+      status: "present", argv: ["codex", ...serviceArgs],
+    });
+    assert.equal(conflictingService.arguments, null);
+    assert.equal(conflictingService.isSharedService, true, marker);
+    assert.match(conflictingService.error, /^arguments_unverified:/);
+    const truncatedService = reconcileArguments("codex", {
+      status: "present", argv: ["codex", ...serviceArgs],
+    });
+    assert.equal(truncatedService.arguments, null);
+    assert.equal(truncatedService.isSharedService, true, marker);
+    assert.match(truncatedService.error, /^arguments_truncated:/);
+  }
   const renderedDifferently = reconcileArguments("codex exec ?? prompt", {
     status: "present", argv: ["codex", "exec", "한글 prompt"],
   });
