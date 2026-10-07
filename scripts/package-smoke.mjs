@@ -23,14 +23,81 @@ assert.ok(npmCli, "Run through npm run smoke:package");
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 const htmlLinkDestinations = (html) => {
   const destinations = [];
-  const source = html.replace(/<!--[\s\S]*?-->/g, "");
-  const tags = /<[A-Za-z][A-Za-z0-9:-]*\b((?:"[^"]*"|'[^']*'|[^'">])*)>/g;
-  const attributes = /(?:^|\s)(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi;
-  for (const [, tagAttributes] of source.matchAll(tags)) {
-    for (const match of tagAttributes.matchAll(attributes)) {
-      const destination = match[1] ?? match[2] ?? match[3];
-      if (destination) destinations.push(destination);
+  let position = 0;
+  while (position < html.length) {
+    const start = html.indexOf("<", position);
+    if (start < 0) break;
+    if (html.startsWith("<!--", start)) {
+      const commentEnd = html.indexOf("-->", start + 4);
+      position = commentEnd < 0 ? html.length : commentEnd + 3;
+      continue;
     }
+
+    let cursor = start + 1;
+    if (html[cursor] === "/" || html[cursor] === "!" || html[cursor] === "?") {
+      let quote = "";
+      cursor += 1;
+      while (cursor < html.length) {
+        const character = html[cursor];
+        if (quote) {
+          if (character === quote) quote = "";
+        } else if (character === "'" || character === '"') {
+          quote = character;
+        } else if (character === ">") {
+          cursor += 1;
+          break;
+        }
+        cursor += 1;
+      }
+      position = cursor;
+      continue;
+    }
+    if (!/[A-Za-z]/.test(html[cursor] ?? "")) {
+      position = start + 1;
+      continue;
+    }
+
+    cursor += 1;
+    while (/[A-Za-z0-9:-]/.test(html[cursor] ?? "")) cursor += 1;
+    while (cursor < html.length) {
+      while (/\s/.test(html[cursor] ?? "")) cursor += 1;
+      if (html[cursor] === ">") {
+        cursor += 1;
+        break;
+      }
+      if (html[cursor] === "/" && html[cursor + 1] === ">") {
+        cursor += 2;
+        break;
+      }
+
+      const nameStart = cursor;
+      while (cursor < html.length && !/[\s=/>]/.test(html[cursor])) cursor += 1;
+      if (cursor === nameStart) {
+        cursor += 1;
+        continue;
+      }
+      const name = html.slice(nameStart, cursor).toLowerCase();
+      while (/\s/.test(html[cursor] ?? "")) cursor += 1;
+      if (html[cursor] !== "=") continue;
+
+      cursor += 1;
+      while (/\s/.test(html[cursor] ?? "")) cursor += 1;
+      let destination;
+      const quote = html[cursor];
+      if (quote === "'" || quote === '"') {
+        cursor += 1;
+        const valueStart = cursor;
+        while (cursor < html.length && html[cursor] !== quote) cursor += 1;
+        destination = html.slice(valueStart, cursor);
+        if (html[cursor] === quote) cursor += 1;
+      } else {
+        const valueStart = cursor;
+        while (cursor < html.length && !/[\s>]/.test(html[cursor])) cursor += 1;
+        destination = html.slice(valueStart, cursor);
+      }
+      if ((name === "href" || name === "src") && destination) destinations.push(destination);
+    }
+    position = cursor;
   }
   return destinations;
 };
