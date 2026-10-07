@@ -1,12 +1,14 @@
 import { acquireUnlockLease } from "./coordination.js";
 import { inspectThread } from "./inspection.js";
 import { performance } from "node:perf_hooks";
+import { closeSync, constants, fstatSync, lstatSync, openSync } from "node:fs";
 
 import { observeLockFile } from "./lock.js";
 import { guardedProbeOnce, probeWithRetry } from "./native-coordination.js";
 import { defaultOptions, validateThreadId } from "./options.js";
 import {
   inspectLockOpeners,
+  lockFilesOpenedByProcess,
   originalProcessExited,
   processExitObservation,
   processStartTime,
@@ -19,10 +21,11 @@ import type {
   LockProbe,
   ProcessInfo,
   ProcessStartObservation,
+  PublicFileSnapshot,
   UnlockResult,
 } from "./types.js";
 import { SCHEMA_VERSION } from "./types.js";
-import { delay, errorText, sameSnapshot, unique } from "./util.js";
+import { delay, errorText, publicSnapshot, sameSnapshot, unique } from "./util.js";
 
 function unlockResult(
   inspection: InspectionResult,
@@ -64,6 +67,37 @@ function sameOwnerEvidence(before: ProcessInfo, after: ProcessInfo): boolean {
 
 function sameStringArray(before: string[] | null, after: string[] | null): boolean {
   return before !== null && after !== null && JSON.stringify(before) === JSON.stringify(after);
+}
+
+function transcriptSnapshot(path: string): PublicFileSnapshot {
+  const before = lstatSync(path);
+  if (!before.isFile() || before.isSymbolicLink()) {
+    throw new Error("transcript is a symlink or non-regular file");
+  }
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const opened = fstatSync(fd);
+    const after = lstatSync(path);
+    if (
+      !opened.isFile() || !after.isFile() || after.isSymbolicLink() ||
+      !sameSnapshot(publicSnapshot(before), publicSnapshot(opened)) ||
+      !sameSnapshot(publicSnapshot(opened), publicSnapshot(after))
+    ) {
+      throw new Error("transcript changed while sampling");
+    }
+    return publicSnapshot(after);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// Internal, per-call dependencies for deterministic signal-boundary tests.
+// Neither this seam nor unlockInspectedThread is a supported package export.
+interface SignalEvidenceDependencies {
+  stableFileHash: typeof stableFileHash;
+  lockFilesOpenedByProcess: typeof lockFilesOpenedByProcess;
+  processStartTime: typeof processStartTime;
+  transcriptSnapshot: typeof transcriptSnapshot;
 }
 
 interface RevalidatedUnlockEvidence {
@@ -206,7 +240,7 @@ async function terminateRevalidatedOwner(
       changed: false,
       pid: owner.pid,
       signalSent: null,
-      processExited: false,
+      processExited: null,
       processObservation: null,
       lockReleased: false,
       transcriptUnchanged: null,
@@ -300,7 +334,15 @@ export async function unlockThread(
 export async function unlockInspectedThread(
   inspection: InspectionResult,
   options: DoctorOptions = defaultOptions(),
+  dependencies: Partial<SignalEvidenceDependencies> = {},
 ): Promise<UnlockResult> {
+  const evidence = {
+    stableFileHash,
+    lockFilesOpenedByProcess,
+    processStartTime,
+    transcriptSnapshot,
+    ...dependencies,
+  };
   const rawThreadId = inspection.threadId;
   if (
     inspection.classification === "absent" ||
@@ -336,8 +378,9 @@ export async function unlockInspectedThread(
   const transcriptPath = inspection.transcript.path;
   const revalidationReasons: string[] = [];
   let beforeHash: string | null = null;
+  let finalHashSnapshot: PublicFileSnapshot | null = null;
   try {
-    const hashed = await stableFileHash(transcriptPath);
+    const hashed = await evidence.stableFileHash(transcriptPath);
     beforeHash = hashed.hash;
     if (!sameSnapshot(hashed.snapshot, inspection.transcript.snapshot)) {
       revalidationReasons.push("transcript_changed_after_inspection");
@@ -376,7 +419,8 @@ export async function unlockInspectedThread(
   }
   if (finalInspection.transcript.path && beforeHash !== null) {
     try {
-      const finalHash = await stableFileHash(finalInspection.transcript.path);
+      const finalHash = await evidence.stableFileHash(finalInspection.transcript.path);
+      finalHashSnapshot = finalHash.snapshot;
       if (
         finalHash.hash !== beforeHash ||
         !sameSnapshot(finalHash.snapshot, finalInspection.transcript.snapshot)
@@ -388,15 +432,46 @@ export async function unlockInspectedThread(
     }
   }
   if (revalidationReasons.length === 0) {
-    // The full transcript hash above can take a while; re-sample the cheap
-    // identity and lock evidence immediately before the signal boundary.
-    const [preSignalStart, preSignalLock] = await Promise.all([
-      processStartTime(owner.pid),
-      Promise.resolve(observeLockFile(inspection.lock.path)),
-    ]);
-    if (preSignalStart.status !== "present" || preSignalStart.startTime !== owner.startTime) {
-      revalidationReasons.push("owner_changed_before_signal");
+    // Hashing can overlap acquisition of another lock. Repeat the exact
+    // single-lock evidence before the last process and synchronous samples.
+    try {
+      const lockFiles = await evidence.lockFilesOpenedByProcess(owner.pid, inspection.lock.path);
+      if (lockFiles.error) {
+        revalidationReasons.push(`owner_lock_set_unknown_before_signal:${lockFiles.error}`);
+      } else if (
+        !sameStringArray(lockFiles.paths, [inspection.lock.path]) ||
+        !sameStringArray(lockFiles.paths, finalInspection.ownerLockFiles)
+      ) {
+        revalidationReasons.push("owner_lock_set_changed_before_signal");
+      }
+    } catch (error) {
+      revalidationReasons.push(`owner_lock_set_unknown_before_signal:${errorText(error)}`);
     }
+  }
+  if (revalidationReasons.length === 0) {
+    try {
+      const preSignalStart = await evidence.processStartTime(owner.pid);
+      if (preSignalStart.status !== "present" || preSignalStart.startTime !== owner.startTime) {
+        revalidationReasons.push("owner_changed_before_signal");
+      }
+    } catch (error) {
+      revalidationReasons.push(`owner_observation_failed_before_signal:${errorText(error)}`);
+    }
+    // An append during the awaited process sample must be visible before the
+    // final guarded probe. This samples a regular file without following a
+    // symlink and ties its path and descriptor back to both prior snapshots.
+    try {
+      const snapshot = evidence.transcriptSnapshot(transcriptPath);
+      if (
+        !sameSnapshot(snapshot, finalHashSnapshot) ||
+        !sameSnapshot(snapshot, finalInspection.transcript.snapshot)
+      ) {
+        revalidationReasons.push("transcript_changed_before_signal");
+      }
+    } catch (error) {
+      revalidationReasons.push(`transcript_observation_failed_before_signal:${errorText(error)}`);
+    }
+    const preSignalLock = observeLockFile(inspection.lock.path);
     // No await from this try-once probe through process.kill. Its native guard
     // is released before returning; a busy coordinator refuses immediately.
     const preSignalProbe = guardedProbeOnce(inspection.lock.path, preSignalLock);
