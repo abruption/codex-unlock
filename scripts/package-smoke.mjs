@@ -66,12 +66,27 @@ const markdownLinkDestinations = (markdown) => {
     }
     if (destination) destinations.push(destination);
   }
+  // Validate reference-style destinations too, including images and links
+  // whose labels are used elsewhere in the README.
+  for (const match of source.matchAll(/^[ \t]{0,3}\[[^\]\n]+\]:[ \t]*(?:<([^>\n]+)>|(\S+))/gm)) {
+    destinations.push(match[1] ?? match[2]);
+  }
   return destinations;
 };
 assert.deepEqual(
   markdownLinkDestinations("[![platform](badge.svg)](docs/platform-support.md)"),
   ["badge.svg", "docs/platform-support.md"],
   "Markdown link extraction must include destinations around nested images",
+);
+assert.deepEqual(
+  markdownLinkDestinations("[guide][docs]\n\n[docs]: docs/guide.md"),
+  ["docs/guide.md"],
+  "Markdown link extraction must include reference-style destinations",
+);
+assert.deepEqual(
+  markdownLinkDestinations("![demo][asset]\n\n[asset]: <docs/assets/demo image.gif>"),
+  ["docs/assets/demo image.gif"],
+  "Markdown link extraction must include angle-bracket reference destinations",
 );
 const workspaceManifest = readJson(resolve("package.json"));
 const shrinkwrap = consumerShrinkwrap(readJson(resolve("package-lock.json")));
