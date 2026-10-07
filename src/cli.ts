@@ -40,7 +40,7 @@ Usage:
 
 Options:
   --json                   Emit machine-readable JSON
-  --codex-home <path>      Codex home (default: CODEX_HOME or ~/.codex)
+  --codex-home <path>      Codex home (default: nonempty CODEX_HOME or ~/.codex)
   --stability-ms <ms>      Observation window, 250..30000 (default: 1000)
   --timeout-ms <ms>        SIGTERM wait, 100..60000 (default: 5000)
   --no-update-notice       Disable update notices and automatic refresh
