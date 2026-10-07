@@ -19,6 +19,60 @@ assert.ok(npmCli, "Run through npm run smoke:package");
 // npm-shrinkwrap.json is generated from it with only the runtime tree, and it
 // pins that tree for consumers, so the published manifest must match it.
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
+const markdownLinkDestinations = (markdown) => {
+  const source = markdown
+    .replace(/^```[^\n]*\n[\s\S]*?^```[ \t]*$/gm, "")
+    .replace(/`+[^`\n]*`+/g, "");
+  const destinations = [];
+  let cursor = 0;
+  while (true) {
+    const marker = source.indexOf("](", cursor);
+    if (marker < 0) break;
+    let position = marker + 2;
+    while (/\s/.test(source[position] ?? "")) position += 1;
+    let destination = "";
+    if (source[position] === "<") {
+      const end = source.indexOf(">", position + 1);
+      if (end >= 0) {
+        destination = source.slice(position + 1, end);
+        cursor = end + 1;
+      } else {
+        cursor = position + 1;
+      }
+    } else {
+      let depth = 0;
+      let escaped = false;
+      for (; position < source.length; position += 1) {
+        const character = source[position];
+        if (escaped) {
+          destination += character;
+          escaped = false;
+        } else if (character === "\\") {
+          escaped = true;
+        } else if (character === "(") {
+          depth += 1;
+          destination += character;
+        } else if (character === ")") {
+          if (depth === 0) break;
+          depth -= 1;
+          destination += character;
+        } else if (/\s/.test(character) && depth === 0) {
+          break;
+        } else {
+          destination += character;
+        }
+      }
+      cursor = Math.max(marker + 2, position + 1);
+    }
+    if (destination) destinations.push(destination);
+  }
+  return destinations;
+};
+assert.deepEqual(
+  markdownLinkDestinations("[![platform](badge.svg)](docs/platform-support.md)"),
+  ["badge.svg", "docs/platform-support.md"],
+  "Markdown link extraction must include destinations around nested images",
+);
 const workspaceManifest = readJson(resolve("package.json"));
 const shrinkwrap = consumerShrinkwrap(readJson(resolve("package-lock.json")));
 assertConsumerShrinkwrap(shrinkwrap, workspaceManifest);
@@ -174,8 +228,7 @@ try {
     const source = readFileSync(resolve(readme), "utf8");
     const artifact = readFileSync(join(packageRoot, readme), "utf8");
     assert.equal(artifact, source, `${readme} content must be preserved in the packed artifact`);
-    for (const match of artifact.matchAll(/!?\[[^\]]*\]\(([^)]+)\)/g)) {
-      const href = match[1].trim().split(/\s+/)[0].replace(/^<|>$/g, "");
+    for (const href of markdownLinkDestinations(artifact)) {
       if (/^(?:[a-z]+:|\/\/)/i.test(href) || href.startsWith("#")) continue;
       const target = decodeURIComponent(href.split(/[?#]/, 1)[0]);
       if (!target) continue;
