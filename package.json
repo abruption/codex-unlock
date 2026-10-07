@@ -39,6 +39,7 @@
     "docs/upstream-handoff-proposal.md",
     "docs/v0.2-migration.md",
     "README.md",
+    "README.ko.md",
     "CHANGELOG.md",
     "LICENSE",
     "npm-shrinkwrap.json"

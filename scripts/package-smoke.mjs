@@ -87,6 +87,7 @@ try {
   const expectedFiles = [
     "CHANGELOG.md",
     "LICENSE",
+    "README.ko.md",
     "README.md",
     "dist/cli.js",
     "dist/coordination.js",
