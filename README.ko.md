@@ -18,7 +18,7 @@
 
 ## 데모
 
-스레드를 찾고 쓰기 프로세스가 안전한 복구 대상인지 확인합니다.
+스레드를 찾고 쓰기 프로세스가 안전한 복구 대상인지 확인합니다:
 
 ![codex-unlock v0.4.2의 list 및 inspect 진단 화면. 쓰기를 진행 중인 프로세스는 잠금을 해제할 수 없는 상태입니다](https://raw.githubusercontent.com/abruption/codex-unlock/main/docs/assets/codex-unlock-v0.4.2-demo.gif)
 
@@ -29,13 +29,13 @@ codex-unlock list
 codex-unlock inspect <thread-id>
 ```
 
-`<thread-id>`를 `list`에서 확인한 UUID로 바꾸세요. 구조화된 출력을 원하면 `--json`을 추가합니다. 모든 안전 검사를 통과한 완료 세션에 한해 `codex-unlock unlock <thread-id>`가 복구를 요청합니다.
+`<thread-id>`를 `list`에서 확인한 UUID로 바꾸세요. 구조화된 출력을 원하면 `--json`을 추가합니다. 복구 대상이 될 수 있는 완료 세션의 경우에도 모든 안전 검사를 통과한 경우에만 `codex-unlock unlock <thread-id>`가 복구를 요청합니다.
 
 ## 빠른 시작
 
 macOS 또는 Linux, Node.js **22.13 이상(22.x) 또는 24.x**, 그리고 `lsof`가 필요합니다. Windows와 Node.js 26은 지원하지 않습니다.
 
-`list`와 `inspect`는 파일을 변경하지 않지만, 잠금을 확인할 때마다 Codex의 동시 쓰기를 조정하는 잠금(coordination lock)을 잠시 잡습니다. `unlock`은 `SIGTERM`만 보냅니다. 동일한 사용자가 소유한 단일 스레드의 잠금 보유 프로세스인지 재검증하고, 대화 기록(transcript)이 안정된 상태로 `task_complete`에서 끝난 경우에만 신호를 보냅니다. 공유 app-server, Remote Control, 백그라운드 서비스(daemon) 또는 소유자를 확실히 식별할 수 없는 경우에는 거부합니다. Codex 자체 잠금 파일을 삭제하거나 강제로 잠금을 해제하거나 `SIGKILL`을 보내지 않습니다. [안전 모델](docs/cli-reference.md#safety-model)을 참고하세요.
+`list`와 `inspect`는 파일을 변경하지 않지만, 잠금을 확인할 때마다 Codex의 조정 잠금(coordination lock)을 잠시 획득합니다. `unlock`은 `SIGTERM`만 보냅니다. 동일한 사용자가 소유한 단일 스레드의 잠금 보유 프로세스인지 재검증하고, 대화 기록(transcript)이 안정된 상태로 `task_complete`에서 끝난 경우에만 신호를 보냅니다. 공유 app-server, Remote Control, 백그라운드 서비스(daemon) 또는 소유자를 확실히 식별할 수 없는 경우에는 거부합니다. Codex 자체 잠금 파일을 삭제하거나 강제로 잠금을 해제하거나 `SIGKILL`을 보내지 않습니다. [안전 모델](docs/cli-reference.md#safety-model)을 참고하세요.
 
 ### 설치
 
@@ -77,4 +77,4 @@ npm install --global codex-unlock@latest
 
 질문이나 민감하지 않은 버그는 [GitHub Issues](https://github.com/abruption/codex-unlock/issues)에 등록해 주세요. 취약점은 [보안 정책](SECURITY.md)에 따라 비공개로 제보해 주세요.
 
-진단 정보를 공유하기 전 로컬 경로, 프로세스 인자, 스레드 ID, 대화 기록, 자격 증명을 가리세요. 가리지 않은 JSON 출력은 게시하지 마세요.
+진단 정보를 공유하기 전에 로컬 경로, 프로세스 인자, 스레드 ID, 대화 기록(transcript), 자격 증명을 가리세요. 가리지 않은 JSON 출력은 절대 게시하지 마세요.
