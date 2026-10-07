@@ -12,7 +12,7 @@
 [![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](docs/platform-support.md)
 [![license](https://img.shields.io/npm/l/codex-unlock?color=blue)](LICENSE)
 
-**Codex가 대화 스레드에 기록할 때 쓰는 잠금을 점검하고 안전한 복구를 돕습니다. 복구가 안전한지 확실하지 않으면 복구를 진행하지 않습니다.**
+**Codex의 스레드 기록 잠금을 진단하고 안전한 복구를 돕습니다. 근거가 충분하지 않으면 복구를 진행하지 않습니다.**
 
 </div>
 
