@@ -10,6 +10,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import process from "node:process";
 
+import { marked } from "marked";
+
 import { assertConsumerShrinkwrap, consumerShrinkwrap } from "./consumer-shrinkwrap.mjs";
 
 const npmCli = process.env.npm_execpath;
@@ -19,63 +21,31 @@ assert.ok(npmCli, "Run through npm run smoke:package");
 // npm-shrinkwrap.json is generated from it with only the runtime tree, and it
 // pins that tree for consumers, so the published manifest must match it.
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
-const markdownLinkDestinations = (markdown) => {
-  const source = markdown
-    .replace(/^```[^\n]*\n[\s\S]*?^```[ \t]*$/gm, "")
-    .replace(/`+[^`\n]*`+/g, "");
+const htmlLinkDestinations = (html) => {
   const destinations = [];
-  let cursor = 0;
-  while (true) {
-    const marker = source.indexOf("](", cursor);
-    if (marker < 0) break;
-    let position = marker + 2;
-    while (/\s/.test(source[position] ?? "")) position += 1;
-    let destination = "";
-    if (source[position] === "<") {
-      const end = source.indexOf(">", position + 1);
-      if (end >= 0) {
-        destination = source.slice(position + 1, end);
-        cursor = end + 1;
-      } else {
-        cursor = position + 1;
-      }
-    } else {
-      let depth = 0;
-      let escaped = false;
-      for (; position < source.length; position += 1) {
-        const character = source[position];
-        if (escaped) {
-          destination += character;
-          escaped = false;
-        } else if (character === "\\") {
-          escaped = true;
-        } else if (character === "(") {
-          depth += 1;
-          destination += character;
-        } else if (character === ")") {
-          if (depth === 0) break;
-          depth -= 1;
-          destination += character;
-        } else if (/\s/.test(character) && depth === 0) {
-          break;
-        } else {
-          destination += character;
-        }
-      }
-      cursor = Math.max(marker + 2, position + 1);
+  const source = html.replace(/<!--[\s\S]*?-->/g, "");
+  const tags = /<[A-Za-z][A-Za-z0-9:-]*\b((?:"[^"]*"|'[^']*'|[^'">])*)>/g;
+  const attributes = /(?:^|\s)(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi;
+  for (const [, tagAttributes] of source.matchAll(tags)) {
+    for (const match of tagAttributes.matchAll(attributes)) {
+      const destination = match[1] ?? match[2] ?? match[3];
+      if (destination) destinations.push(destination);
     }
-    if (destination) destinations.push(destination);
-  }
-  // Validate reference-style destinations too, including images and links
-  // whose labels are used elsewhere in the README.
-  for (const match of source.matchAll(/^[ \t]{0,3}\[[^\]\n]+\]:[ \t]*(?:<([^>\n]+)>|(\S+))/gm)) {
-    destinations.push(match[1] ?? match[2]);
   }
   return destinations;
 };
+const markdownLinkDestinations = (markdown) => {
+  const destinations = [];
+  marked.walkTokens(marked.lexer(markdown), (token) => {
+    if (token.type === "link" || token.type === "image") destinations.push(token.href);
+    if (token.type === "html") destinations.push(...htmlLinkDestinations(token.raw));
+  });
+  return destinations;
+};
+const isExternalLink = (href) => /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(href);
 assert.deepEqual(
   markdownLinkDestinations("[![platform](badge.svg)](docs/platform-support.md)"),
-  ["badge.svg", "docs/platform-support.md"],
+  ["docs/platform-support.md", "badge.svg"],
   "Markdown link extraction must include destinations around nested images",
 );
 assert.deepEqual(
@@ -87,6 +57,28 @@ assert.deepEqual(
   markdownLinkDestinations("![demo][asset]\n\n[asset]: <docs/assets/demo image.gif>"),
   ["docs/assets/demo image.gif"],
   "Markdown link extraction must include angle-bracket reference destinations",
+);
+assert.deepEqual(
+  markdownLinkDestinations("[^1]: More details\n\n~~~text\n[not a link](missing.md)\n~~~\n\n````md\n![not an image](missing.gif)\n````"),
+  [],
+  "Markdown link extraction must ignore footnote-like text and fenced code blocks",
+);
+const schemeExamples = markdownLinkDestinations(
+  "[web](web+codex://open) [client](x-github-client://open)",
+);
+assert.deepEqual(schemeExamples, ["web+codex://open", "x-github-client://open"]);
+assert.ok(schemeExamples.every(isExternalLink), "Valid URI schemes must not be resolved as files");
+assert.deepEqual(
+  markdownLinkDestinations(
+    '<a href="docs/guide.md">Guide</a> <img alt="demo" src=\'docs/assets/demo.gif\'>',
+  ),
+  ["docs/guide.md", "docs/assets/demo.gif"],
+  "Markdown link extraction must include relative targets in raw HTML",
+);
+assert.deepEqual(
+  markdownLinkDestinations("<!-- <a href=\"missing.md\"> -->\n~~~html\n<img src=\"missing.gif\">\n~~~"),
+  [],
+  "Markdown link extraction must ignore HTML comments and code examples",
 );
 const workspaceManifest = readJson(resolve("package.json"));
 const shrinkwrap = consumerShrinkwrap(readJson(resolve("package-lock.json")));
@@ -244,7 +236,7 @@ try {
     const artifact = readFileSync(join(packageRoot, readme), "utf8");
     assert.equal(artifact, source, `${readme} content must be preserved in the packed artifact`);
     for (const href of markdownLinkDestinations(artifact)) {
-      if (/^(?:[a-z]+:|\/\/)/i.test(href) || href.startsWith("#")) continue;
+      if (isExternalLink(href) || href.startsWith("#")) continue;
       const target = decodeURIComponent(href.split(/[?#]/, 1)[0]);
       if (!target) continue;
       const targetPath = resolve(packageRoot, target);
