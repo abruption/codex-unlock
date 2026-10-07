@@ -530,6 +530,9 @@ test("real kernel argv separates prompt and path words on Linux, while macOS rem
     ["exec", "--experimental-json", "fix the daemon"],
     ["-C", "/work/app-server", "fix the remote-control"],
     ["--config", "label='daemon'", "resume", "--last", "fix the app-server"],
+    ["-C", "/work/exec-server", "exec", "fix the exec-server"],
+    ["exec", "document --remote usage"],
+    ["exec", "document --remote-auth-token-env=EXAMPLE_TOKEN_NAME usage"],
   ]) {
     const value = await fixture("task_complete", { ownerArgs: args });
     t.after(async () => await stopChild(value.child));
@@ -554,13 +557,11 @@ test("real-lock service modes and uncertain argv refuse unlock without SIGTERM",
     ["daemon"],
     ["exec-server"],
     ["--remote", "unix:///example"],
+    ["--remote=unix:///example"],
+    ["--remote-auth-token-env", "EXAMPLE_TOKEN_NAME"],
+    ["--remote-auth-token-env=EXAMPLE_TOKEN_NAME"],
     ["--unknown", "app-server"],
   ]) {
-    // macOS has no kernel argv proof for exec-server or --remote. Its original
-    // flattened policy does not recognize those forms, so exercise them only
-    // where exact argument evidence supports the new mode classification.
-    if (process.platform !== "linux" &&
-      (args.includes("exec-server") || args.includes("--remote"))) continue;
     const codexHome = await mkdtemp(join(tmpdir(), "codex-unlock-mode-test-"));
     const marker = join(codexHome, "signal-received");
     // The fixture records any SIGTERM, including its later cleanup; assertions
@@ -577,12 +578,13 @@ test("real-lock service modes and uncertain argv refuse unlock without SIGTERM",
     const parsed = JSON.parse(result.stdout);
     assert.equal(result.code, 2, result.stdout);
     assert.equal(parsed.inspection.lock.probe.status, "held");
+    assert.equal(parsed.inspection.owner.pid, guarded.child.pid);
+    assert.equal(parsed.inspection.owner.isSharedService, true);
     assert.equal(parsed.outcome, "refused");
     assert.equal(parsed.signalSent, null);
     assert.equal(guarded.child.exitCode, null);
     await assert.rejects(access(marker), { code: "ENOENT" });
-    assert.ok(parsed.reasons.includes("lock_owner_is_shared_service") ||
-      parsed.reasons.includes("lock_owner_identity_incomplete"));
+    assert.ok(parsed.reasons.includes("lock_owner_is_shared_service"));
     await stopChild(guarded.child);
   }
 });
