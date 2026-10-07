@@ -7,7 +7,8 @@ const THREAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 
 export function defaultOptions(): DoctorOptions {
   return {
-    codexHome: resolve(process.env.CODEX_HOME ?? join(homedir(), ".codex")),
+    // Codex ignores an exactly empty CODEX_HOME; nonempty values are paths.
+    codexHome: resolve(process.env.CODEX_HOME || join(homedir(), ".codex")),
     stabilityMs: 1_000,
     terminationTimeoutMs: 5_000,
   };

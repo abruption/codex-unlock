@@ -134,7 +134,7 @@ implicitly supported.
 
 ```text
 --json                   Emit machine-readable JSON
---codex-home <path>       Defaults to CODEX_HOME or ~/.codex
+--codex-home <path>       Defaults to nonempty CODEX_HOME or ~/.codex
 --stability-ms <ms>       250..30000 (default: 1000)
 --timeout-ms <ms>         100..60000 (default: 5000)
 --no-update-notice       Disable cached notices and automatic refresh
@@ -153,6 +153,39 @@ value that begins with `-` (for example `--codex-home --json`), or `--help` /
 `--version` combined with `--json` is a usage error with exit `64`. `-h`,
 `--help`, `-v`, and `--version` are honoured only as their own arguments, never
 as another option's value. Help output to a closed pipe ends quietly.
+
+### Selecting the Codex home
+
+An explicit `--codex-home <path>` takes precedence over `CODEX_HOME`, including
+an empty or unavailable environment path. Without that option, home selection
+is:
+
+| `CODEX_HOME` | Selected home |
+| --- | --- |
+| Unset | The current user's home directory plus `.codex` |
+| Exactly empty (`CODEX_HOME=''`) | The same default as unset |
+| Nonempty relative path | Resolved against the command's current working directory |
+| Absolute path | That absolute path |
+
+Only the exactly empty string is ignored; whitespace is a nonempty path and
+is not trimmed. Relative `--codex-home` paths also resolve against the current
+working directory. An empty CLI path (`--codex-home ''`) is a usage error with
+exit `64`, rather than a request for the default home. Help and version remain
+usable regardless of whether the selected home exists.
+
+This aligns empty environment values with the verified Codex Rust releases
+`0.159.2` and `0.160.0`. Their pinned implementations filter out an empty
+`CODEX_HOME` before selecting the default and validate and canonicalize
+nonempty paths: [0.159.2 source](https://github.com/openai/codex/blob/ff6aec96948b70d94983af2641a6b67c94faeff5/codex-rs/utils/home-dir/src/lib.rs#L13-L60)
+and [0.160.0 source](https://github.com/openai/codex/blob/a956835d020762cb2b570053af06f643a11c0ecc/codex-rs/utils/home-dir/src/lib.rs#L13-L60).
+That source establishes the four cases above; it does not verify other Codex
+versions. `codex-unlock` retains its existing absolute path resolution rather
+than adding upstream's canonicalization to home selection.
+
+Compatibility change: in `codex-unlock` v0.4.3, an empty `CODEX_HOME` selected
+the current working directory. It now selects the usual `.codex` home, matching
+the verified upstream behavior. To deliberately inspect the current directory,
+use `--codex-home .`.
 
 The selected Codex home must be an existing directory. A missing home (for
 example a `--codex-home` typo, a different `CODEX_HOME`, or an unmounted
