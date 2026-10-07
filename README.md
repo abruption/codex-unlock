@@ -42,8 +42,8 @@ Windows and Node.js 26 are not supported.
 
 `list` and `inspect` do not change the contents of Codex's native lock or
 transcript files, though each probe briefly takes Codex's coordination lock.
-An interactive run may separately refresh codex-unlock's advisory update cache
-after printing the primary result; see [update behavior](docs/cli-reference.md#updates).
+An interactive `list` or `inspect` run may separately refresh codex-unlock's
+advisory update cache after printing the primary result; see [update behavior](docs/cli-reference.md#updates).
 `unlock` sends `SIGTERM` only after revalidation confirms that exactly one
 same-user Codex process owns the target lock. That process must hold exactly one
 thread lock, and its stable transcript must end in `task_complete`. Shared
