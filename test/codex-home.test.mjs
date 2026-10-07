@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import process from "node:process";
@@ -14,7 +14,7 @@ const OPTIONS_MODULE = pathToFileURL(resolve("dist/options.js")).href;
 const THREAD_ID = "01a089e8-3731-7202-ba68-0f4b0a3b2711";
 
 async function fixture(t) {
-  const root = await mkdtemp(join(tmpdir(), "codex-unlock-home-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "codex-unlock-home-")));
   t.after(async () => await rm(root, { recursive: true, force: true }));
   const home = join(root, "user-home");
   const cwd = join(root, "working-directory");
