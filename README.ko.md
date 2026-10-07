@@ -12,7 +12,7 @@
 [![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](docs/platform-support.md)
 [![license](https://img.shields.io/npm/l/codex-unlock?color=blue)](LICENSE)
 
-**불확실한 경우 작업을 거부하는 Codex 네이티브 스레드 쓰기 잠금 진단·안전 복구 도구입니다.**
+**Codex의 스레드 기록 잠금을 진단하고 안전한 복구를 돕습니다. 근거가 충분하지 않으면 작업을 거부합니다.**
 
 </div>
 
