@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.4](https://github.com/abruption/codex-unlock/compare/v0.4.3...v0.4.4) (2026-10-07)
+
+
+### Bug Fixes
+
+* align empty CODEX_HOME with upstream Codex ([#104](https://github.com/abruption/codex-unlock/issues/104)) ([c41b5ab](https://github.com/abruption/codex-unlock/commit/c41b5ab8cfe774558054f3f3f79d56a1d18a112a))
+* harden final signal checks and failure evidence ([#105](https://github.com/abruption/codex-unlock/issues/105)) ([3b50921](https://github.com/abruption/codex-unlock/commit/3b50921339079d60d1cb457abba04425ca2f628d))
+* refuse macOS exec-server and remote owners ([#103](https://github.com/abruption/codex-unlock/issues/103)) ([5630e9b](https://github.com/abruption/codex-unlock/commit/5630e9b494e82d3f09aa134066aaa06a9594ba68))
+
 ## [0.4.3](https://github.com/abruption/codex-unlock/compare/v0.4.2...v0.4.3) (2026-10-04)
 
 
