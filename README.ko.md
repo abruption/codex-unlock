@@ -2,6 +2,8 @@
 
 # codex-unlock
 
+[English](README.md)
+
 [![npm version](https://img.shields.io/npm/v/codex-unlock?color=cb3837&logo=npm)](https://www.npmjs.com/package/codex-unlock)
 [![npm downloads](https://img.shields.io/npm/dm/codex-unlock?color=cb3837&logo=npm)](https://www.npmjs.com/package/codex-unlock)
 [![CI](https://github.com/abruption/codex-unlock/actions/workflows/ci.yml/badge.svg)](https://github.com/abruption/codex-unlock/actions/workflows/ci.yml)
@@ -10,9 +12,7 @@
 [![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](docs/platform-support.md)
 [![license](https://img.shields.io/npm/l/codex-unlock?color=blue)](LICENSE)
 
-**Codex가 대화 스레드에 기록할 때 사용하는 자체 잠금(native thread writer lock)을 진단하고 안전한 복구를 돕습니다. 근거가 불확실하면 작업을 거부합니다.**
-
-[English](README.md)
+**불확실한 경우 작업을 거부하는 Codex 네이티브 스레드 쓰기 잠금 진단·안전 복구 도구입니다.**
 
 </div>
 
@@ -77,4 +77,4 @@ npm install --global codex-unlock@latest
 
 질문이나 민감하지 않은 버그는 [GitHub Issues](https://github.com/abruption/codex-unlock/issues)에 등록해 주세요. 취약점은 [보안 정책](SECURITY.md)에 따라 비공개로 제보해 주세요.
 
-진단 정보를 공유하기 전에 로컬 경로, 프로세스 인자, 스레드 ID, 대화 기록(transcript), 자격 증명을 가리세요. 가리지 않은 JSON 출력은 절대 게시하지 마세요.
+진단 정보를 공유하기 전에 로컬 경로, 프로세스 인자, 스레드 ID, 대화 기록(transcript), 자격 증명을 마스킹(가림 처리)하세요. 마스킹하지 않은 JSON 출력은 절대 게시하지 마세요.
