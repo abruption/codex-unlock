@@ -170,8 +170,10 @@ try {
     "CHANGELOG.md",
     "CONTRIBUTING.md",
     "LICENSE",
+    "README.ja.md",
     "README.ko.md",
     "README.md",
+    "README.zh-CN.md",
     "SECURITY.md",
     "dist/cli.js",
     "dist/coordination.js",
@@ -252,11 +254,20 @@ try {
   );
   const packageRoot = join(installDirectory, "node_modules", "codex-unlock");
   const manifest = readJson(join(packageRoot, "package.json"));
-  for (const readme of ["README.md", "README.ko.md"]) {
+  const readmes = ["README.md", "README.ko.md", "README.ja.md", "README.zh-CN.md"];
+  for (const readme of readmes) {
     const source = readFileSync(resolve(readme), "utf8");
     const artifact = readFileSync(join(packageRoot, readme), "utf8");
     assert.equal(artifact, source, `${readme} content must be preserved in the packed artifact`);
-    for (const href of markdownLinkDestinations(artifact)) {
+    const destinations = markdownLinkDestinations(artifact);
+    for (const localeReadme of readmes) {
+      if (localeReadme === readme) continue;
+      assert.ok(
+        destinations.includes(localeReadme),
+        `${readme} must link to the ${localeReadme} language version`,
+      );
+    }
+    for (const href of destinations) {
       if (isExternalLink(href) || href.startsWith("#")) continue;
       const target = decodeLinkPath(href.split(/[?#]/, 1)[0]);
       if (!target) continue;
