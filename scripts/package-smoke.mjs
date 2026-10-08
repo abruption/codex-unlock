@@ -10,6 +10,10 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import process from "node:process";
 
+import { marked } from "marked";
+import { parseFragment } from "parse5";
+import { parseSrcset } from "srcset";
+
 import { assertConsumerShrinkwrap, consumerShrinkwrap } from "./consumer-shrinkwrap.mjs";
 
 const npmCli = process.env.npm_execpath;
@@ -19,6 +23,84 @@ assert.ok(npmCli, "Run through npm run smoke:package");
 // npm-shrinkwrap.json is generated from it with only the runtime tree, and it
 // pins that tree for consumers, so the published manifest must match it.
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
+const htmlLinkDestinations = (html) => {
+  const destinations = [];
+  const visit = (node) => {
+    for (const attribute of node.attrs ?? []) {
+      if ((attribute.name === "href" || attribute.name === "src") && attribute.value) {
+        destinations.push(attribute.value);
+      } else if (attribute.name === "srcset") {
+        destinations.push(...parseSrcset(attribute.value, { strict: true }).map(({ url }) => url));
+      }
+    }
+    for (const child of node.childNodes ?? []) visit(child);
+  };
+  visit(parseFragment(html));
+  return destinations;
+};
+const markdownLinkDestinations = (markdown) => {
+  const destinations = [];
+  marked.walkTokens(marked.lexer(markdown), (token) => {
+    if (token.type === "link" || token.type === "image") destinations.push(token.href);
+    if (token.type === "html") destinations.push(...htmlLinkDestinations(token.raw));
+  });
+  return destinations;
+};
+const isExternalLink = (href) => /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(href);
+const decodeLinkPath = (path) =>
+  path.replace(/(?:%[\da-f]{2})+/gi, (escapeSequence) => {
+    try {
+      return decodeURIComponent(escapeSequence);
+    } catch {
+      return escapeSequence;
+    }
+  });
+assert.deepEqual(
+  markdownLinkDestinations("[![platform](badge.svg)](docs/platform-support.md)"),
+  ["docs/platform-support.md", "badge.svg"],
+  "Markdown link extraction must include destinations around nested images",
+);
+assert.deepEqual(
+  markdownLinkDestinations("[guide][docs]\n\n[docs]: docs/guide.md"),
+  ["docs/guide.md"],
+  "Markdown link extraction must include reference-style destinations",
+);
+assert.deepEqual(
+  markdownLinkDestinations("![demo][asset]\n\n[asset]: <docs/assets/demo image.gif>"),
+  ["docs/assets/demo image.gif"],
+  "Markdown link extraction must include angle-bracket reference destinations",
+);
+assert.deepEqual(
+  markdownLinkDestinations("[^1]: More details\n\n~~~text\n[not a link](missing.md)\n~~~\n\n````md\n![not an image](missing.gif)\n````"),
+  [],
+  "Markdown link extraction must ignore footnote-like text and fenced code blocks",
+);
+const schemeExamples = markdownLinkDestinations(
+  "[web](web+codex://open) [client](x-github-client://open)",
+);
+assert.deepEqual(schemeExamples, ["web+codex://open", "x-github-client://open"]);
+assert.ok(schemeExamples.every(isExternalLink), "Valid URI schemes must not be resolved as files");
+assert.deepEqual(
+  markdownLinkDestinations(
+    '<a href="docs/guide.md">Guide</a> <img alt="demo" src=\'docs/assets/demo.gif\'>',
+  ),
+  ["docs/guide.md", "docs/assets/demo.gif"],
+  "Markdown link extraction must include relative targets in raw HTML",
+);
+assert.deepEqual(
+  markdownLinkDestinations(
+    '<a href="README&#46;ko&#46;md">한국어</a><picture><source srcset="docs/dark.png 1x, docs/dark@2x.png 2x"><img srcset="docs/light.png 1x, docs/light@2x.png 2x"></picture>',
+  ),
+  ["README.ko.md", "docs/dark.png", "docs/dark@2x.png", "docs/light.png", "docs/light@2x.png"],
+  "Markdown link extraction must decode HTML references and collect every srcset candidate",
+);
+assert.deepEqual(
+  markdownLinkDestinations("<!-- <a href=\"missing.md\"> -->\n~~~html\n<img src=\"missing.gif\">\n~~~"),
+  [],
+  "Markdown link extraction must ignore HTML comments and code examples",
+);
+assert.equal(decodeLinkPath("docs/100%-coverage.md"), "docs/100%-coverage.md");
+assert.equal(decodeLinkPath("docs/a%20b.md"), "docs/a b.md");
 const workspaceManifest = readJson(resolve("package.json"));
 const shrinkwrap = consumerShrinkwrap(readJson(resolve("package-lock.json")));
 assertConsumerShrinkwrap(shrinkwrap, workspaceManifest);
@@ -86,8 +168,11 @@ try {
   );
   const expectedFiles = [
     "CHANGELOG.md",
+    "CONTRIBUTING.md",
     "LICENSE",
+    "README.ko.md",
     "README.md",
+    "SECURITY.md",
     "dist/cli.js",
     "dist/coordination.js",
     "dist/doctor.js",
@@ -106,6 +191,7 @@ try {
     "dist/util.js",
     "docs/cli-reference.md",
     "docs/json-v1.md",
+    "docs/maintainer-release.md",
     "docs/platform-support.md",
     "docs/safety-race-matrix.md",
     "docs/update-security.md",
@@ -166,6 +252,25 @@ try {
   );
   const packageRoot = join(installDirectory, "node_modules", "codex-unlock");
   const manifest = readJson(join(packageRoot, "package.json"));
+  for (const readme of ["README.md", "README.ko.md"]) {
+    const source = readFileSync(resolve(readme), "utf8");
+    const artifact = readFileSync(join(packageRoot, readme), "utf8");
+    assert.equal(artifact, source, `${readme} content must be preserved in the packed artifact`);
+    for (const href of markdownLinkDestinations(artifact)) {
+      if (isExternalLink(href) || href.startsWith("#")) continue;
+      const target = decodeLinkPath(href.split(/[?#]/, 1)[0]);
+      if (!target) continue;
+      const targetPath = resolve(packageRoot, target);
+      assert.ok(
+        !relative(packageRoot, targetPath).startsWith(".."),
+        `${readme} link must stay within the packed artifact: ${href}`,
+      );
+      assert.ok(
+        existsSync(targetPath),
+        `${readme} relative link target must be included in the packed artifact: ${href}`,
+      );
+    }
+  }
   assertConsumerShrinkwrap(readJson(join(packageRoot, "npm-shrinkwrap.json")), manifest);
 
   // Resolve the way the installed CLI does, so a hoisted or nested copy is checked.
@@ -261,7 +366,7 @@ try {
       { cwd: installDirectory, encoding: "utf8", timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] },
     );
   }
-  log("Packed artifact passes pinned-dependency, offline CLI/JSON, and type-only consumer boundary checks.");
+  log("Packed artifact passes README content/link, pinned-dependency, offline CLI/JSON, and type-only consumer boundary checks.");
 } finally {
   rmSync(directory, { recursive: true, force: true });
   if (previousShrinkwrap === null) rmSync(shrinkwrapPath, { force: true });

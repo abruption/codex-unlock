@@ -33,14 +33,18 @@
     "schemas/codex-unlock-v1.schema.json",
     "docs/cli-reference.md",
     "docs/json-v1.md",
+    "docs/maintainer-release.md",
     "docs/platform-support.md",
     "docs/safety-race-matrix.md",
     "docs/update-security.md",
     "docs/upstream-handoff-proposal.md",
     "docs/v0.2-migration.md",
     "README.md",
+    "README.ko.md",
     "CHANGELOG.md",
+    "CONTRIBUTING.md",
     "LICENSE",
+    "SECURITY.md",
     "npm-shrinkwrap.json"
   ],
   "scripts": {
@@ -90,6 +94,9 @@
     "@types/node": "^22.15.0",
     "ajv": "^8.20.0",
     "eslint": "^10.0.1",
+    "marked": "18.0.14",
+    "parse5": "8.0.1",
+    "srcset": "5.0.3",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.62.1"
   }
