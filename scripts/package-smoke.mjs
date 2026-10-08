@@ -11,6 +11,8 @@ import { dirname, join, relative, resolve } from "node:path";
 import process from "node:process";
 
 import { marked } from "marked";
+import { parseFragment } from "parse5";
+import { parseSrcset } from "srcset";
 
 import { assertConsumerShrinkwrap, consumerShrinkwrap } from "./consumer-shrinkwrap.mjs";
 
@@ -23,82 +25,17 @@ assert.ok(npmCli, "Run through npm run smoke:package");
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 const htmlLinkDestinations = (html) => {
   const destinations = [];
-  let position = 0;
-  while (position < html.length) {
-    const start = html.indexOf("<", position);
-    if (start < 0) break;
-    if (html.startsWith("<!--", start)) {
-      const commentEnd = html.indexOf("-->", start + 4);
-      position = commentEnd < 0 ? html.length : commentEnd + 3;
-      continue;
+  const visit = (node) => {
+    for (const attribute of node.attrs ?? []) {
+      if ((attribute.name === "href" || attribute.name === "src") && attribute.value) {
+        destinations.push(attribute.value);
+      } else if (attribute.name === "srcset") {
+        destinations.push(...parseSrcset(attribute.value, { strict: true }).map(({ url }) => url));
+      }
     }
-
-    let cursor = start + 1;
-    if (html[cursor] === "/" || html[cursor] === "!" || html[cursor] === "?") {
-      let quote = "";
-      cursor += 1;
-      while (cursor < html.length) {
-        const character = html[cursor];
-        if (quote) {
-          if (character === quote) quote = "";
-        } else if (character === "'" || character === '"') {
-          quote = character;
-        } else if (character === ">") {
-          cursor += 1;
-          break;
-        }
-        cursor += 1;
-      }
-      position = cursor;
-      continue;
-    }
-    if (!/[A-Za-z]/.test(html[cursor] ?? "")) {
-      position = start + 1;
-      continue;
-    }
-
-    cursor += 1;
-    while (/[A-Za-z0-9:-]/.test(html[cursor] ?? "")) cursor += 1;
-    while (cursor < html.length) {
-      while (/\s/.test(html[cursor] ?? "")) cursor += 1;
-      if (html[cursor] === ">") {
-        cursor += 1;
-        break;
-      }
-      if (html[cursor] === "/" && html[cursor + 1] === ">") {
-        cursor += 2;
-        break;
-      }
-
-      const nameStart = cursor;
-      while (cursor < html.length && !/[\s=/>]/.test(html[cursor])) cursor += 1;
-      if (cursor === nameStart) {
-        cursor += 1;
-        continue;
-      }
-      const name = html.slice(nameStart, cursor).toLowerCase();
-      while (/\s/.test(html[cursor] ?? "")) cursor += 1;
-      if (html[cursor] !== "=") continue;
-
-      cursor += 1;
-      while (/\s/.test(html[cursor] ?? "")) cursor += 1;
-      let destination;
-      const quote = html[cursor];
-      if (quote === "'" || quote === '"') {
-        cursor += 1;
-        const valueStart = cursor;
-        while (cursor < html.length && html[cursor] !== quote) cursor += 1;
-        destination = html.slice(valueStart, cursor);
-        if (html[cursor] === quote) cursor += 1;
-      } else {
-        const valueStart = cursor;
-        while (cursor < html.length && !/[\s>]/.test(html[cursor])) cursor += 1;
-        destination = html.slice(valueStart, cursor);
-      }
-      if ((name === "href" || name === "src") && destination) destinations.push(destination);
-    }
-    position = cursor;
-  }
+    for (const child of node.childNodes ?? []) visit(child);
+  };
+  visit(parseFragment(html));
   return destinations;
 };
 const markdownLinkDestinations = (markdown) => {
@@ -110,6 +47,14 @@ const markdownLinkDestinations = (markdown) => {
   return destinations;
 };
 const isExternalLink = (href) => /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(href);
+const decodeLinkPath = (path) =>
+  path.replace(/(?:%[\da-f]{2})+/gi, (escapeSequence) => {
+    try {
+      return decodeURIComponent(escapeSequence);
+    } catch {
+      return escapeSequence;
+    }
+  });
 assert.deepEqual(
   markdownLinkDestinations("[![platform](badge.svg)](docs/platform-support.md)"),
   ["docs/platform-support.md", "badge.svg"],
@@ -143,10 +88,19 @@ assert.deepEqual(
   "Markdown link extraction must include relative targets in raw HTML",
 );
 assert.deepEqual(
+  markdownLinkDestinations(
+    '<a href="README&#46;ko&#46;md">한국어</a><picture><source srcset="docs/dark.png 1x, docs/dark@2x.png 2x"><img srcset="docs/light.png 1x, docs/light@2x.png 2x"></picture>',
+  ),
+  ["README.ko.md", "docs/dark.png", "docs/dark@2x.png", "docs/light.png", "docs/light@2x.png"],
+  "Markdown link extraction must decode HTML references and collect every srcset candidate",
+);
+assert.deepEqual(
   markdownLinkDestinations("<!-- <a href=\"missing.md\"> -->\n~~~html\n<img src=\"missing.gif\">\n~~~"),
   [],
   "Markdown link extraction must ignore HTML comments and code examples",
 );
+assert.equal(decodeLinkPath("docs/100%-coverage.md"), "docs/100%-coverage.md");
+assert.equal(decodeLinkPath("docs/a%20b.md"), "docs/a b.md");
 const workspaceManifest = readJson(resolve("package.json"));
 const shrinkwrap = consumerShrinkwrap(readJson(resolve("package-lock.json")));
 assertConsumerShrinkwrap(shrinkwrap, workspaceManifest);
@@ -304,7 +258,7 @@ try {
     assert.equal(artifact, source, `${readme} content must be preserved in the packed artifact`);
     for (const href of markdownLinkDestinations(artifact)) {
       if (isExternalLink(href) || href.startsWith("#")) continue;
-      const target = decodeURIComponent(href.split(/[?#]/, 1)[0]);
+      const target = decodeLinkPath(href.split(/[?#]/, 1)[0]);
       if (!target) continue;
       const targetPath = resolve(packageRoot, target);
       assert.ok(
