@@ -35,7 +35,7 @@ codex-unlock inspect <thread-id>
 
 macOS 또는 Linux, Node.js **22.13 이상(22.x) 또는 24.x**, 그리고 `lsof`가 필요합니다. Windows와 Node.js 26은 지원하지 않습니다.
 
-`list`와 `inspect`는 Codex의 네이티브 잠금 파일이나 대화 기록 파일의 내용을 바꾸지 않지만, 잠금을 검사할 때마다 Codex의 조정 잠금을 잠시 획득합니다. 대화형 `list` 또는 `inspect` 실행에서는 기본 결과를 출력한 뒤 `codex-unlock`의 업데이트 안내 캐시를 별도로 갱신할 수 있습니다. 자세한 내용은 [업데이트 동작](docs/cli-reference.md#updates)을 참고하세요.
+`list`와 `inspect`는 Codex의 네이티브 잠금 파일이나 대화 기록 파일의 내용을 바꾸지 않지만, 잠금을 검사할 때마다 Codex의 조정 잠금을 잠시 획득합니다. 대화형 명령에서는 기본 결과를 출력한 뒤 `codex-unlock`의 업데이트 안내 캐시를 별도로 갱신할 수 있습니다. 자세한 내용은 [업데이트 동작](docs/cli-reference.md#updates)을 참고하세요.
 
 `unlock`은 재검증을 통해 대상 잠금의 소유자가 현재 사용자와 같은 계정의 Codex 프로세스 하나뿐임을 확인한 경우에만 `SIGTERM`을 보냅니다. 이 프로세스는 스레드 잠금을 정확히 하나만 보유해야 하며, 안정된 대화 기록(transcript)은 `task_complete`에서 끝나야 합니다. 공유 app-server, Remote Control, 백그라운드 서비스(daemon) 또는 소유자를 확실히 식별할 수 없는 경우에는 복구를 거부합니다. `unlock`은 Codex 자체 잠금 파일을 삭제하거나 강제로 잠금을 해제하거나 `SIGKILL`을 보내지 않습니다. [안전 모델](docs/cli-reference.md#safety-model)을 참고하세요.
 
