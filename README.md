@@ -20,11 +20,11 @@
 
 Find a thread and inspect whether its writer is eligible for safe recovery:
 
-![codex-unlock v0.4.2 list and inspect diagnostics showing a live writer that is not safe to unlock](https://raw.githubusercontent.com/abruption/codex-unlock/main/docs/assets/codex-unlock-v0.4.2-demo.gif)
+![codex-unlock v0.4.2 list and inspect diagnostics showing a live lock owner that is not safe to unlock](https://raw.githubusercontent.com/abruption/codex-unlock/main/docs/assets/codex-unlock-v0.4.2-demo.gif)
 
 *Real macOS `list`/`inspect` output from v0.4.2, re-rendered with personal
-identifiers redacted. The live writer is not eligible for unlock; no session
-is terminated in this demo.*
+identifiers redacted. The live lock owner is not safe to unlock; no session is
+terminated in this demo.*
 
 ```text
 codex-unlock list
@@ -40,12 +40,16 @@ recovery only when every safety check passes.
 Requires macOS or Linux, Node.js **22.13+ (22.x) or 24.x**, and `lsof`.
 Windows and Node.js 26 are not supported.
 
-`list` and `inspect` leave files unchanged and briefly take Codex's coordination
-lock for each probe. `unlock` sends only `SIGTERM`, and only
-to a revalidated same-user, single-thread owner whose stable transcript ends in
-`task_complete`. Shared app-server, Remote Control, daemon, and uncertain owners
-are refused. It never deletes native lock files, forces an unlock, or sends
-`SIGKILL`. See the [safety model](docs/cli-reference.md#safety-model).
+`list` and `inspect` do not change the contents of Codex's native lock or
+transcript files, though each probe briefly takes Codex's coordination lock.
+An interactive command may separately refresh codex-unlock's advisory update
+cache after printing the primary result; see [update behavior](docs/cli-reference.md#updates).
+`unlock` sends `SIGTERM` only after revalidation confirms that exactly one
+same-user Codex process owns the target lock. That process must hold exactly one
+thread lock, and its stable transcript must end in `task_complete`. Shared
+app-server, Remote Control, daemon, and uncertain owners are refused. `unlock`
+never deletes native lock files, forces an unlock, or sends `SIGKILL`. See the
+[safety model](docs/cli-reference.md#safety-model).
 
 ### Install
 
