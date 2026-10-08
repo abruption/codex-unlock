@@ -2,7 +2,7 @@
 
 # codex-unlock
 
-[English](README.md)
+[English](README.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
 [![npm version](https://img.shields.io/npm/v/codex-unlock?color=cb3837&logo=npm)](https://www.npmjs.com/package/codex-unlock)
 [![npm downloads](https://img.shields.io/npm/dm/codex-unlock?color=cb3837&logo=npm)](https://www.npmjs.com/package/codex-unlock)
