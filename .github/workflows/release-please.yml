@@ -33,6 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      pull-requests: read
     outputs:
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
       sha256: ${{ steps.digest.outputs.sha256 }}
