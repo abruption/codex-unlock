@@ -42,6 +42,7 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || needs.release-please.outputs.tag_name }}
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
@@ -53,6 +54,11 @@ jobs:
             [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           fi
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Require an existing Release Please release and matching version
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || needs.release-please.outputs.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/verify-release-source.mjs
       - run: npm install --global npm@11.11.0 --ignore-scripts
       - run: npm ci
       - run: npm run check

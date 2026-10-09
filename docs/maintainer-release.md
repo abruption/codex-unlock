@@ -194,7 +194,9 @@ Retry an unposted release using this workflow on its **existing release tag**:
 gh workflow run release-please.yml --ref v<version>
 ```
 
-Dispatching on a branch refuses. A tag dispatch skips Release Please, rechecks
+Dispatching on a branch refuses. Both flows require an existing immutable
+GitHub release authored by Actions, a tagged Release Please PR whose exact merge
+SHA is on main, and matching package/manifest/tag versions. A tag dispatch skips Release Please, rechecks
 and rebuilds that tag, and retains GitHub's actual tag ref/SHA in provenance;
 it never overwrites the provenance environment or creates another release.
 Do not retry a version already published to npm. Tags predating this workflow's
