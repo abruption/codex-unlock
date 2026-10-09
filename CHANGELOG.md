@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.5](https://github.com/abruption/codex-unlock/compare/v0.4.4...v0.4.5) (2026-10-09)
+
+
+### Bug Fixes
+
+* refuse incomplete lsof discovery and measure attribution ([#115](https://github.com/abruption/codex-unlock/issues/115)) ([1fcb13e](https://github.com/abruption/codex-unlock/commit/1fcb13e36a7f4c73ac7ff7bb3ffa48fd38fa9bf7))
+
 ## [0.4.4](https://github.com/abruption/codex-unlock/compare/v0.4.3...v0.4.4) (2026-10-07)
 
 
