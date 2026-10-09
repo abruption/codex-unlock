@@ -446,6 +446,37 @@ test("process inspection failure cannot produce a successful unlock", async (t) 
   assert.equal(value.child.exitCode, null);
 });
 
+test("successful lsof with an incomplete-visibility warning refuses before SIGTERM", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "codex-lsof-warning-"));
+  const marker = join(root, "signaled");
+  const value = await fixture("task_complete", {
+    codexHome: join(root, "home"), ownerEnv: { CODEX_FIXTURE_SIGTERM_MARKER: marker },
+  });
+  t.after(async () => await stopChild(value.child));
+  const wrapper = join(root, "lsof-warning");
+  const realLsof = process.platform === "darwin" ? "/usr/sbin/lsof" : "/usr/bin/lsof";
+  await writeFile(wrapper,
+    `#!/bin/sh\n${realLsof} "$@"\nresult=$?\nprintf '%s\\n' 'WARNING: synthetic incomplete process visibility' >&2\nexit "$result"\n`,
+    { mode: 0o755 });
+  const result = await runCli(
+    ["unlock", THREAD_ID, "--json", "--no-update-notice", "--codex-home", value.codexHome,
+      "--stability-ms", "250"],
+    { ...process.env, CODEX_UNLOCK_TEST_LSOF: wrapper },
+    ["--import", DIAGNOSTIC_OVERRIDE],
+  );
+  assert.equal(result.code, 2, result.stdout + result.stderr);
+  assert.equal(result.stderr, "");
+  const decoded = JSON.parse(result.stdout);
+  assert.equal(decoded.inspection.lock.probe.status, "held");
+  assert.equal(decoded.inspection.openers.length, 1);
+  assert.equal(decoded.inspection.classification, "unknown");
+  assert.equal(decoded.inspection.safeToUnlock, false);
+  assert.equal(decoded.signalSent, null);
+  assert.equal(decoded.outcome, "refused");
+  assert.equal(existsSync(marker), false);
+  assert.equal(value.child.exitCode, null);
+});
+
 test("post-signal process observation failure cannot report success", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "codex-unlock-post-signal-ps-"));
   const marker = join(root, "owner-terminated");

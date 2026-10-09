@@ -1,5 +1,13 @@
 # CLI reference
 
+Process discovery treats explicit `lsof` diagnostic output as incomplete
+evidence even when the command exits successfully, and recovery refuses.
+An empty diagnostic stream does not guarantee that every process was visible;
+`lsof` lists openers and its correlation is independent of the actual native
+lock probe. The repository's
+[holder-attribution research](https://github.com/abruption/codex-unlock/blob/main/docs/research-lock-attribution.md)
+records platform visibility assumptions and proposed stronger evidence.
+
 `codex-unlock` diagnoses Codex native thread writer locks. Its supported
 automation interface is the CLI and JSON v1, with type-only TypeScript models
 at `codex-unlock/types`. There is no executable JavaScript library API.
