@@ -68,3 +68,66 @@ Known limitations:
   lease key still matches, but the two paths use different lease directories.
   Aliases through symlinks, case-insensitive spellings, or a mount of the whole
   Codex home are coordinated.
+
+## Process instance identity limits
+
+The current macOS/Linux identity sample is `ps -ww -p <pid> -o lstart=`.
+`src/process.ts` accepts a parseable start-time string and compares it for
+equality; the final signal still uses Node's numeric `process.kill(pid,
+"SIGTERM")`. The native guard is released before that call, with no intervening
+`await`. This narrows the observation gap, but does not bind the signal atomically
+to the instance observed by `ps`. PID reuse after the sample can target a
+replacement. Even reuse between samples can be indistinguishable if both
+instances have the same second-resolution label. Post-signal verification cannot
+undo a misdirected signal. Unavailable identity is `unknown`, never evidence of
+exit or permission to signal.
+
+On Linux, [procps-ng 4.0.4's formatter](https://gitlab.com/procps-ng/procps/-/blob/v4.0.4/src/ps/output.c#L975-988)
+adds boot time to integer-divided start ticks and formats seconds. A boot-time
+or clock interpretation change between separate `ps` invocations can therefore
+change a live instance's label. That is an earlier known concern, not a
+clock-step reproduction in this work. The current exit comparator interprets
+different labels as different instances; the separate lock-release check is
+still required. It does not establish that every NTP correction changes a label.
+macOS exposes a stored process start timestamp through its kernel interfaces;
+the Linux boot-time computation must not be assumed to describe macOS.
+
+### Bounded evidence, 2026-10-09
+
+`node scripts/research-process-identity.mjs` launches four disposable Node
+children, samples their `lstart`, and ends them through stdin EOF. Each child
+also exits automatically after 10 seconds; no identity test sends a signal,
+changes the clock, or uses a Codex process. Darwin 27.0.0 arm64 / Node 24.16.0
+returned the same second label for all four distinct PIDs. That demonstrates
+display resolution, **not** same-PID reuse or a wrong-target signal. On Linux
+the script also records `/proc/<pid>/stat` field 22 so distinct ticks can be
+compared within equal-label groups. No Linux measurement is claimed solely
+from the macOS run. The [Ubuntu 24.04 CI measurement](https://github.com/abruption/codex-unlock/actions/runs/37862314259/job/113600687693)
+on Linux 6.17.0-1022-azure x64 / Node 24.21.0 then observed three children with
+one equal second label but distinct start ticks `16202`, `16210`, and `16217`.
+This independently confirms Linux's formatting resolution loss without clock
+changes or PID reuse. The script remains reproducible on supported hosts.
+
+The pure observation tests inject distinct instance ticks with equal labels,
+changed labels, absence, and unavailable identity. They demonstrate what the
+existing comparator can and cannot distinguish, without trying to exhaust a
+PID namespace or induce a real race. Existing real-lock refusal tests continue
+to establish observed start-time changes and unavailable samples as refusals.
+
+### Stronger evidence assessment
+
+| Candidate | Benefit | Compatibility and remaining limits |
+| --- | --- | --- |
+| Linux `/proc/<pid>/stat` field 22 | Boot-relative start ticks avoid wall-clock formatting and preserve more resolution | Parse after the final `)` of `comm`; compare in one boot and PID namespace/proc mount. A missing, denied, malformed, or inconsistent sample must be unknown. Ticks are still finite-resolution samples, not an atomic signal binding. |
+| Linux `pidfd_open` + `pidfd_send_signal` | A retained handle sends to the referenced process instance, not a recycled numeric PID | Requires Linux 5.3 for open and 5.1 for send, syscall access, permission, and a compatible namespace. Acquire the handle before gathering evidence and validate that evidence against it; opening after validation alone can capture a replacement. ESRCH/EPERM/ENOSYS/resource errors must refuse without numeric fallback. Descriptor inheritance does not identify which process holds a native flock. |
+| macOS `proc_pidinfo(PROC_PIDTBSDINFO)` | `proc_bsdinfo` exposes start seconds and microseconds, improving a sampled identity | The public SDK's [structure](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/proc_info.h) still returns a sample keyed by numeric PID; access and size checks are required. Greater resolution does not bind a later numeric signal. |
+| macOS audit-token/Mach termination APIs | Some OS interfaces carry stronger process references | They are not an established Node 22/24 SIGTERM-only equivalent here. The SDK declares audit-token termination interfaces, but their public support/permissions and chosen signal require separate investigation. Mach task termination is not SIGTERM and is outside this tool's policy. |
+
+Sources: [Linux start ticks](https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html),
+[pidfd acquisition](https://man7.org/linux/man-pages/man2/pidfd_open.2.html),
+[pidfd signaling and namespaces](https://man7.org/linux/man-pages/man2/pidfd_send_signal.2.html),
+and [Node numeric signaling](https://nodejs.org/docs/latest-v24.x/api/process.html#processkillpid-signal).
+Node's supported API does not expose the proposed pidfd transaction; adopting
+a native adapter needs a separate design, supported-platform tests, and review.
+This assessment retains the current implementation and its stated residual
+assumptions. It does not claim that higher-resolution samples eliminate races.

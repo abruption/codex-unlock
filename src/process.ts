@@ -111,6 +111,9 @@ export async function findLockOpeners(
     return { processes: [], error: failure };
   }
   const processes = parseLsofProcesses(result.stdout);
+  // Exit zero does not prove that every process was visible. Preserve visible
+  // records for diagnostics, but explicit warnings never authorize recovery.
+  if (result.stderr.trim()) return { processes, error: result.stderr.trim() };
   if (result.status === 0 || (result.status === 1 && processes.length === 0)) {
     return { processes };
   }
@@ -613,7 +616,7 @@ export async function lockFilesOpenedByProcess(
   if (failure) {
     return { paths: [], error: failure };
   }
-  if (result.status !== 0) {
+  if (result.status !== 0 || result.stderr.trim()) {
     return {
       paths: [],
       error: result.stderr.trim() || `lsof exited with status ${result.status}`,
