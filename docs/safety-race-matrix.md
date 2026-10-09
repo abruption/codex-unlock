@@ -102,7 +102,11 @@ returned the same second label for all four distinct PIDs. That demonstrates
 display resolution, **not** same-PID reuse or a wrong-target signal. On Linux
 the script also records `/proc/<pid>/stat` field 22 so distinct ticks can be
 compared within equal-label groups. No Linux measurement is claimed solely
-from the macOS run; the script is reproducible on supported Linux hosts.
+from the macOS run. The [Ubuntu 24.04 CI measurement](https://github.com/abruption/codex-unlock/actions/runs/37862314259/job/113600687693)
+on Linux 6.17.0-1022-azure x64 / Node 24.21.0 then observed three children with
+one equal second label but distinct start ticks `16202`, `16210`, and `16217`.
+This independently confirms Linux's formatting resolution loss without clock
+changes or PID reuse. The script remains reproducible on supported hosts.
 
 The pure observation tests inject distinct instance ticks with equal labels,
 changed labels, absence, and unavailable identity. They demonstrate what the
