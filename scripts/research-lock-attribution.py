@@ -45,6 +45,8 @@ def wait_for_eof():
 
 def child(role, lock_path):
     """Only called by this script with explicitly created fixture paths."""
+    if role == "failure":
+        raise RuntimeError("injected_fixture_startup_failure")
     fd = os.open(lock_path, os.O_RDONLY | os.O_NOFOLLOW)
     guard_path = str(Path(lock_path).parent / ".coordination.lock")
     guard = os.open(guard_path, os.O_RDONLY | os.O_NOFOLLOW)
@@ -258,7 +260,161 @@ def observer(path):
         os.close(fd)
 
 
+def privilege_preflight():
+    """Test only privilege dropping, in a short-lived separate process."""
+    if os.geteuid() != 0:
+        raise RuntimeError("privilege_preflight_did_not_run_as_root")
+    try:
+        account = pwd.getpwnam("nobody")
+    except KeyError:
+        emit({"available": False, "reason": "existing_nobody_account_unavailable"})
+        return 0
+    try:
+        os.setgroups([])
+        os.setgid(account.pw_gid)
+        os.setuid(account.pw_uid)
+    except OSError as error:
+        if error.errno != errno.EPERM:
+            raise
+        emit({"available": False, "reason": "privilege_drop_capability_unavailable"})
+        return 0
+    emit({"available": True})
+    return 0
+
+
+def sudo_availability(scratch, executable="/usr/bin/sudo", runner=run):
+    if not os.path.isfile(executable) or not os.access(executable, os.X_OK):
+        return {"available": False, "reason": "fixed_system_sudo_not_found"}
+    command = [sys.executable, SCRIPT, "--privilege-preflight"]
+    # Query policy before launching the helper. A denial here is an unavailable
+    # prerequisite; failure after the helper launches must fail the research.
+    permission = runner([executable, "-n", "-l", "--", *command], scratch)
+    if permission["exitStatus"] != 0:
+        if permission["exitStatus"] < 0:
+            raise RuntimeError("sudo_policy_query_terminated_unexpectedly")
+        return {"available": False, "reason": "noninteractive_sudo_policy_unavailable",
+                "preflight": permission}
+    result = runner([executable, "-n", "--", *command], scratch)
+    if result["exitStatus"] != 0:
+        raise RuntimeError("privilege_preflight_helper_failed")
+    value = json.loads(result["stdout"])
+    if value.get("available") is True:
+        return {"available": True}
+    if value.get("available") is False and value.get("reason") in (
+        "existing_nobody_account_unavailable", "privilege_drop_capability_unavailable"
+    ):
+        return value
+    raise RuntimeError("invalid_privilege_preflight_result")
+
+
+def namespace_availability(scratch, sudo, runner=run, unshare_executable=None):
+    if not sudo["available"]:
+        return sudo
+    unshare = unshare_executable or next((p for p in ("/usr/bin/unshare", "/bin/unshare")
+                                         if os.path.isfile(p) and os.access(p, os.X_OK)), None)
+    if not unshare:
+        return {"available": False, "reason": "fixed_system_unshare_not_found"}
+    command = ["/usr/bin/sudo", "-n", "--", unshare, "--mount", "--propagation", "private",
+               "--pid", "--fork", "--mount-proc", "/usr/bin/true"]
+    permission = runner(["/usr/bin/sudo", "-n", "-l", "--", *command[3:]], scratch)
+    if permission["exitStatus"] != 0:
+        if permission["exitStatus"] < 0:
+            raise RuntimeError("namespace_sudo_policy_query_terminated_unexpectedly")
+        return {"available": False, "reason": "namespace_sudo_policy_unavailable",
+                "preflight": permission}
+    preflight = runner(command, scratch)
+    if preflight["exitStatus"] == 0:
+        return {"available": True, "unshare": unshare}
+    if preflight["exitStatus"] > 0 and any(
+        diagnostic in preflight["stderr"]
+        for diagnostic in ("Operation not permitted", "Permission denied", "unrecognized option")
+    ):
+        return {"available": False, "reason": "namespace_capability_or_option_unavailable",
+                "preflight": preflight}
+    raise RuntimeError("namespace_preflight_failed_unexpectedly")
+
+
+def checked_observer(result):
+    if result["exitStatus"] != 0:
+        raise RuntimeError("namespace_observer_failed")
+    value = json.loads(result["stdout"])
+    if value.get("guardedProbe") != "held" or not isinstance(value.get("lsof"), dict):
+        raise RuntimeError("namespace_observer_invalid_evidence")
+    return result
+
+
+def self_test():
+    """Check skipped prerequisites versus failed measurements without sudo."""
+    with tempfile.TemporaryDirectory(prefix="codex-unlock-attribution-self-test-",
+                                     dir=os.environ.get("TMPDIR")) as temporary:
+        scratch = Path(temporary).resolve()
+        os.chmod(scratch, 0o700)
+        unavailable = sudo_availability(scratch, executable=str(scratch / "absent-sudo"))
+        if unavailable != {"available": False, "reason": "fixed_system_sudo_not_found"}:
+            raise RuntimeError("self_test_prerequisite_skip_failed")
+        def failed_preflight(command, _scratch):
+            return {"exitStatus": 0 if "-l" in command else 1,
+                    "stdout": "", "stderr": "injected_preflight_helper_failure"}
+        try:
+            sudo_availability(scratch, executable=sys.executable, runner=failed_preflight)
+        except RuntimeError as error:
+            if str(error) != "privilege_preflight_helper_failed":
+                raise
+        else:
+            raise RuntimeError("self_test_preflight_failure_was_not_fatal")
+        def unavailable_namespace(command, _scratch):
+            if "-l" in command:
+                if command[4] != sys.executable:
+                    raise RuntimeError("self_test_namespace_policy_command_incorrect")
+                return {"exitStatus": 0, "stdout": "", "stderr": ""}
+            return {"exitStatus": 1, "stdout": "",
+                    "stderr": "unshare: unshare failed: Operation not permitted"}
+        prerequisite = namespace_availability(scratch, {"available": True},
+                                             runner=unavailable_namespace,
+                                             unshare_executable=sys.executable)
+        if prerequisite["available"] is not False or prerequisite["reason"] != "namespace_capability_or_option_unavailable":
+            raise RuntimeError("self_test_namespace_capability_skip_failed")
+        try:
+            namespace_availability(scratch, {"available": True}, runner=failed_preflight,
+                                   unshare_executable=sys.executable)
+        except RuntimeError as error:
+            if str(error) != "namespace_preflight_failed_unexpectedly":
+                raise
+        else:
+            raise RuntimeError("self_test_unexpected_namespace_failure_was_not_fatal")
+        for output in (
+            {"exitStatus": 1, "stdout": "", "stderr": "injected_observer_failure"},
+            {"exitStatus": 0, "stdout": "{}", "stderr": ""},
+        ):
+            try:
+                checked_observer(output)
+            except RuntimeError:
+                pass
+            else:
+                raise RuntimeError("self_test_observer_failure_was_not_fatal")
+        try:
+            start_fixture("failure", scratch / "unopened-fixture")
+        except RuntimeError as error:
+            if not any(reason in str(error) for reason in (
+                "fixture_failed_before_ready", "fixture_invalid_ready"
+            )):
+                raise
+        else:
+            raise RuntimeError("self_test_child_failure_was_not_fatal")
+    emit({"status": "passed", "checks": ["missing_sudo_prerequisite_is_skipped",
+         "launched_privilege_preflight_nonzero_is_fatal",
+         "known_namespace_capability_denial_is_skipped",
+         "unexpected_namespace_preflight_failure_is_fatal",
+         "launched_observer_nonzero_is_fatal", "invalid_observer_evidence_is_fatal",
+         "unexpected_child_startup_failure_is_fatal"], "signalsSent": 0})
+    return 0
+
+
 def main(args):
+    if args.self_test:
+        return self_test()
+    if args.privilege_preflight:
+        return privilege_preflight()
     if args.child:
         child(args.child, args.lock_path)
         return 0
@@ -284,6 +440,8 @@ def main(args):
         rollout = sessions / f"rollout-2026-10-09T00-00-00-{THREAD_ID}.jsonl"
         rollout.write_text(json.dumps({"type": "event_msg", "payload": {"type": "task_complete"}}) + "\n")
         before = metadata([path, guard, rollout])
+        sudo = sudo_availability(scratch) if args.privileged_fixtures else {
+            "available": False, "reason": "requires_explicit_privileged_opt_in"}
         if LSOF:
             report["lsofVersion"] = run([LSOF, "-v"], scratch)
         holder, event = start_fixture("held", path)
@@ -303,18 +461,16 @@ def main(args):
             finally:
                 stop_fixture(opener)
             if args.privileged_fixtures and sys.platform == "linux":
-                unshare = next((p for p in ("/usr/bin/unshare", "/bin/unshare")
-                                if os.path.isfile(p)), None)
-                if unshare:
-                    result = run(["/usr/bin/sudo", "-n", unshare, "--mount", "--propagation", "private", "--pid", "--fork",
+                namespace = namespace_availability(scratch, sudo)
+                if namespace["available"]:
+                    result = run(["/usr/bin/sudo", "-n", "--", namespace["unshare"], "--mount", "--propagation", "private", "--pid", "--fork",
                                   "--mount-proc", sys.executable, SCRIPT, "--namespace-observer",
                                   "--lock-path", str(path)], scratch)
                     report["cases"].append({"case": "holder_outside_observer_pid_namespace",
-                                            "status": "measured" if result["exitStatus"] == 0 else "skipped",
-                                            "result": result})
+                                            "status": "measured", "result": checked_observer(result)})
                 else:
                     report["cases"].append({"case": "holder_outside_observer_pid_namespace",
-                                            "status": "skipped", "reason": "unshare_not_available"})
+                                            "status": "skipped", "prerequisite": namespace})
             else:
                 report["cases"].append({"case": "holder_outside_observer_pid_namespace", "status": "skipped",
                                         "reason": "requires_explicit_privileged_linux_opt_in"})
@@ -328,25 +484,20 @@ def main(args):
                                     **snapshot(path, scratch, [retained])})
         finally:
             stop_fixture(inherited)
-        if args.privileged_fixtures:
+        if sudo["available"]:
+            hidden, hidden_event = start_fixture("hidden", path, privileged=True)
             try:
-                hidden, hidden_event = start_fixture("hidden", path, privileged=True)
-            except RuntimeError as error:
-                report["cases"].append({"case": "foreign_uid_holder", "status": "skipped",
-                                        "reason": str(error)})
-            else:
+                opener, opened = start_fixture("opener", path)
                 try:
-                    opener, opened = start_fixture("opener", path)
-                    try:
-                        report["cases"].append({"case": "foreign_uid_holder_and_visible_nonholder",
-                                                **snapshot(path, scratch, [hidden_event, opened])})
-                    finally:
-                        stop_fixture(opener)
+                    report["cases"].append({"case": "foreign_uid_holder_and_visible_nonholder",
+                                            **snapshot(path, scratch, [hidden_event, opened])})
                 finally:
-                    stop_fixture(hidden)
+                    stop_fixture(opener)
+            finally:
+                stop_fixture(hidden)
         else:
             report["cases"].append({"case": "foreign_uid_holder", "status": "skipped",
-                                    "reason": "requires_explicit_privileged_opt_in"})
+                                    "prerequisite": sudo})
         report["finalGuardedProbe"] = guarded_probe(path)
         report["fixtureFilesUnchanged"] = before == metadata([path, guard, rollout])
         if report["finalGuardedProbe"] != "free" or not report["fixtureFilesUnchanged"]:
@@ -359,7 +510,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--privileged-fixtures", action="store_true")
     parser.add_argument("--cli", help="built dist/cli.js; runs inspect only")
-    parser.add_argument("--child", choices=("held", "opener", "inherited", "hidden"), help=argparse.SUPPRESS)
+    parser.add_argument("--self-test", action="store_true", help="check prerequisite and fixture failure handling without sudo")
+    parser.add_argument("--privilege-preflight", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--child", choices=("held", "opener", "inherited", "hidden", "failure"), help=argparse.SUPPRESS)
     parser.add_argument("--namespace-observer", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--lock-path", help=argparse.SUPPRESS)
     parsed = parser.parse_args()

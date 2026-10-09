@@ -616,7 +616,7 @@ export async function lockFilesOpenedByProcess(
   if (failure) {
     return { paths: [], error: failure };
   }
-  if (result.status !== 0) {
+  if (result.status !== 0 || result.stderr.trim()) {
     return {
       paths: [],
       error: result.stderr.trim() || `lsof exited with status ${result.status}`,
