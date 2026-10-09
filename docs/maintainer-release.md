@@ -185,11 +185,27 @@ retains the [Trusted Publisher binding](https://docs.npmjs.com/trusted-publisher
 The source equality check prevents a tag checkout from silently disagreeing
 with the commit named by that environment.
 
+Release Please can create a release for the last merged release PR while a
+later `main` push supplies a newer workflow SHA. That run deliberately fails
+the source equality check rather than signing the wrong source association.
+Retry an unposted release using this workflow on its **existing release tag**:
+
+```bash
+gh workflow run release-please.yml --ref v<version>
+```
+
+Dispatching on a branch refuses. A tag dispatch skips Release Please, rechecks
+and rebuilds that tag, and retains GitHub's actual tag ref/SHA in provenance;
+it never overwrites the provenance environment or creates another release.
+Do not retry a version already published to npm. Tags predating this workflow's
+dispatch support require a separate reviewed recovery plan.
+
 `node scripts/verify-npm-publication.mjs <npm-11.11.0-directory>` exercises the
 actual pinned npm publication path with local tarball bytes and mocked registry,
 OIDC, and signing boundaries. It checks hook exclusion, unchanged attachment
 bytes, package/digest subject, and workflow/source association. CI repeats it
-without OIDC permission. This is an offline compatibility check, not a real
+without OIDC permission; the required `package-smoke` aggregate also gates on
+its success. This is an offline compatibility check, not a real
 Trusted Publisher exchange or cryptographic signature verification. No package
 is published by that check. At the next authorized release, compare npm's
 attestation SHA-512 to the uploaded tarball, source SHA to the release tag, and

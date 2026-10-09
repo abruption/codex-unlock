@@ -101,16 +101,18 @@ jobs:
   package-smoke:
     name: package-smoke
     if: ${{ always() }}
-    needs: [package-artifact, git-install]
+    needs: [package-artifact, git-install, release-contract]
     runs-on: ubuntu-latest
     steps:
       - name: Require every supported package installation
         env:
           ARTIFACT_RESULT: ${{ needs.package-artifact.result }}
           GIT_RESULT: ${{ needs.git-install.result }}
+          RELEASE_CONTRACT_RESULT: ${{ needs.release-contract.result }}
         run: |
           test "$ARTIFACT_RESULT" = success
           test "$GIT_RESULT" = success
+          test "$RELEASE_CONTRACT_RESULT" = success
 
   compatibility:
     name: supported (${{ matrix.platform }}-${{ matrix.arch }}, node ${{ matrix.node }})
