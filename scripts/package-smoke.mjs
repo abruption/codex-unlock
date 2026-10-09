@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { log } from "node:console";
 import {
-  copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync,
+  constants, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync,
   rmSync, writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
@@ -18,6 +18,11 @@ import { assertConsumerShrinkwrap, consumerShrinkwrap } from "./consumer-shrinkw
 
 const npmCli = process.env.npm_execpath;
 assert.ok(npmCli, "Run through npm run smoke:package");
+const args = process.argv.slice(2);
+assert.ok(args.length === 0 ||
+  (args.length === 2 && args[0] === "--release-artifact-directory"),
+"Usage: npm run smoke:package [-- --release-artifact-directory <new-directory>]");
+const releaseDirectory = args.length === 2 ? resolve(args[1]) : null;
 
 // package-lock.json is the repository lockfile. The published
 // npm-shrinkwrap.json is generated from it with only the runtime tree, and it
@@ -378,6 +383,14 @@ try {
     );
   }
   log("Packed artifact passes README content/link, pinned-dependency, offline CLI/JSON, and type-only consumer boundary checks.");
+  if (releaseDirectory !== null) {
+    // Preserve the exact bytes just installed and verified, never repack after
+    // the checks. A pre-existing destination refuses rather than replacing it.
+    mkdirSync(releaseDirectory, { mode: 0o700 });
+    copyFileSync(join(directory, packed.filename), join(releaseDirectory, packed.filename),
+      constants.COPYFILE_EXCL);
+    log(`Verified release artifact: ${packed.filename}`);
+  }
 } finally {
   rmSync(directory, { recursive: true, force: true });
   if (previousShrinkwrap === null) rmSync(shrinkwrapPath, { force: true });
