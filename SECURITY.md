@@ -40,3 +40,14 @@ coordinated writers in the home can wait until it continues or exits. Acquisitio
 timeouts do not bound a pause while holding the guard. Access times can change.
 The zero-interference guarantee applies to writers using Codex's native
 coordination protocol. See the [probe contract](docs/cli-reference.md#native-coordination-during-probes).
+
+## Process identity assumptions
+
+Start-time revalidation uses a second-resolution `ps lstart` sample followed by
+numeric PID SIGTERM. It does not atomically bind the signal to that process
+instance. Rapid PID reuse and changes in Linux wall-clock/boot-time interpretation
+remain assumptions of the current implementation; matching timestamps do not
+eliminate them. The final synchronous boundary narrows the gap, and unavailable
+identity refuses recovery, but post-signal checks cannot undo a wrong-target
+signal. See the [identity assessment](docs/safety-race-matrix.md#process-instance-identity-limits)
+for measured evidence, platform options, and their limits.
