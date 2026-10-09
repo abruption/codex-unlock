@@ -232,3 +232,23 @@ jobs:
         env:
           RESULT: ${{ needs.compatibility.result }}
         run: test "$RESULT" = success
+
+  list-benchmark:
+    name: list measurement (${{ matrix.runner }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-15]
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - run: npm ci
+      - run: node scripts/benchmark-list.mjs --quick
