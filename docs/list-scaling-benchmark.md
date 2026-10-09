@@ -26,6 +26,8 @@ transcripts, real system diagnostics versus fixed `/usr/bin/true` diagnostic
 children, and the unmodified default 1000-ms stability window versus an internal
 zero-window control. Native coordination and thread flock probes remain real in
 both diagnostic modes. The zero window is not a public CLI flag or recommendation.
+Matching transcripts alternate between both roots, and each result must resolve
+to its expected root. Noise files also alternate between roots.
 
 Each worker asserts complete ordered results, stable independent observations,
 four-worker bounds, and released directory handles/diagnostic children. A traversal
@@ -36,28 +38,29 @@ mode, size, and mtime are unchanged after measurement; atime is excluded.
 
 ## Initial macOS observation
 
-Darwin arm64, Node 24.16.0, three runs per case, standard suite 7.123 seconds.
-Values below are medians from the first completed local standard run, not speed
+Darwin arm64, Node 24.16.0, three runs per case, standard suite 7.159 seconds.
+Values below are from the corrected cross-root fixture, not speed
 guarantees. Baseline uses N=4, T=512, depth 0, 128 bytes, zero stability window,
 and fixed `/usr/bin/true` diagnostics; each other row changes only one variable.
 
-| Change from baseline | Median elapsed ms |
-| --- | ---: |
-| Baseline | 19.076 |
-| N=16 | 50.639 |
-| N=32 | 83.870 |
-| T=64 | 12.309 |
-| T=2048 | 33.334 |
-| Depth=4 | 21.105 |
-| Transcript=64 KiB | 18.844 |
-| Actual ps/lsof | 316.902 |
-| Default 1000-ms stability window | 1020.533 |
+| Change from baseline | Median elapsed ms | Min–max ms |
+| --- | ---: | ---: |
+| Baseline | 19.294 | 18.352–19.922 |
+| N=16 | 52.846 | 52.103–53.669 |
+| N=32 | 89.136 | 83.460–101.636 |
+| T=64 | 12.201 | 12.100–12.467 |
+| T=2048 | 35.196 | 34.176–36.771 |
+| Depth=4 | 20.911 | 20.904–21.920 |
+| Transcript=64 KiB | 18.752 | 18.343–18.808 |
+| Actual ps/lsof | 305.679 | 304.146–314.225 |
+| Default 1000-ms stability window | 1024.320 | 1019.211–1026.756 |
 
 Flat fixtures visit `2*N*T` transcript entries and make `4*N` root traversals:
 two transcript roots, before and after, per thread. The deepest fixture additionally
 visits 64 directory entries at N=4. Peak open directory handles were 8 flat and
 40 at depth four, consistent with four workers, two roots per worker, and recursive
-directory depth. Maximum measured Node RSS was 69,840 KiB. Baseline spawns 12
+directory depth. Per-run Node RSS and CPU measurements are reported in JSON.
+Baseline spawns 12
 `true` children; actual diagnostics spawn eight lsof and four ps children, so the
 comparison removes process-table work but is not an equal-command-count experiment.
 

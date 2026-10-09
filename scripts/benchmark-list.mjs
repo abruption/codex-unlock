@@ -37,6 +37,11 @@ if (process.argv[2] === "--worker") {
       assert.equal(value.transcript.status, "found");
       assert.equal(value.transcript.stable, true);
       assert.equal(value.transcript.lastRecord.eventType, "task_complete");
+      const index = expectedIds.indexOf(value.threadId);
+      const tree = index % 2 === 0 ? "sessions" : "archived_sessions";
+      assert.equal(value.transcript.path, join(config.home, tree,
+        ...Array.from({ length: config.depth }, (_, depth) => `level-${depth}`),
+        `rollout-${value.threadId}.jsonl`));
     }
     console.log(JSON.stringify({ status: "ok", count: result.count, sortedComplete: true,
       guardedNativeProbes: !config.coordinatorAbsent, independentStableObservations: true,
@@ -97,7 +102,7 @@ if (process.argv[2] === "--worker") {
     const paddingRecord = padding => `${JSON.stringify({ type: "benchmark_padding", payload: padding })}\n`;
     const overheadBytes = paddingRecord("").length + record.length;
     for (let index = 0; index < config.t; index += 1) {
-      const tree = index < config.n || index % 2 === 0 ? "sessions" : "archived_sessions";
+      const tree = index % 2 === 0 ? "sessions" : "archived_sessions";
       const levels = Array.from({ length: config.depth }, (_, depth) => `level-${depth}`);
       const transcript = `${paddingRecord("x".repeat(Math.max(0, config.transcriptBytes - overheadBytes)))}${record}`;
       assert.equal(transcript.length, config.transcriptBytes);
