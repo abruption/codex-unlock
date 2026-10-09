@@ -81,6 +81,32 @@ test("derives exit only from absence or a different process start time", () => {
   );
 });
 
+test("identical second-resolution samples cannot distinguish injected process instances", () => {
+  // Synthetic same-PID reuse: only the richer identity changes. This parser
+  // cannot see those ticks, so this is a limitation demonstration, not a claim
+  // that we reproduced kernel PID reuse or authorized a signal.
+  const first = { pid: 42, ticks: 10001, lstart: "Sun Sep 20 12:34:56 2026" };
+  const replacement = { ...first, ticks: 10009 };
+  assert.notEqual(first.ticks, replacement.ticks);
+  const observation = processStartTimeFromCommand({
+    status: 0, stdout: replacement.lstart, stderr: "",
+  });
+  assert.equal(originalProcessExited(first.lstart, observation), false);
+  assert.equal(originalProcessExited(first.lstart, {
+    status: "unknown", startTime: null, error: "identity unavailable",
+  }), null);
+});
+
+test("a changed wall-clock label alone cannot prove which kernel instance changed", () => {
+  const first = "Sun Sep 20 12:34:56 2026";
+  const shifted = processStartTimeFromCommand({
+    status: 0, stdout: "Sun Sep 20 12:34:57 2026", stderr: "",
+  });
+  assert.equal(originalProcessExited(first, shifted), true);
+  // No clock step or process signal occurs in this injected observation.
+  // The current comparator treats a changed label as a different instance.
+});
+
 test("parses Linux lsof file sets that omit the f field", () => {
   const lock = "/home/a/\\xed\\x99\\x88/thread-writer-locks/01a089e8-3731-7202-ba68-0f4b0a3b2711.lock";
   assert.deepEqual(
