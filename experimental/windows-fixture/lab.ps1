@@ -20,9 +20,9 @@ param(
     [ValidateSet('run', 'agent')][string]$Role = 'run',
     [string]$OutFile,
     [string]$Root,
-    [int]$ReadyBudgetMs = 60000,
-    [int]$WaitBudgetMs = 15000,
-    [int]$TotalBudgetSec = 600
+    [ValidateRange(0, 600000)][int]$ReadyBudgetMs = 60000,
+    [ValidateRange(0, 600000)][int]$WaitBudgetMs = 15000,
+    [ValidateRange(0, 3600)][int]$TotalBudgetSec = 600
 )
 $ErrorActionPreference = 'Stop'
 
@@ -33,14 +33,17 @@ if ($Role -eq 'agent') {
     # every fixture handle and ends the process normally.
     [Console]::Out.WriteLine('{"ready":true,"pid":' + $PID + ',"start":' + [WinLockLab]::SelfStartFiletime() + '}')
     [Console]::Out.Flush()
+    # The parent writes UTF-8 bytes, independently of the host console code page.
+    $inputReader = New-Object IO.StreamReader([Console]::OpenStandardInput(), (New-Object Text.UTF8Encoding($false, $true)))
     try {
-        while ($null -ne ($line = [Console]::In.ReadLine())) {
+        while ($null -ne ($line = $inputReader.ReadLine())) {
             if ($line -eq 'exit') { break }
             [Console]::Out.WriteLine([WinLockLab]::Execute($line))
             [Console]::Out.Flush()
         }
     } finally {
         [WinLockLab]::DisposeAll()
+        $inputReader.Dispose()
     }
     exit 0
 }
@@ -57,6 +60,10 @@ function Test-Inside([string]$path, [string]$dir) {
 }
 
 $TempRoot = Resolve-Full $env:TEMP
+$volumeCommand = Get-Command Get-Volume -ErrorAction SilentlyContinue
+if ($null -eq $volumeCommand -or -not $volumeCommand.Parameters.ContainsKey('FilePath')) {
+    Write-Output 'refused: Storage Get-Volume -FilePath is required to identify the scratch volume'; exit 3
+}
 if (-not $OutFile) { Write-Output 'refused: -OutFile is required (new file outside the scratch directory)'; exit 3 }
 $OutFile = Resolve-Full $OutFile
 if (Test-Path -LiteralPath $OutFile) { Write-Output "refused: $OutFile already exists"; exit 3 }
@@ -77,7 +84,7 @@ $TotalMs = [int64]$TotalBudgetSec * 1000
 function Remaining([int]$cap) {
     $left = $TotalMs - $Clock.ElapsedMilliseconds
     if ($left -lt 0) { $left = 0 }
-    [int][Math]::Min([int64]$cap, $left)
+    [int][Math]::Max(0, [Math]::Min([int64][int]::MaxValue, [Math]::Min([int64]$cap, $left)))
 }
 
 # Private scratch: created with a protected DACL granting only the current
@@ -251,13 +258,21 @@ function Label-Rm($observed) {
 
 try {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    # Resolve the volume from this actual path, including volume mount points.
+    $volumeProbe = Join-Path $Scratch '.volume-probe'
+    $volumeProbeStream = [IO.File]::Open($volumeProbe, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    $volumeProbeStream.Dispose()
+    $scratchVolumes = @(Get-Volume -FilePath $volumeProbe -ErrorAction Stop)
+    if ($scratchVolumes.Count -ne 1 -or -not $scratchVolumes[0].FileSystemType) {
+        throw 'scratch volume could not be identified uniquely'
+    }
     Record 'environment' 'host' $null ([pscustomobject]@{
             ok = $true
             os = [Environment]::OSVersion.VersionString; ps = $PSVersionTable.PSVersion.ToString()
             integrity = (whoami /groups | Select-String 'S-1-16-' | Select-Object -First 1).ToString().Trim()
             elevated = (New-Object Security.Principal.WindowsPrincipal $identity).IsInRole('Administrators')
             executionPolicy = (Get-ExecutionPolicy).ToString()
-            fs = (Get-Volume -DriveLetter $Scratch.Substring(0, 1)).FileSystemType
+            fs = $scratchVolumes[0].FileSystemType
             scratchDacl = 'protected, current user SID only'
             note = 'results apply only to this token/integrity; source semantics pinned to Rust std 1.95 (Codex 0.162.1 and 0.155.1 writer_lock.rs identical); installed Codex binaries not exercised'
         })
@@ -401,45 +416,88 @@ catch {
     Record 'lifecycle' 'orchestrator_error' @{ ok = $true } ([pscustomobject]@{ ok = $false; error = $_.Exception.Message })
 }
 finally {
-    foreach ($a in $Agents) { Stop-Agent $a }
+    $FinalizationFailed = $false
+    foreach ($a in $Agents) {
+        try { Stop-Agent $a } catch {
+            $FinalizationFailed = $true
+            Record 'lifecycle' "stop_error:$($a.Name)" $null ([pscustomobject]@{ ok = $false; error = $_.Exception.Message })
+        }
+    }
     $running = @($Agents | Where-Object { -not $_.Exited })
     foreach ($a in $Agents) {
-        if ($a.Exited -and $a.StdErr.Wait((Remaining 1000)) -and $a.StdErr.Result) {
-            Record 'lifecycle' "stderr:$($a.Name)" @{ empty = $true } ([pscustomobject]@{ empty = $false; text = $a.StdErr.Result })
+        try {
+            if ($a.Exited) {
+                if (-not $a.StdErr.Wait((Remaining 1000))) {
+                    Record 'lifecycle' "stderr:$($a.Name)" @{ empty = $true } $null
+                } elseif ($a.StdErr.Result) {
+                    Record 'lifecycle' "stderr:$($a.Name)" @{ empty = $true } ([pscustomobject]@{ empty = $false; text = $a.StdErr.Result })
+                }
+            }
+        } catch {
+            $FinalizationFailed = $true
+            Record 'lifecycle' "stderr_error:$($a.Name)" $null ([pscustomobject]@{ ok = $false; error = $_.Exception.Message })
         }
     }
 
     # New file only; never overwrite. UTF-8 without BOM, one JSON object per line.
-    $lines = $Results | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 8 }
-    $fs = New-Object IO.FileStream($OutFile, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
-    $sw = New-Object IO.StreamWriter($fs, $Utf8)
-    try { foreach ($l in $lines) { $sw.Write($l); $sw.Write("`n") } } finally { $sw.Dispose() }
-
-    $counts = @{}
-    foreach ($r in $Results) { $counts[$r.verdict] = 1 + [int]$counts[$r.verdict] }
-    Write-Output ('results: ' + $OutFile)
-    Write-Output ('verdicts: ' + (($counts.Keys | Sort-Object | ForEach-Object { "$_=$($counts[$_])" }) -join ' '))
+    $fs = $null
+    $sw = $null
+    $ResultsWritten = $false
+    try {
+        $lines = $Results | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 8 }
+        $fs = New-Object IO.FileStream($OutFile, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        $sw = New-Object IO.StreamWriter($fs, $Utf8)
+        foreach ($l in $lines) { $sw.Write($l); $sw.Write("`n") }
+        $sw.Flush()
+        $ResultsWritten = $true
+    } catch {
+        $FinalizationFailed = $true
+        Write-Output ('results write error: ' + $_.Exception.Message)
+        Record 'lifecycle' 'results_write_error' $null ([pscustomobject]@{ ok = $false; error = $_.Exception.Message })
+    } finally {
+        foreach ($resource in @($sw, $fs)) {
+            if ($null -ne $resource) {
+                try { $resource.Dispose() } catch {
+                    $FinalizationFailed = $true
+                    $ResultsWritten = $false
+                    Write-Output ('results close error: ' + $_.Exception.Message)
+                    Record 'lifecycle' 'results_close_error' $null ([pscustomobject]@{ ok = $false; error = $_.Exception.Message })
+                }
+            }
+        }
+    }
+    if ($ResultsWritten) { Write-Output ('results: ' + $OutFile) }
 
     # Cleanup only when every agent exited, junction links were removed as
     # links, and the scratch directory still has the identity it was created with.
     $preserve = $null
+    if ($FinalizationFailed -or -not $ResultsWritten) { $preserve = 'finalization failed; results may be absent or incomplete' }
     if ($running.Count -gt 0) { $preserve = 'agents still running: ' + (($running | ForEach-Object { $_.Pid }) -join ',') }
-    if (-not $preserve) {
-        foreach ($j in $Junctions) {
-            try { [IO.Directory]::Delete($j, $false) } catch { $preserve = 'junction removal failed: ' + $j }
+    try {
+        if (-not $preserve) {
+            foreach ($j in $Junctions) { [IO.Directory]::Delete($j, $false) }
         }
+        if (-not $preserve -and [WinLockLab]::DirFileId($Scratch) -ne $ScratchId) { $preserve = 'scratch identity changed or unverifiable' }
+        if (-not $preserve -and (Test-Inside $OutFile $Scratch)) { $preserve = 'results file inside scratch' }
+        if (-not $preserve) {
+            Remove-Item -LiteralPath $Scratch -Recurse -Force
+            Write-Output ('scratch removed: ' + $Scratch)
+        }
+    } catch {
+        $FinalizationFailed = $true
+        $preserve = 'cleanup failed: ' + $_.Exception.Message
+        Record 'lifecycle' 'cleanup_error' $null ([pscustomobject]@{ ok = $false; error = $_.Exception.Message })
     }
-    if (-not $preserve -and [WinLockLab]::DirFileId($Scratch) -ne $ScratchId) { $preserve = 'scratch identity changed or unverifiable' }
-    if (-not $preserve -and (Test-Inside $OutFile $Scratch)) { $preserve = 'results file inside scratch' }
     if ($preserve) {
+        $FinalizationFailed = $true
         Write-Output ("scratch preserved ($preserve): " + $Scratch)
-    } else {
-        Remove-Item -LiteralPath $Scratch -Recurse -Force
-        Write-Output ('scratch removed: ' + $Scratch)
     }
 
+    $counts = @{}
+    foreach ($r in $Results) { $counts[$r.verdict] = 1 + [int]$counts[$r.verdict] }
+    Write-Output ('verdicts: ' + (($counts.Keys | Sort-Object | ForEach-Object { "$_=$($counts[$_])" }) -join ' '))
     $code = 0
     if ($counts['mismatch']) { $code = 1 }
-    if ($counts['incomplete'] -or $counts['error'] -or $running.Count -gt 0 -or $OrchestratorFailed) { $code = 2 }
+    if ($counts['incomplete'] -or $counts['error'] -or $running.Count -gt 0 -or $OrchestratorFailed -or $FinalizationFailed) { $code = 2 }
     exit $code
 }

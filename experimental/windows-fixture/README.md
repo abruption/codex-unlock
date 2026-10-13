@@ -83,6 +83,14 @@ is a separate decision outside this fixture.
   `FileMode.CreateNew` and written as UTF-8 without a BOM, one JSON object per
   line, LF-terminated.
 - `-OutFile` must not be inside any `codex-unlock-lab-*` directory.
+- Results write, close, or cleanup errors produce exit 2 and request scratch
+  preservation. A failed recursive cleanup may already have removed some files;
+  its failure is reported rather than being mistaken for a successful run.
+- The recorded filesystem comes from `Get-Volume -FilePath` for the actual
+  scratch path, including mounted-volume paths, rather than its first drive
+  letter. The run refuses before creating scratch if that parameter is absent;
+  a failed or ambiguous query prevents fixture agents from starting. See the
+  [Storage cmdlet documentation](https://learn.microsoft.com/en-us/powershell/module/storage/get-volume).
 
 | Verdict | Meaning |
 | --- | --- |
@@ -106,6 +114,12 @@ is a separate decision outside this fixture.
 | `WaitBudgetMs` | 15 s | Each stdin write, each flush, each reply, each exit wait |
 | `TotalBudgetSec` | 600 s | Monotonic `Stopwatch`. Every wait is `min(per-wait, remaining)`, including stderr collection |
 
+`ReadyBudgetMs` and `WaitBudgetMs` accept 0 through 600,000 milliseconds;
+`TotalBudgetSec` accepts 0 through 3,600 seconds. Zero gives an immediate wait
+deadline. Negative or larger values fail parameter binding before fixture
+creation. The remaining-budget helper always returns a nonnegative `Int32`,
+so `Task.Wait(-1)` cannot be requested.
+
 - **Not bounded:** the total budget limits the waits this script performs. It
   is not a hard wall-clock cap, because these steps are not bounded:
   - `Add-Type` compilation
@@ -123,6 +137,9 @@ is a separate decision outside this fixture.
   full pipe cannot block an agent.
 - **Output:** agents emit ASCII-only JSON, so localized Win32 messages survive
   any console code page.
+- **Input:** agents read their standard-input bytes through an explicit UTF-8
+  `StreamReader`, matching the parent's UTF-8 writes even when a fixture path
+  contains non-ASCII characters. No host console code page is changed.
 
 ## E1 cases
 

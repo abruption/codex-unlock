@@ -56,6 +56,40 @@ jobs:
             if ($observed -ne $case.Expected) { throw 'Result-path boundary regression' }
           }
           Write-Output 'Result-path case/boundary checks passed without filesystem access.'
+          # Extract parameter binding only; no fixture body is evaluated.
+          $binding = [scriptblock]::Create($ast.ParamBlock.Extent.Text + "`n'validated'")
+          foreach ($case in @(
+            @{ ReadyBudgetMs = 0; WaitBudgetMs = 0; TotalBudgetSec = 0 },
+            @{ ReadyBudgetMs = 600000; WaitBudgetMs = 600000; TotalBudgetSec = 3600 }
+          )) {
+            if ((& $binding @case) -ne 'validated') { throw 'Valid budget binding failed' }
+          }
+          foreach ($case in @(
+            @{ ReadyBudgetMs = -1 }, @{ WaitBudgetMs = -1 }, @{ TotalBudgetSec = -1 },
+            @{ ReadyBudgetMs = 600001 }, @{ WaitBudgetMs = 600001 }, @{ TotalBudgetSec = 3601 }
+          )) {
+            $rejected = $false
+            try { & $binding @case | Out-Null } catch { $rejected = $true }
+            if (-not $rejected) { throw 'Unsafe budget passed parameter validation' }
+          }
+          $remainingFunction = $ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+              $node.Name -eq 'Remaining'
+          }, $true)
+          if ($null -eq $remainingFunction) { throw 'Missing budget clamp' }
+          . ([scriptblock]::Create($remainingFunction.Extent.Text))
+          $TotalMs = [int64]10000
+          $Clock = [pscustomobject]@{ ElapsedMilliseconds = [int64]9000 }
+          if ((Remaining 15000) -ne 1000 -or (Remaining 500) -ne 500 -or (Remaining -1) -ne 0) {
+            throw 'Remaining budget clamp failed'
+          }
+          $Clock.ElapsedMilliseconds = [int64]11000
+          if ((Remaining 15000) -ne 0) { throw 'Expired budget must be zero' }
+          $TotalMs = [int64][int]::MaxValue + 1000
+          $Clock.ElapsedMilliseconds = 0
+          if ((Remaining ([int]::MaxValue)) -ne [int]::MaxValue) { throw 'Budget integer bound failed' }
+          Write-Output 'Budget parameter and monotonic-clamp checks passed without fixture execution.'
       - name: Compile native declarations without calling them
         shell: powershell
         run: |
