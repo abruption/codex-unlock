@@ -23,9 +23,9 @@ Known errors, ambiguity, and changing evidence still refuse recovery. However,
 clean incomplete discovery is not necessarily detected: those refusals are not
 a guarantee against silent holder omission.
 
-The [attribution research](research-lock-attribution.md) measured an omitted
+The [attribution research](https://github.com/abruption/codex-unlock/blob/3b89057c37e6a7028f88c7bef39c6eae9604c639/docs/research-lock-attribution.md) measured an omitted
 foreign-UID synthetic holder with a visible same-user nonholder and no lsof
-diagnostic error. The [interleaving fixture](../scripts/fixtures/attribution-interleaving/README.md)
+diagnostic error. The [interleaving fixture](https://github.com/abruption/codex-unlock/blob/3b89057c37e6a7028f88c7bef39c6eae9604c639/scripts/fixtures/attribution-interleaving/README.md)
 also demonstrates an eligible synthetic Codex-looking **nonholder** when a
 holder is deliberately omitted from discovery. That latter experiment injects
 omission and sends no signal; it is not a reproduction of an actual Codex

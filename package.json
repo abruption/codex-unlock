@@ -34,6 +34,7 @@
     "docs/cli-reference.md",
     "docs/json-v1.md",
     "docs/maintainer-release.md",
+    "docs/macos-lock-attribution.md",
     "docs/platform-support.md",
     "docs/safety-race-matrix.md",
     "docs/update-security.md",
