@@ -1,0 +1,71 @@
+name: Windows fixture compile
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  compile-only:
+    name: Windows PowerShell 5.1 fixture syntax and compile
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Parse orchestrator without executing it
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($PSVersionTable.PSVersion.Major -ne 5) {
+            throw 'This gate requires Windows PowerShell 5.1'
+          }
+          $tokens = $null
+          $parseErrors = $null
+          $path = Join-Path $env:GITHUB_WORKSPACE 'experimental/windows-fixture/lab.ps1'
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            $path, [ref]$tokens, [ref]$parseErrors
+          )
+          if ($parseErrors.Count -gt 0) {
+            $parseErrors | ForEach-Object { Write-Error $_.Message }
+            throw 'Fixture script has syntax errors'
+          }
+          Write-Output 'PowerShell syntax checked; orchestrator was not executed.'
+          # Define only the pure path predicate; never dot-source the orchestrator.
+          $inside = $ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+              $node.Name -eq 'Test-Inside'
+          }, $true)
+          if ($null -eq $inside) { throw 'Missing result-path predicate' }
+          . ([scriptblock]::Create($inside.Extent.Text))
+          $cases = @(
+            @{ Path = 'C:\Temp\Lab\results.jsonl'; Root = 'C:\Temp\Lab'; Expected = $true },
+            @{ Path = 'c:\TEMP\lab\results.jsonl'; Root = 'C:\Temp\Lab'; Expected = $true },
+            @{ Path = 'C:\Temp\Lab-other\results.jsonl'; Root = 'C:\Temp\Lab'; Expected = $false },
+            @{ Path = 'C:\Temp\Lab'; Root = 'C:\Temp\Lab\'; Expected = $true },
+            @{ Path = '\\server\share\Lab\results.jsonl'; Root = '\\server\share\Lab'; Expected = $true }
+          )
+          foreach ($case in $cases) {
+            $observed = Test-Inside $case.Path $case.Root
+            if ($observed -ne $case.Expected) { throw 'Result-path boundary regression' }
+          }
+          Write-Output 'Result-path case/boundary checks passed without filesystem access.'
+      - name: Compile native declarations without calling them
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = Join-Path $env:GITHUB_WORKSPACE 'experimental/windows-fixture/WinLockLab.cs'
+          Add-Type -Path $path
+          $methods = [WinLockLab].GetMethods() | Select-Object -ExpandProperty Name
+          foreach ($expected in 'Execute', 'GuardProbe', 'ProcessIdentity', 'RmList') {
+            if ($methods -notcontains $expected) {
+              throw "Missing expected fixture method: $expected"
+            }
+          }
+          Write-Output 'C# declarations compiled; no fixture or native API method was called.'

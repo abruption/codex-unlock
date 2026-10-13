@@ -152,7 +152,9 @@ result into `unknown` (`thread_unlock_failed` or `guard_unlock_failed`).
 ## E3 cases
 
 The steps are `none`, `holder`, `holder+opener`, `holder+opener+self`,
-`opener_only`, and `after_holder_exit:0..4`, each followed by a guarded probe.
+`opener_only`, and `after_holder_exit:0..4`. Guarded probes follow the
+`after_holder_exit` observations; the earlier steps record Restart Manager
+results with explicitly recorded setup conditions.
 
 - Each entry is labelled by PID and start time as `writer`, `opener`,
   `prober` (self), `orchestrator`, or `other`.
@@ -191,14 +193,15 @@ Liveness is checked again after identity collection. `WAIT_FAILED` is
 ## Static gate (separate from a fixture run)
 
 `check.ps1` parses `lab.ps1` and `check.ps1` and compiles `WinLockLab.cs` with
-`Add-Type`. It creates no files, starts no agents, and takes no locks.
+`Add-Type`. It creates no fixture files, starts no agents, and takes no locks.
+The compiler may create its own temporary build files.
 
-A minimal CI gate is proposed but not added. It would be a `windows-latest`
-job running
-`powershell -NoProfile -NonInteractive -File experimental/windows-fixture/check.ps1`.
-GitHub-hosted runners use the `RemoteSigned` or `Unrestricted` policy
-(unverified). That gate proves parse and compile only. It is not evidence about
-lock semantics and does not replace a fixture run on a real host.
+The separate `Windows fixture compile` workflow uses `windows-2022` and its
+Windows PowerShell 5.1 shell to parse the orchestrator, exercise only its pure
+path-boundary predicate, and compile the native declarations without calling
+them. It does not run the fixture, change execution policy, or establish lock
+semantics. A passed compile gate does not replace the planned fixture run on
+the designated real host.
 
 macOS has no PowerShell or C# toolchain here, so neither script has been
 parsed or compiled yet.
