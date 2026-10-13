@@ -41,6 +41,14 @@ this does not implement or prove graceful shutdown of Codex on Windows. The
 fixture harness is intended for a private scratch directory, not hostile native
 paths. There is no production-grade ACL/reparse-point/identity adapter yet.
 
+Command-receive waits use a ten-second monotonic budget; the parent also bounds
+its response/exit waits. This is not a hard wall-clock limit for blocking file
+I/O, stdout writes, or a suspended process. A stalled fixture can retain its
+fixture locks until it exits. Initialization failures before the child reports
+its directory, or an unconfirmed child exit, can leave disposable files in the
+scratch parent. Failure cleanup deliberately avoids guessing paths or deleting
+unknown entries; inspect any remaining lab directory before removing it.
+
 `Rust experiment` CI runs on Ubuntu 24.04 x64, macOS 15 arm64, and Windows
 Server 2022 x64 with the pinned toolchain. Passing these jobs is evidence for
 these synthetic fixtures only, not support for native Windows Codex, every

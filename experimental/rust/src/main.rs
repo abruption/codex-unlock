@@ -109,8 +109,8 @@ fn say(message: &str) -> io::Result<()> {
     io::stdout().flush()
 }
 
-// Internal owner creates its OWN fresh directory. Arguments never identify an
-// existing lock or home. Even if its parent disappears it releases after LIMIT.
+// Internal owner creates its OWN fresh directory, never an existing lock/home.
+// LIMIT bounds command-receive waits, not blocking file I/O or stdout writes.
 fn fixture_owner(root: &Path) -> io::Result<()> {
     let deadline = Instant::now() + LIMIT;
     let dir = create_fixture(root)?;
