@@ -43,6 +43,16 @@ coordination protocol. See the [probe contract](docs/cli-reference.md#native-coo
 
 ## Process identity assumptions
 
+Process identity and lock attribution are distinct. The actual OS probe
+establishes held/free independently of lsof, which reports visible openers.
+A unique stable opener is not proof that this process holds the flock:
+clean discovery can omit the actual holder. Current recovery policy retains
+that correlation assumption; known-error refusal does not eliminate silent
+omission or make the selected process an OS-proven holder. See the
+[macOS attribution decision proposal](docs/macos-lock-attribution.md), including
+its bounded synthetic evidence and pending human policy decision. Post-signal
+checks cannot undo a wrong-target signal.
+
 Start-time revalidation uses a second-resolution `ps lstart` sample followed by
 numeric PID SIGTERM. It does not atomically bind the signal to that process
 instance. Rapid PID reuse and changes in Linux wall-clock/boot-time interpretation

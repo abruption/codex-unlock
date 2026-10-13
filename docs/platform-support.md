@@ -40,6 +40,14 @@ platform smoke test that verifies all of the following on the runner itself:
 The test does not signal the owner through the unlock path. It terminates its
 own fixture during cleanup after evidence collection.
 
+This matrix proves the tested lock detection and opener-correlation paths,
+not complete process visibility or unique actual-flock-holder attribution.
+On macOS a held probe and one stable visible opener can still identify a
+nonholder if the actual holder is omitted. See the
+[macOS attribution decision proposal](macos-lock-attribution.md) for measured
+limits and the human-review gates for a stronger contract. It changes no
+current platform support or runtime policy.
+
 ## Diagnostic command execution
 
 Process evidence is collected with the same rules on every supported platform:
