@@ -86,6 +86,7 @@ export interface ProcessStartObservation {
 
 export interface ProcessInfo {
   startTicks?: string;
+  commandFingerprint?: string;
   pid: number;
   ppid: number | null;
   uid: number | null;

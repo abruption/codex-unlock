@@ -101,7 +101,11 @@ export function guardedProbeOnce(
             guard: { status: "acquired", attempts: 1 },
           };
           if (result.status === "held" && attributeHeld) {
-            result.participation = attributeHeld();
+            try { result.participation = attributeHeld(); }
+            catch (error) {
+              result = { status: "unknown", method: "flock_exclusive_nonblocking",
+                guard: { status: "acquired", attempts: 1 }, error: `linux_participation_unproven:${errorText(error)}` };
+            }
             if (!sameSnapshot(observation.snapshot, observeLockFile(lockPath).snapshot)) {
               throw new Error("linux_target_changed");
             }

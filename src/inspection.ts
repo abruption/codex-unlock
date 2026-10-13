@@ -38,7 +38,8 @@ function sameProcessIdentity(
     before[0].pid === after[0].pid &&
     before[0].startTime !== null &&
     before[0].startTime === after[0].startTime
-    && (process.platform !== "linux" || (before[0].startTicks !== undefined && before[0].startTicks === after[0].startTicks))
+    && (process.platform !== "linux" || (before[0].startTicks !== undefined && before[0].startTicks === after[0].startTicks &&
+      before[0].commandFingerprint !== undefined && before[0].commandFingerprint === after[0].commandFingerprint))
   );
 }
 
@@ -138,8 +139,9 @@ export async function inspectThread(
     try {
       if (openers.error || openers.processes.length !== 1) throw new Error("linux_candidate_ambiguous");
       const candidate = openers.processes[0];
-      const prepared = prepareLinuxParticipation(candidate.pid);
-      if (!candidate.startTicks || prepared.startTicks !== candidate.startTicks) throw new Error("linux_identity_changed");
+      const prepared = prepareLinuxParticipation(candidate.pid, lockPath);
+      if (!candidate.startTicks || prepared.startTicks !== candidate.startTicks ||
+        !candidate.commandFingerprint || prepared.commandFingerprint !== candidate.commandFingerprint) throw new Error("linux_identity_changed");
       // Attribute only the ORIGINAL inspected inode. The existing native
       // thread probe validates this snapshot against path and opened FD.
       const fresh = observeLockFile(lockPath);

@@ -3,12 +3,13 @@ import process from 'node:process';
 import { URL } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
+import { Buffer } from 'node:buffer';
 import { test } from 'node:test';
 import { mkdtempSync, writeFileSync, openSync, closeSync, rmSync, readFileSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { flockSync } from 'fs-ext-extra-prebuilt';
-import { assertProcNamespace, parseFlockRows, parseStartTicks, prepareLinuxParticipation, verifyLinuxParticipation } from '../dist/linux-attribution.js';
+import { assertProcNamespace, filterCandidateDescriptors, fingerprintCommand, parseFlockRows, parseStartTicks, prepareLinuxParticipation, verifyLinuxParticipation } from '../dist/linux-attribution.js';
 import { guardedProbeOnce } from '../dist/native-coordination.js';
 import { observeLockFile } from '../dist/lock.js';
 
@@ -23,6 +24,25 @@ test('granted flock rows preserve inode precision and ignore acquisition PID', (
   assert.throws(() => parseFlockRows('lock: 1: FLOCK ADVISORY READ 5 00:02:1 0 EOF'));
   const large = (1n << 512n).toString();
   assert.throws(() => parseFlockRows(`lock: 1: FLOCK ADVISORY WRITE 1 00:02:${large} 0 EOF`));
+});
+
+test('readlink-only negative filtering never traverses unrelated FD filesystem targets', () => {
+  const links = new Map([
+    ['/proc/42/fd/1', '/mnt/nfs/unrelated'], ['/proc/42/fd/2', '/mnt/fuse/unrelated'],
+    ['/proc/42/fd/3', '/local/target'], ['/proc/42/fd/4', 'socket:[123]'],
+  ]);
+  const read = (path) => links.get(path);
+  assert.deepEqual(filterCandidateDescriptors(42, ['1','2','3','4'], '/local/target', Infinity, read), ['3']);
+  links.set('/proc/42/fd/3', '/local/target (deleted)');
+  assert.throws(() => filterCandidateDescriptors(42, ['3'], '/local/target', Infinity, read), /target_deleted/);
+  assert.throws(() => filterCandidateDescriptors(42, ['1'], '/local/target', -Infinity, read), /budget/);
+});
+
+test('command fingerprint changes on same-PID image/argv changes and preserves raw bytes', () => {
+  const a = fingerprintCommand(Buffer.from([1, 0, 0xff]), '/usr/bin/codex');
+  assert.match(a, /^[0-9a-f]{64}$/);
+  assert.notEqual(a, fingerprintCommand(Buffer.from([1, 0, 0xfe]), '/usr/bin/codex'));
+  assert.notEqual(a, fingerprintCommand(Buffer.from([1, 0, 0xff]), '/usr/bin/other'));
 });
 
 test('positive attribution callback cannot bind a replacement inode to an old snapshot', () => {
@@ -65,7 +85,7 @@ test('real native guard refuses a nonlocking candidate while another description
   const closed = once(child, 'close');
   try {
     await once(child.stdout, 'data');
-    const prepared = prepareLinuxParticipation(child.pid);
+    const prepared = prepareLinuxParticipation(child.pid, path);
     let signals = 0;
     const original = process.kill;
     let result;
@@ -74,6 +94,7 @@ test('real native guard refuses a nonlocking candidate while another description
       result = guardedProbeOnce(path, undefined, undefined, () => verifyLinuxParticipation(path, prepared));
     } finally { process.kill = original; }
     assert.equal(result.status, 'unknown');
+    assert.equal(result.guard.status, 'acquired');
     assert.equal(signals, 0);
     assert.equal(guardedProbeOnce(path).status, 'held');
   } finally {
@@ -105,12 +126,12 @@ test('Linux real FLOCK participates; open-but-unlocked descriptor does not', { s
   const fd = openSync(path, 'r');
   try {
     flockSync(fd, 'exnb');
-    const prepared = prepareLinuxParticipation(process.pid);
+    const prepared = prepareLinuxParticipation(process.pid, path);
     // Proc files on unsupported CI filesystems refuse rather than guessing.
     let evidence;
     try { evidence = verifyLinuxParticipation(path, prepared); }
     catch (error) {
-      if (error.message === 'linux_filesystem_unsupported') { t.skip('actual filesystem mapping unsupported; positive evidence unverified'); return; }
+      if (error.message === 'linux_filesystem_unsupported' && !process.env.CI) { t.skip('actual filesystem mapping unsupported; positive evidence unverified'); return; }
       throw error;
     }
     assert.equal(evidence.pid, process.pid);
@@ -118,7 +139,7 @@ test('Linux real FLOCK participates; open-but-unlocked descriptor does not', { s
     const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
       import {prepareLinuxParticipation,verifyLinuxParticipation} from ${JSON.stringify(new URL('../dist/linux-attribution.js', import.meta.url).href)};
       import process from 'node:process';
-      console.log(JSON.stringify(verifyLinuxParticipation(process.argv[1],prepareLinuxParticipation(process.pid))));
+      console.log(JSON.stringify(verifyLinuxParticipation(process.argv[1],prepareLinuxParticipation(process.pid,process.argv[1]))));
     `, path], { stdio: ['ignore', 'pipe', 'pipe', fd], encoding: 'utf8', timeout: 5000 });
     assert.equal(child.status, 0, child.stderr);
     const inherited = JSON.parse(child.stdout);
@@ -130,7 +151,7 @@ test('Linux real FLOCK participates; open-but-unlocked descriptor does not', { s
       import process from 'node:process';
       const fd=openSync(process.argv[1],'r');
       try {
-        try { verifyLinuxParticipation(process.argv[1],prepareLinuxParticipation(process.pid)); process.exitCode=1; }
+        try { verifyLinuxParticipation(process.argv[1],prepareLinuxParticipation(process.pid,process.argv[1])); process.exitCode=1; }
         catch(error) { console.log(error.message); }
       } finally {closeSync(fd);}
     `, path], { encoding: 'utf8', timeout: 5000 });
@@ -140,8 +161,10 @@ test('Linux real FLOCK participates; open-but-unlocked descriptor does not', { s
     try { assert.throws(() => flockSync(competing, 'exnb')); } finally { closeSync(competing); }
     assert.equal(readFileSync(path, 'utf8'), '');
     assert.throws(() => verifyLinuxParticipation(path, { ...prepared, startTicks: '0' }));
+    assert.throws(() => verifyLinuxParticipation(path, { ...prepared, commandFingerprint: '0'.repeat(64) }), /identity_changed/);
+    assert.throws(() => verifyLinuxParticipation(path, { ...prepared, mountNamespace: 'mnt:[0]' }), /identity_changed/);
     assert.throws(() => verifyLinuxParticipation(path, { ...prepared, descriptors: [] }), /identity_changed/);
     flockSync(fd, 'un');
-    assert.throws(() => verifyLinuxParticipation(path, prepareLinuxParticipation(process.pid)), /linux_participation_unproven/);
+    assert.throws(() => verifyLinuxParticipation(path, prepareLinuxParticipation(process.pid, path)), /linux_participation_unproven/);
   } finally { closeSync(fd); rmSync(root, { recursive: true }); }
 });

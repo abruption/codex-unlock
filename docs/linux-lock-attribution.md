@@ -8,13 +8,24 @@ by a description, not exclusive lifetime control or complete system visibility.
 Existing unique-opener, same-user, process-mode, transcript and lock-set checks
 remain necessary. Multiple visible candidates are refused.
 
-Descriptor names are prepared outside native coordination. Under coordination,
+Opener/identity samples are collected before attribution probes, not atomically
+with those probes. Each later guarded attribution is tied to its original
+inspected file snapshot and sampled process start ticks; changing evidence is
+refused. This does not establish atomic visibility across both sample windows.
+
+Descriptor names and readlink-only candidate paths are prepared outside native
+coordination. Candidate and observer mount namespaces must match. Paths are
+negative filters, never positive lock evidence; unrelated FD targets are not
+statted while holding coordination (they could block on FUSE or NFS). Under coordination,
 the independent nonblocking thread probe must report held; synchronous reads
 then verify the descriptor's actual target, granted lock row and process start
 ticks, rechecking identity and descriptor enumeration afterward. Collection
 allows at most 256 descriptors, 64 KiB per proc file and 25 ms of monotonic
 elapsed time. These are fail-closed budgets, not a hard filesystem I/O deadline.
 No child process, await or signal runs while coordination is held.
+The final budget check occurs after the final target sample, before a positive
+result is returned. Linux CI must execute positive participation fixtures on a
+supported filesystem; unsupported CI storage fails, not silently skips.
 
 Only direct local ext-family, tmpfs and XFS filesystem mappings are accepted.
 Btrfs, overlay, network and FUSE filesystems are unknown; their exposed stat
@@ -25,6 +36,10 @@ the running PID, rejecting a visibly inconsistent proc PID namespace.
 
 Process start ticks are sampled around command/identity collection, across
 inspection samples and in the final synchronous guarded sample before signal.
+An optional SHA-256 command fingerprint of bounded raw argv bytes and the
+executable readlink value is bound to these same samples. It detects observed
+same-PID argv/image changes without statting the executable's filesystem, but
+does not prove that an exec/re-exec never occurred between observations.
 Coordination is released before the existing SIGTERM operation. `kill(pid)`
 still has a residual process-replacement window; this adapter adds no pidfd.
 Hidden references (including mmap, in-flight SCM_RIGHTS and io_uring registered
@@ -33,5 +48,6 @@ transcript verification remain mandatory. This is not owner-cooperative
 release and does not establish Windows or macOS positive attribution.
 
 JSON v1 adds optional `owner.startTicks` and
-`lock.probe.participation` (`pid`, `startTicks`, `descriptor`). Consumers must
+`owner.commandFingerprint` and `lock.probe.participation`
+(`pid`, `startTicks`, `descriptor`). Consumers must
 not interpret participation as independent permission to terminate a process.

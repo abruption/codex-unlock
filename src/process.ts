@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { access, lstat, readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
-import { linuxStartTicks } from "./linux-attribution.js";
+import { linuxCommandFingerprint, linuxStartTicks } from "./linux-attribution.js";
 
 import type { ProcessInfo, ProcessStartObservation } from "./types.js";
 import {
@@ -505,8 +505,12 @@ export async function inspectProcess(
   candidate: LsofProcess,
 ): Promise<ProcessInfo> {
   let startTicks: string | undefined;
+  let commandFingerprint: string | undefined;
   if (process.platform === "linux") {
-    try { startTicks = linuxStartTicks(candidate.pid); } catch { /* Fail closed below. */ }
+    try {
+      startTicks = linuxStartTicks(candidate.pid);
+      commandFingerprint = linuxCommandFingerprint(candidate.pid);
+    } catch { /* Fail closed below. */ }
   }
   const [ppidField, uidField, startTime, ttyField, commandField, argumentsField, cwd, commandLine] =
     await Promise.all([
@@ -536,8 +540,11 @@ export async function inspectProcess(
   const errors: string[] = [];
   if (process.platform === "linux") {
     try {
-      if (!startTicks || linuxStartTicks(candidate.pid) !== startTicks) throw new Error("changed");
-    } catch { errors.push("linux_process_instance_unverified"); startTicks = undefined; }
+      if (!startTicks || !commandFingerprint || linuxStartTicks(candidate.pid) !== startTicks ||
+        linuxCommandFingerprint(candidate.pid) !== commandFingerprint) throw new Error("changed");
+    } catch {
+      errors.push("linux_process_instance_unverified"); startTicks = undefined; commandFingerprint = undefined;
+    }
   }
   if (ppid === null) errors.push(`ppid_${ppidField.status}${ppidField.error ? `:${ppidField.error}` : ""}`);
   if (uid === null) errors.push(`uid_${uidField.status}${uidField.error ? `:${uidField.error}` : ""}`);
@@ -548,6 +555,7 @@ export async function inspectProcess(
 
   return {
     ...(startTicks ? { startTicks } : {}),
+    ...(commandFingerprint ? { commandFingerprint } : {}),
     pid: candidate.pid,
     ppid,
     uid,

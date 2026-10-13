@@ -75,6 +75,7 @@
         "uid": { "type": ["integer", "null"], "minimum": 0 },
         "startTime": { "type": ["string", "null"] },
         "startTicks": { "type": "string", "pattern": "^[0-9]+$" },
+        "commandFingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "tty": { "type": ["string", "null"] },
         "command": { "type": ["string", "null"] },
         "arguments": { "type": ["string", "null"] },
