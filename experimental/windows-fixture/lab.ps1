@@ -346,12 +346,13 @@ try {
     [IO.File]::WriteAllBytes($data, [byte[]](1..16))
     $empty = Join-Path $d 'empty.bin'
     [IO.File]::WriteAllBytes($empty, [byte[]]@())
-    foreach ($case in @(@($data, @{ ok = $false; win32 = 33 }), @($empty, $null))) {
+    foreach ($case in @(@($data, @{ ok = $false; win32 = 33 }), @($empty, @{ ok = $false; win32 = 33 }))) {
         $leaf = Split-Path $case[0] -Leaf
         Setup 'E1' "read:${leaf}:open_writer" $W @('open', 't', $case[0], 'rwd', 'nofollow')
         Setup 'E1' "read:${leaf}:lock_writer" $W @('lock', 't', 'rust')
         Setup 'E1' "read:${leaf}:open_reader" $P @('open', 'r', $case[0], 'rwd', 'nofollow')
-        # Empty-file result is recorded only: zero bytes at EOF must not be read as a lock violation.
+        # The Windows 10 NTFS fixture returned lock violation even for an empty file.
+        # Require an actual error 33, never infer a violation from a zero-byte EOF read.
         Record 'E1' "read_locked:$leaf" $case[1] (Invoke-Agent $P @('read', 'r', '16'))
         Setup 'E1' "read:${leaf}:close_reader" $P @('close', 'r')
         Setup 'E1' "read:${leaf}:close_writer" $W @('close', 't')

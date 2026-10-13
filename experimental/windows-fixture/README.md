@@ -157,7 +157,7 @@ that are expected to report success. Those steps show the test condition held.
 | `share:rwd:delete_while_prober_open` | prober open with `FILE_SHARE_DELETE` | recorded only (POSIX vs pending delete may differ by build) |
 | `share:*:exists_after_last_close`, `delete_after_last_close` | after the last handle closes | recorded only. A failure here is not attributed to share mode |
 | `read_locked:data.bin` | 16 bytes written before locking | `ERROR_LOCK_VIOLATION` (33) |
-| `read_locked:empty.bin` | empty file | recorded only. Zero bytes at EOF must not be classified as a violation |
+| `read_locked:empty.bin` | empty file under the whole-range lock | `ok=false`, `win32=33`, as observed on Windows 10 NTFS. A successful zero-byte EOF read is not a lock violation and would be a hypothesis mismatch |
 | `thread_is_directory` | directory named like the thread lock | `unknown` |
 | `junction:nofollow` / `junction:follow_control` | lock directory is a junction | `unknown` comes only from the probe's explicit no-follow policy. The control shows plain `CreateFileW` follows the junction and reports `free` |
 | `guard_sharing_violation` | guard opened with share `0` | `unknown/guard_open/32` |
@@ -199,7 +199,7 @@ Liveness is checked again after identity collection. `WAIT_FAILED` is
 - **No-go:**
   - any mismatch
   - a setup step that failed
-  - an empty-file read classified as a violation
+  - a successful zero-byte EOF read misclassified as a lock violation
   - the junction case resolving without the explicit policy
   - any agent left running
 - Results describe only the observed token and integrity level (for example,
@@ -215,10 +215,33 @@ The compiler may create its own temporary build files.
 
 The separate `Windows fixture compile` workflow uses `windows-2022` and its
 Windows PowerShell 5.1 shell to parse the orchestrator, exercise only its pure
-path-boundary predicate, and compile the native declarations without calling
+path-boundary predicate and budget validation/clamping, and compile the native declarations without calling
 them. It does not run the fixture, change execution policy, or establish lock
 semantics. A passed compile gate does not replace the planned fixture run on
 the designated real host.
 
-macOS has no PowerShell or C# toolchain here, so neither script has been
-parsed or compiled yet.
+## Recorded designated-host observations (2026-10-13)
+
+Two synthetic runs used commits `6a8b00e` and `b363316` on Windows 10 build
+19045, PowerShell 5.1, NTFS, and a High-integrity SSH token. Their original
+JSONL hashes and records were independently checked:
+
+| Input commit | JSONL SHA-256 | Records | Recorded verdicts |
+| --- | --- | --- | --- |
+| `6a8b00e` | `27c9543dc0e6bee757131b907f060e55b77da88079e3348e3e940cc8ccb0b506` | 102 | 81 match, 20 recorded, 1 error |
+| `b363316` | `61abeb591e4e4153dba60c87976257ab5e04e80be990564b9c5d8de7a5ec70e6` | 102 | 81 match, 20 recorded, 1 error |
+
+Both error records are `read_locked:empty.bin` with `ok=false`, `win32=33`.
+The old script had no hypothesis for that step and classified this native
+observation as an infrastructure error. The current expectation explicitly
+checks error 33; it does not alter either historical result or imply the
+updated script has been rerun. All records have `safeToUnlock=false`, and
+the five agent-stop records in each run report exit code 0.
+
+The operator reported parser/compile success for both runs, an unmeasured
+orchestrator exit status for the first run, and remotely captured exit 2 for
+the second. Those command statuses and remote cleanup were not independently
+captured by this reviewer. The runs do not establish production Windows
+support, actual Codex interoperability, Medium-integrity behavior, ReFS, or
+forced-termination behavior. Raw records include local account identifiers
+and are not published here.

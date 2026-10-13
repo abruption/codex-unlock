@@ -90,6 +90,22 @@ jobs:
           $Clock.ElapsedMilliseconds = 0
           if ((Remaining ([int]::MaxValue)) -ne [int]::MaxValue) { throw 'Budget integer bound failed' }
           Write-Output 'Budget parameter and monotonic-clamp checks passed without fixture execution.'
+          $verdictFunction = $ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+              $node.Name -eq 'Test-Expect'
+          }, $true)
+          if ($null -eq $verdictFunction) { throw 'Missing verdict predicate' }
+          . ([scriptblock]::Create($verdictFunction.Extent.Text))
+          $expect = @{ ok = $false; win32 = 33 }
+          if ((Test-Expect ([pscustomobject]@{ ok = $false; win32 = 33 }) $expect) -ne 'match') {
+            throw 'Observed lock violation must match the explicit hypothesis'
+          }
+          if ((Test-Expect ([pscustomobject]@{ ok = $true; bytes = 0 }) $expect) -ne 'mismatch') {
+            throw 'Successful empty EOF must not count as a lock violation'
+          }
+          if ((Test-Expect $null $expect) -ne 'incomplete') { throw 'Missing observation must remain incomplete' }
+          Write-Output 'Pure lock-read verdict cases passed without native calls.'
       - name: Compile native declarations without calling them
         shell: powershell
         run: |
