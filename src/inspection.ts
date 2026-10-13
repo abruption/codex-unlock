@@ -136,8 +136,10 @@ export async function inspectThread(
   // to both process-instance samples under the existing native coordination.
   for (const [probe, openers, observedLock] of [[probeBefore, openersBefore, lockBefore], [probeAfter, openersAfter, lockAfter]] as const) {
     if (process.platform !== "linux" || probe.status !== "held") continue;
+    // Invalid opener discovery already blocks classification and policy. Keep
+    // the independent OS held result; it is not a process-visibility result.
+    if (openers.error || openers.processes.length !== 1) continue;
     try {
-      if (openers.error || openers.processes.length !== 1) throw new Error("linux_candidate_ambiguous");
       const candidate = openers.processes[0];
       const prepared = prepareLinuxParticipation(candidate.pid, lockPath);
       if (!candidate.startTicks || prepared.startTicks !== candidate.startTicks ||
