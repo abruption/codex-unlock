@@ -1,7 +1,8 @@
 // Fixture-only Windows lock observation helpers for codex-unlock research (#122).
-// Loaded by lab.ps1 through Add-Type. It never terminates, signals, or deletes
-// anything outside the scratch directory the orchestrator created. Every result
-// is observation evidence only; nothing here authorizes recovery.
+// Loaded by lab.ps1 through Add-Type. It never terminates or signals a process.
+// Agent path arguments are restricted lexically to the validated scratch root
+// (see Scoped). Every result is observation evidence only; nothing here
+// authorizes recovery.
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -19,6 +20,7 @@ public static class WinLockLab
     const uint GENERIC_WRITE = 0x40000000;
     const uint FILE_SHARE_READ = 1, FILE_SHARE_WRITE = 2, FILE_SHARE_DELETE = 4;
     const uint OPEN_EXISTING = 3, CREATE_NEW = 1;
+    const uint FILE_READ_ATTRIBUTES = 0x80;
     const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
     const uint FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
     const uint FILE_ATTRIBUTE_DIRECTORY = 0x10;
@@ -67,6 +69,11 @@ public static class WinLockLab
 
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool CloseHandle(IntPtr h);
+
+    const uint WAIT_OBJECT_0 = 0, WAIT_TIMEOUT = 0x102;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern uint WaitForSingleObject(IntPtr h, uint ms);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool GetProcessTimes(IntPtr h, out long create, out long exit, out long kernel, out long user);
@@ -140,7 +147,8 @@ public static class WinLockLab
         foreach (char c in s)
         {
             if (c == '"' || c == '\\') b.Append('\\').Append(c);
-            else if (c < 0x20) b.AppendFormat("\\u{0:x4}", (int)c);
+            // ASCII-only output: localized Win32 messages must survive any console code page.
+            else if (c < 0x20 || c > 0x7e) b.AppendFormat("\\u{0:x4}", (int)c);
             else b.Append(c);
         }
         return b.Append('"').ToString();
@@ -240,24 +248,50 @@ public static class WinLockLab
             int g = TryLock(guard, "rust");
             if (g == ERROR_LOCK_VIOLATION) return Ok("\"state\":\"unknown\",\"reason\":\"busy_guard\"");
             if (g != 0) return Ok("\"state\":\"unknown\",\"reason\":\"guard_lock_error\",\"win32\":" + g);
-            string result;
-            using (var t = OpenRaw(Path.Combine(dir, thread), "rwd", noFollow, out err))
+            string result = null;
+            int gu = -1;
+            try
             {
-                if (t.IsInvalid)
-                    result = err == 2 ? "\"state\":\"absent\"" : "\"state\":\"unknown\",\"reason\":\"thread_open\",\"win32\":" + err;
-                else if (noFollow && (IsReparse(t, out err) || (Attributes(t) & FILE_ATTRIBUTE_DIRECTORY) != 0))
-                    result = "\"state\":\"unknown\",\"reason\":\"thread_not_regular\",\"win32\":" + err;
-                else
-                {
-                    int r = TryLock(t, "rust");
-                    if (r == 0) { int u = Unlock(t, "rust"); result = "\"state\":\"free\",\"unlockWin32\":" + u; }
-                    else if (r == ERROR_LOCK_VIOLATION) result = "\"state\":\"held\"";
-                    else result = "\"state\":\"unknown\",\"reason\":\"thread_lock_error\",\"win32\":" + r;
-                    if (r == 0 || r == ERROR_LOCK_VIOLATION) result += "," + Identity(t);
-                }
+                result = ThreadProbe(Path.Combine(dir, thread), noFollow);
             }
-            int gu = Unlock(guard, "rust");
-            return Ok(result + ",\"guardUnlockWin32\":" + gu);
+            catch (Exception e)
+            {
+                result = "\"state\":\"unknown\",\"reason\":\"probe_exception\",\"exception\":" + J(e.GetType().Name + ": " + e.Message);
+            }
+            finally
+            {
+                // Released on every path, including exceptions from identity/serialization.
+                gu = Unlock(guard, "rust");
+            }
+            if (gu != 0)
+                return Ok("\"state\":\"unknown\",\"reason\":\"guard_unlock_failed\",\"win32\":" + gu + ",\"inner\":{" + result + "}");
+            return Ok(result);
+        }
+    }
+
+    static string ThreadProbe(string path, bool noFollow)
+    {
+        int err;
+        using (var t = OpenRaw(path, "rwd", noFollow, out err))
+        {
+            if (t.IsInvalid)
+                return err == 2 ? "\"state\":\"absent\"" : "\"state\":\"unknown\",\"reason\":\"thread_open\",\"win32\":" + err;
+            if (noFollow && (IsReparse(t, out err) || (Attributes(t) & FILE_ATTRIBUTE_DIRECTORY) != 0))
+                return "\"state\":\"unknown\",\"reason\":\"thread_not_regular\",\"win32\":" + err;
+            int r = TryLock(t, "rust");
+            if (r == ERROR_LOCK_VIOLATION) return "\"state\":\"held\"," + Identity(t);
+            if (r != 0) return "\"state\":\"unknown\",\"reason\":\"thread_lock_error\",\"win32\":" + r;
+            string id;
+            try { id = Identity(t); }
+            finally
+            {
+                int u = Unlock(t, "rust");
+                // A probe lock we cannot release makes the observation unusable.
+                if (u != 0) id = null;
+                if (u != 0) err = u;
+            }
+            if (id == null) return "\"state\":\"unknown\",\"reason\":\"thread_unlock_failed\",\"win32\":" + err;
+            return "\"state\":\"free\"," + id;
         }
     }
 
@@ -308,19 +342,28 @@ public static class WinLockLab
     }
 
     // Identity evidence through one process handle. expectedStart is the
-    // creation FILETIME recorded earlier; a mismatch or missing handle is unknown.
+    // creation FILETIME recorded earlier. A process object can outlive the
+    // process (any open handle keeps it), so liveness comes from waiting on the
+    // same handle; the exit code (STILL_ACTIVE = 259) is never used as proof.
     public static string ProcessIdentity(int pid, long expectedStart)
     {
         IntPtr h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, false, pid);
         if (h == IntPtr.Zero) return Ok("\"state\":\"unknown\",\"reason\":\"open_process\",\"win32\":" + Marshal.GetLastWin32Error());
         try
         {
+            uint w = WaitForSingleObject(h, 0);
+            if (w == WAIT_OBJECT_0) return Ok("\"state\":\"exited\"");
+            if (w != WAIT_TIMEOUT) return Ok("\"state\":\"unknown\",\"reason\":\"wait_failed\",\"wait\":" + w + ",\"win32\":" + Marshal.GetLastWin32Error());
             long create, exit, k, u;
             if (!GetProcessTimes(h, out create, out exit, out k, out u))
                 return Ok("\"state\":\"unknown\",\"reason\":\"process_times\",\"win32\":" + Marshal.GetLastWin32Error());
             string sid = TokenSid(h);
             string self = WindowsIdentity.GetCurrent().User.Value;
-            string state = create != expectedStart ? "identity_changed" : sid == null ? "unknown" : sid == self ? "same_user" : "other_user";
+            string state = create != expectedStart ? "identity_changed" : sid == null ? "unknown" : sid == self ? "live_same_user" : "other_user";
+            // Re-check liveness on the same handle after collecting identity.
+            uint w2 = WaitForSingleObject(h, 0);
+            if (w2 == WAIT_OBJECT_0) state = "exited";
+            else if (w2 != WAIT_TIMEOUT) state = "unknown";
             return Ok("\"state\":\"" + state + "\",\"createFiletime\":" + create + ",\"sid\":" + J(sid) + ",\"selfSid\":" + J(self));
         }
         finally { CloseHandle(h); }
@@ -354,6 +397,58 @@ public static class WinLockLab
         return GetProcessTimes(Process.GetCurrentProcess().Handle, out create, out exit, out k, out u) ? create : -1;
     }
 
+    // Directory identity without following reparse points; null when the path
+    // is missing, unreadable, a reparse point, or not a directory.
+    public static string DirFileId(string path)
+    {
+        using (var d = CreateFileW(path, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            IntPtr.Zero, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, IntPtr.Zero))
+        {
+            if (d.IsInvalid) return null;
+            uint attrs = Attributes(d);
+            if (attrs == uint.MaxValue || (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0 || (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0) return null;
+            FILE_ID_INFO id;
+            if (!GetFileIdInfo(d, 18, out id, (uint)Marshal.SizeOf(typeof(FILE_ID_INFO)))) return null;
+            return id.VolumeSerialNumber.ToString("x16") + ":" + id.IdHigh.ToString("x16") + id.IdLow.ToString("x16");
+        }
+    }
+
+    // Agents accept paths only under the validated scratch root. The check is
+    // lexical after full-path normalization; it does not stop a reparse point
+    // inside the root from redirecting elsewhere, so the orchestrator creates
+    // only junctions whose targets are inside the root.
+    static string Root;
+
+    public static void SetRoot(string root)
+    {
+        string full = Path.GetFullPath(root).TrimEnd('\\');
+        if (DirFileId(full) == null) throw new InvalidOperationException("scratch root is not a plain directory");
+        Root = full;
+    }
+
+    static string Scoped(string path)
+    {
+        if (Root == null) throw new InvalidOperationException("scratch root not set");
+        string full = Path.GetFullPath(path);
+        if (!full.StartsWith(Root + "\\", StringComparison.OrdinalIgnoreCase))
+            throw new UnauthorizedAccessException("path outside scratch root");
+        return full;
+    }
+
+    static string Leaf(string name)
+    {
+        if (name.Length == 0 || name.IndexOfAny(new[] { '\\', '/', ':' }) >= 0 || name == "." || name == "..")
+            throw new ArgumentException("thread name must be a leaf");
+        return name;
+    }
+
+    // Called when stdin reaches EOF (parent gone) or on "exit".
+    public static void DisposeAll()
+    {
+        foreach (var h in Handles.Values) h.Dispose();
+        Handles.Clear();
+    }
+
     // Line protocol for agent processes. One command in, exactly one JSON line out.
     public static string Execute(string line)
     {
@@ -365,7 +460,7 @@ public static class WinLockLab
                 case "create": // create <path> <bytes>: fixture-owned new file only
                 {
                     int n = int.Parse(a[2]);
-                    using (var h = CreateFileW(a[1], GENERIC_READ | GENERIC_WRITE, 0, IntPtr.Zero, CREATE_NEW, 0, IntPtr.Zero))
+                    using (var h = CreateFileW(Scoped(a[1]), GENERIC_READ | GENERIC_WRITE, 0, IntPtr.Zero, CREATE_NEW, 0, IntPtr.Zero))
                     {
                         if (h.IsInvalid) return Err(Marshal.GetLastWin32Error());
                         using (var fs = new FileStream(h, FileAccess.ReadWrite)) fs.Write(new byte[n], 0, n);
@@ -375,7 +470,8 @@ public static class WinLockLab
                 case "open": // open <slot> <path> <share> <follow|nofollow>
                 {
                     int err;
-                    var h = OpenRaw(a[2], a[3], a[4] == "nofollow", out err);
+                    if (a[4] != "nofollow" && a[4] != "follow") return Err(87);
+                    var h = OpenRaw(Scoped(a[2]), a[3], a[4] == "nofollow", out err);
                     if (h.IsInvalid) return Err(err);
                     Handles[a[1]] = h;
                     return Ok(Identity(h));
@@ -406,13 +502,16 @@ public static class WinLockLab
                     return Ok(null);
                 }
                 case "delete": // delete <path>: DeleteFileW only, scratch paths only
-                    return DeleteFileW(a[1]) ? Ok("\"existsAfter\":" + (File.Exists(a[1]) ? "true" : "false")) : Err(Marshal.GetLastWin32Error());
+                {
+                    string target = Scoped(a[1]);
+                    return DeleteFileW(target) ? Ok("\"existsAfter\":" + (File.Exists(target) ? "true" : "false")) : Err(Marshal.GetLastWin32Error());
+                }
                 case "probe": // probe <dir> <thread> <follow|nofollow>
-                    return GuardProbe(a[1], a[2], a[3]);
+                    return GuardProbe(Scoped(a[1]), Leaf(a[2]), a[3]);
                 case "rm": // rm <path> [path...]
                 {
                     var files = new string[a.Length - 1];
-                    Array.Copy(a, 1, files, 0, files.Length);
+                    for (int i = 0; i < files.Length; i++) files[i] = Scoped(a[i + 1]);
                     return RmList(files);
                 }
                 case "procid": // procid <pid> <expectedStartFiletime>
