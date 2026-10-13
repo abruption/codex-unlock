@@ -23,6 +23,12 @@ installation is not a supported installation path.
 Tests that exercise lock ownership require `lsof` and a host with POSIX advisory
 locks (macOS or Linux).
 
+For dependency updates, follow the maintainer guide's
+[development dependency policy](docs/maintainer-release.md#development-dependency-policy)
+and [runtime pinning rules](docs/maintainer-release.md#runtime-dependency-pinning).
+Development ranges do not override the committed lockfile used by `npm ci`;
+published consumers receive only the separately pinned runtime tree.
+
 ## Implementation boundaries
 
 `inspection` collects stable OS/transcript evidence; `policy` makes a pure
