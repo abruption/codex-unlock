@@ -652,6 +652,32 @@ test("real-lock service modes and uncertain argv refuse unlock without SIGTERM",
   }
 });
 
+test("Linux unknown option without service words refuses a real lock owner without SIGTERM", {
+  skip: process.platform !== "linux",
+}, async (t) => {
+  const codexHome = await mkdtemp(join(tmpdir(), "codex-unlock-grammar-drift-"));
+  const marker = join(codexHome, "signal-received");
+  const owner = await fixture("task_complete", {
+    codexHome,
+    ownerArgs: ["exec", "--cyber-access-program", "standard", "fix bugs"],
+    ownerEnv: { CODEX_FIXTURE_SIGTERM_MARKER: marker },
+  });
+  t.after(async () => await stopChild(owner.child));
+  const result = await runCli([
+    "unlock", THREAD_ID, "--json", "--codex-home", codexHome, "--stability-ms", "250",
+  ]);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(result.code, 2, result.stdout);
+  assert.equal(parsed.inspection.lock.probe.status, "held");
+  assert.equal(parsed.inspection.owner.pid, owner.child.pid);
+  assert.equal(parsed.inspection.owner.isSharedService, false);
+  assert.equal(parsed.inspection.owner.arguments, null);
+  assert.equal(parsed.outcome, "refused");
+  assert.equal(parsed.signalSent, null);
+  assert.equal(owner.child.exitCode, null);
+  await assert.rejects(access(marker), { code: "ENOENT" });
+});
+
 test("ps and lsof on PATH cannot supply process evidence", async (t) => {
   const value = await fixture();
   t.after(async () => await stopChild(value.child));
