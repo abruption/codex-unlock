@@ -276,6 +276,9 @@ fn run() -> io::Result<()> {
         return Ok(());
     }
     if args.len() == 3 && args[1] == "--scratch-root" {
+        if args[2].is_empty() {
+            return Err(io::Error::other("scratch root must not be empty"));
+        }
         if args[0] == "self-test" {
             return self_test(Path::new(&args[2]));
         }
