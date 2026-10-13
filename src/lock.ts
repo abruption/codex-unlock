@@ -85,14 +85,14 @@ export function observeLockDirectory(lockDirectory: string): LockDirectoryObserv
 
 export function observeLockFile(path: string): LockFileObservation {
   try {
-    const value = lstatSync(path);
+    const value = lstatSync(path, { bigint: true });
     const uid = process.getuid?.();
     return {
       status: "present",
       exists: true,
       regularFile: value.isFile(),
       symlink: value.isSymbolicLink(),
-      ownedByCurrentUser: uid === undefined ? null : value.uid === uid,
+      ownedByCurrentUser: uid === undefined ? null : value.uid === BigInt(uid),
       snapshot: publicSnapshot(value),
     };
   } catch (error) {
@@ -156,7 +156,7 @@ export function probeThreadLockOnce(
   try {
     const noFollow = constants.O_NOFOLLOW ?? 0;
     fd = openSync(path, constants.O_RDWR | noFollow | constants.O_NONBLOCK);
-    const value = fstatSync(fd);
+    const value = fstatSync(fd, { bigint: true });
     const opened = publicSnapshot(value);
     if (
       !value.isFile() ||
@@ -179,7 +179,7 @@ export function probeThreadLockOnce(
         error: errorText(error),
       };
     }
-    const after = publicSnapshot(lstatSync(path));
+    const after = publicSnapshot(lstatSync(path, { bigint: true }));
     if (after.device !== opened.device || after.inode !== opened.inode) {
       throw new Error("lock file changed during the probe");
     }
