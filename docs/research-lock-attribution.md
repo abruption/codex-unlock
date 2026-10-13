@@ -98,7 +98,7 @@ sole ownership of a shared description, or behavior on unmeasured platforms.
   PID-namespace filtering. Missing global records do not prove a lock is free.
   [Linux v6.17](https://github.com/torvalds/linux/blob/v6.17/fs/locks.c#L2080)
   preserves an exited flock acquirer's recorded PID in the initial namespace.
-- Linux [fdinfo reporting](https://github.com/torvalds/linux/blob/v6.17/fs/locks.c#L2729)
+- Linux [fdinfo reporting](https://github.com/torvalds/linux/blob/v6.17/fs/locks.c#L2897)
   matches the descriptor's exact file description. Positive candidate FLOCK
   evidence is stronger than matching a global lock row's saved PID to an opener.
   [Procfs FD access](https://man7.org/linux/man-pages/man5/proc_pid_fd.5.html) is
@@ -166,3 +166,67 @@ fixtures, revalidate attribution before signaling, and resolve or explicitly
 review the macOS support/visibility contract. An accepted research-only outcome
 must state these remaining limitations rather than claiming the hypothetical
 visibility condition cannot occur.
+
+## Synthetic inspection interleaving follow-up
+
+The unpublished research fixture in
+[`scripts/fixtures/attribution-interleaving`](../scripts/fixtures/attribution-interleaving/README.md)
+models a transient nonholder that opens a thread file under coordination while
+another synthetic process holds its real flock. A diagnostic override removes
+the actual holder from system `lsof` output. This is an injected visibility
+condition, not a newly measured natural omission or an actual Codex session.
+
+The original result, reported with fixture revision `d5f3cb2`, identifies a visible transient
+as `live_owner` with `safeToUnlock: true`, while a different process holds the
+lock. Its events record failed thread-lock acquisition by the transient and
+the holder-filter operation. Original hashes were independently checked:
+
+- Results: `fbd6a9adce1ed6729f8c56b2d5960540c9d166c62b63159d35c030162c0a5364`
+- Events: `5b53ed3f28147bc05bdbb57b6b8efd3b715e969ddf1aa1f1168423582336f016`
+
+This supports a **synthetic inspection-stage attribution counterexample**.
+It does not establish that an actual Codex session produces the condition,
+that final unlock revalidation passes, or that a wrong-target signal was sent.
+The experiment never calls unlock. Existing real-Codex non-reproduction
+statements remain valid. Original fixture cleanup, readiness and integrity
+checks needed correction before rerunning; earlier records are not rewritten
+or retrospectively promoted to satisfy the amended harness's checks. Those
+records did not pin built `dist` hashes, so their exact build provenance cannot
+be independently established after the fact.
+
+After lifecycle and socket-collision corrections, one local rerun independently
+recorded the same B inspection counterexample, normal exit code 0 for all five
+fixture children, and unchanged bigint identities/content hashes for the three
+homes actually used. Result SHA-256:
+`6b16473a2007dad87cc75f07749993866d93572c2acc4827c25ff7410288c325`.
+The amended output records fixture and built `dist` hashes. A prior amended
+attempt failed during transient startup because its socket collided with a
+scenario directory; that failure is preserved and excluded from successful
+reproduction counts. In the successful amended C control, both openers were
+visible and classification was unknown. Exact refusal reasons can differ with
+coordinator timing; the experiment does not assert a unique C reason.
+
+## Remaining attribution decisions
+
+Linux descriptor evidence establishes participation in a locked open-file
+description, not sole lifetime control over inherited or otherwise shared
+references. The [v6.17 status formatter](https://github.com/torvalds/linux/blob/v6.17/fs/locks.c#L2817)
+prints the inode's superblock device and inode number. Filesystem stat identity
+and that row's identity must not be assumed interchangeable on every
+filesystem. Comparing candidate-FD and target-path stat values alone does not
+validate a separately parsed row. Unsupported identity mappings must stay
+unknown. Use lossless integer identities; numeric Stats can round distinct
+64-bit inode values before they are converted to public strings. The adapter
+design and any snapshot precision fix need separate implementation review.
+
+The studied macOS APIs did not establish a trustworthy positive holder
+primitive. In supplied same-user APFS observations, `F_GETLK` family results
+used PID -1 for flock and `FWASLOCKED` remained set after `LOCK_UN`. A historical
+acquisition bit cannot authorize recovery: a former holder can retain its FD
+while another process holds the lock. This is a bounded observation, not proof
+that no possible API exists on any macOS version or filesystem. Such a bit
+could only be evaluated as a refusal-side filter with explicit kernel-version
+and source/runtime limitations. No filter or support-policy change ships here.
+
+Issue #100 stays open with Linux #126 and macOS #127 as adoption scopes. The
+research result must not be presented as an implemented owner-verification fix.

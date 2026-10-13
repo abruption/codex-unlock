@@ -1,0 +1,109 @@
+#!/usr/bin/env node
+// Synthetic transient non-holder (#100 research). Models the descriptor
+// lifetime of a failed Codex v0.162.1 `WriterLockCoordinator::acquire`:
+// coordination is taken first, the thread file is opened, a nonblocking
+// exclusive flock fails, and the thread file is dropped before coordination.
+// Between `attempt` and `finish` it holds both descriptors, so an independently
+// timed lsof scan can observe it as an opener. It never holds the thread lock.
+// Commands arrive over a Unix socket; stdin EOF ends the process normally.
+import fs from 'node:fs'
+import { createRequire } from 'node:module'
+import net from 'node:net'
+import path from 'node:path'
+import { performance } from 'node:perf_hooks'
+import process from 'node:process'
+import { clearTimeout, setTimeout } from 'node:timers'
+
+const require = createRequire(process.env.FIXTURE_REQUIRE_FROM)
+const { flockSync } = require('fs-ext-extra-prebuilt')
+
+const lockPath = process.env.FIXTURE_LOCK_PATH
+const guardPath = path.join(path.dirname(lockPath), '.coordination.lock')
+const socketPath = process.env.FIXTURE_SOCKET
+const log = (record) => fs.appendFileSync(process.env.FIXTURE_LOG, JSON.stringify({ role: 'transient', pid: process.pid, t: performance.timeOrigin + performance.now(), ...record }) + '\n')
+
+let guard = null
+let thread = null
+let lease = null
+let owner = null
+
+function attempt() {
+  if (guard !== null || thread !== null) throw new Error('attempt already active')
+  guard = fs.openSync(guardPath, 'r')
+  // Real Codex blocks here. This fixture must not: codex-unlock's guarded
+  // probe also takes coordination, and a blocking wait would deadlock both
+  // sides when a barrier request times out with no `finish`.
+  try {
+    flockSync(guard, 'exnb')
+  } catch (error) {
+    fs.closeSync(guard)
+    guard = null
+    if (error.code !== 'EAGAIN' && error.code !== 'EWOULDBLOCK') throw error
+    log({ event: 'attempt', guard: 'busy' })
+    return null
+  }
+  try {
+  thread = fs.openSync(lockPath, 'r+')
+  let acquired = false
+  try {
+    flockSync(thread, 'exnb')
+    acquired = true
+  } catch (error) {
+    if (error.code !== 'EAGAIN' && error.code !== 'EWOULDBLOCK') throw error
+  }
+  // A successful acquisition would make this process a real holder and
+  // invalidate the experiment, so release and report it.
+  if (acquired) flockSync(thread, 'un')
+  log({ event: 'attempt', acquired })
+  lease = setTimeout(() => { finish(); owner?.destroy() }, 1500)
+  return acquired
+  } catch (error) { finish(); throw error }
+}
+
+function finish() {
+  clearTimeout(lease)
+  lease = null
+  // Rust drops the later local (thread file) before the earlier one (guard).
+  const oldThread = thread; thread = null
+  const oldGuard = guard; guard = null
+  try { if (oldThread !== null) fs.closeSync(oldThread) }
+  finally { if (oldGuard !== null) { try { flockSync(oldGuard, 'un') } finally { fs.closeSync(oldGuard) } } }
+  log({ event: 'finish' })
+}
+
+const server = net.createServer((socket) => {
+  if (owner !== null) { socket.end('busy\n'); return }
+  owner = socket
+  socket.setEncoding('utf8')
+  let buffer = ''
+  socket.on('data', (chunk) => {
+    buffer += chunk
+    let newline
+    while ((newline = buffer.indexOf('\n')) >= 0) {
+      const command = buffer.slice(0, newline)
+      buffer = buffer.slice(newline + 1)
+      try { if (command === 'attempt') {
+        const outcome = attempt()
+        socket.write(outcome === null ? 'busy\n' : outcome ? 'acquired\n' : 'inside\n')
+      }
+      else if (command === 'finish') { finish(); socket.write('done\n') }
+      else socket.write('error\n')
+      } catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1; socket.destroy() }
+    }
+  })
+  socket.on('error', () => {})
+  socket.on('close', () => { if (owner === socket) { owner = null; finish() } })
+})
+server.on('error', (error) => { process.stderr.write(`${error.message}\n`); process.exitCode = 1; process.stdin.destroy(); owner?.destroy(); server.close() })
+server.listen(socketPath, () => process.stdout.write('ready\n'))
+process.stdin.resume()
+process.stdin.on('end', () => {
+  finish()
+  owner?.destroy()
+  // Close the listener and unlink the socket path before exiting, so a later
+  // fixture reusing the directory can bind its own socket.
+  server.close(() => {
+    try { fs.unlinkSync(socketPath) } catch { /* already gone */ }
+    process.exit(process.exitCode ?? 0)
+  })
+})
