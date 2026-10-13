@@ -86,6 +86,7 @@ async function main() {
     try {
       barrierReply = await barrierRequest('attempt')
       log({ event: 'barrier_entered', reply: barrierReply })
+      if (barrierReply === 'busy') barrierReply = null
     } catch (error) {
       log({ event: 'barrier_failed', error: error.message })
     }

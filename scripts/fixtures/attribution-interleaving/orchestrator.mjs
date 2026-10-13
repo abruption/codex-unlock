@@ -30,6 +30,10 @@ const DIR = path.dirname(fileURLToPath(import.meta.url))
 const DIST = path.resolve(DIR, '../../../dist')
 const ROOT = path.resolve(DIR, '../../..')
 
+function socketFor(scratch, label) {
+  return path.join(scratch, `${label}.sock`)
+}
+
 async function createHome(scratch, label = 'home') {
   const home = path.join(scratch, label)
   const lockDir = path.join(home, 'thread-writer-locks')
@@ -110,7 +114,6 @@ async function main() {
   await chmod(scratch, 0o700)
   const logFile = path.join(scratch, 'events.jsonl')
   const results = []
-  const socketPath = path.join(scratch, 'transient.sock')
   const { overrideDiagnosticExecutableForTesting } = await import(
     path.join(DIST, 'process.js')
   )
@@ -160,6 +163,7 @@ async function main() {
         FIXTURE_LOCK_PATH: lockPath,
         FIXTURE_REQUIRE_FROM: REQUIRE_FROM,
       })
+      const socketPath = socketFor(scratch, `s${scenarioIndex}`)
       const { child: transient } = await startChild(TRANSIENT_FIXTURE, {
         FIXTURE_LOCK_PATH: lockPath,
         FIXTURE_SOCKET: socketPath,
@@ -210,6 +214,7 @@ async function main() {
         FIXTURE_LOCK_PATH: lockPath,
         FIXTURE_REQUIRE_FROM: REQUIRE_FROM,
       })
+      const socketPath = socketFor(scratch, `s${scenarioIndex}`)
       const { child: transient } = await startChild(TRANSIENT_FIXTURE, {
         FIXTURE_LOCK_PATH: lockPath,
         FIXTURE_SOCKET: socketPath,
