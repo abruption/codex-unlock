@@ -97,7 +97,7 @@ try {
     rustOwnerTsProbe: true, nodeOwnerRustProbe: true, busyAndMissingGuard: "unknown",
     bytesAndMetadataUnchanged: true, productionSupport: false }));
 } finally {
-  // No signals. EOF makes the fixture exit itself; its own total deadline is 10s.
+  // No signals. EOF requests exit; the 10s receive budget cannot stop blocked I/O.
   if (threadFd !== undefined) closeSync(threadFd);
   if (guardFd !== undefined) closeSync(guardFd);
   child.stdin.end();

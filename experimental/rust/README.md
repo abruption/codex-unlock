@@ -73,8 +73,12 @@ release, busy/missing coordination as unknown, and unchanged bytes, inode,
 owner, mode and modification time. Only the harness temporarily renames its
 own coordinator for the missing-file case. No existing Codex files are opened.
 
-Each child has a ten-second total protocol deadline; the harness uses bounded
-waits and EOF for cooperative cleanup, never process signals. The lab-only
+After initialization, child command-receive waits share a ten-second budget;
+the harness limits each response/exit wait to twelve seconds. These budgets do
+not bound blocking I/O or suspended processes. EOF requests cooperative exit.
+Initialization or cleanup errors can leave disposable scratch or obscure the
+original error; cleanup is best effort after confirmed exit, not guaranteed
+recovery. The harness sends no process signals. The lab-only
 `__interop-fixture` command accepts a scratch parent, not an existing lock path.
 The experiment workflow runs this comparison on macOS and Linux. Windows
 retains the Rust-to-Rust fixture test only.
