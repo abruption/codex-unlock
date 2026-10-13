@@ -248,8 +248,8 @@ fn self_test(root: &Path) -> io::Result<()> {
         }
         Ok(())
     })();
-    // Never send OS signals. Child has its own deadline if cooperative release
-    // fails. Only remove the two known fixture files after confirming exit.
+    // Never send OS signals. The child limits command-receive waits, but
+    // blocking I/O may delay exit. Remove known fixture files only after exit.
     let _ = send(&mut input, "release");
     drop(input);
     if wait(&mut child, deadline).is_ok() {

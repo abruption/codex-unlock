@@ -49,8 +49,8 @@ its directory, or an unconfirmed child exit, can leave disposable files in the
 scratch parent. Failure cleanup deliberately avoids guessing paths or deleting
 unknown entries; inspect any remaining lab directory before removing it.
 
-`Rust experiment` CI runs on Ubuntu 24.04 x64, macOS 15 arm64, and Windows
-Server 2022 x64 with the pinned toolchain. Passing these jobs is evidence for
+`Rust experiment` CI uses the `ubuntu-24.04`, `macos-15`, and `windows-2022`
+runner labels with the pinned toolchain. Passing these jobs is evidence for
 these synthetic fixtures only, not support for native Windows Codex, every
 Windows filesystem, network shares, WSL interoperation, or Windows arm64.
 
