@@ -58,7 +58,9 @@ function sameOwnerEvidence(before: ProcessInfo, after: ProcessInfo): boolean {
     before.uid === after.uid &&
     before.startTime !== null &&
     before.startTime === after.startTime &&
-    (process.platform !== "linux" || (before.startTicks !== undefined && before.startTicks === after.startTicks)) &&
+    (process.platform !== "linux" || (before.startTicks !== undefined &&
+      before.startTicks === after.startTicks && before.commandFingerprint !== undefined &&
+      before.commandFingerprint === after.commandFingerprint)) &&
     before.command === after.command &&
     before.arguments === after.arguments &&
     before.identityComplete === after.identityComplete &&
@@ -474,13 +476,20 @@ export async function unlockInspectedThread(
       revalidationReasons.push(`transcript_observation_failed_before_signal:${errorText(error)}`);
     }
     const preSignalLock = observeLockFile(inspection.lock.path);
+    const metadataVerified = preSignalLock.status === "present" &&
+      preSignalLock.regularFile === true && preSignalLock.symlink === false &&
+      preSignalLock.ownedByCurrentUser === true && preSignalLock.snapshot?.links === 1;
+    if (!metadataVerified) revalidationReasons.push("lock_metadata_changed_before_signal");
     // No await from this try-once probe through process.kill. Its native guard
     // is released before returning; a busy coordinator refuses immediately.
     let preSignalProbe: LockProbe;
     try {
-      const prepared = process.platform === "linux" ? prepareLinuxParticipation(owner.pid) : undefined;
+      if (!metadataVerified) throw new Error("lock_metadata_changed");
+      const prepared = process.platform === "linux" ? prepareLinuxParticipation(owner.pid, inspection.lock.path) : undefined;
       if (prepared && (!owner.startTicks || prepared.startTicks !== owner.startTicks ||
-        prepared.startTicks !== finalInspection.owner?.startTicks)) throw new Error("linux_identity_changed");
+        prepared.startTicks !== finalInspection.owner?.startTicks ||
+        !owner.commandFingerprint || prepared.commandFingerprint !== owner.commandFingerprint ||
+        prepared.commandFingerprint !== finalInspection.owner?.commandFingerprint)) throw new Error("linux_identity_changed");
       preSignalProbe = guardedProbeOnce(inspection.lock.path, preSignalLock, undefined,
         prepared ? () => verifyLinuxParticipation(inspection.lock.path, prepared) : undefined);
     } catch {
@@ -489,10 +498,10 @@ export async function unlockInspectedThread(
     if (preSignalProbe.guard?.status === "busy") {
       revalidationReasons.push("native_coordination_busy_before_signal");
     }
-    if (
+    if (metadataVerified && (
       !sameSnapshot(finalInspection.lock.snapshot, preSignalLock.snapshot) ||
       (preSignalProbe.status !== "held" && preSignalProbe.guard?.status !== "busy")
-    ) {
+    )) {
       revalidationReasons.push("lock_changed_before_signal");
     }
   }
