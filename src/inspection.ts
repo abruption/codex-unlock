@@ -133,14 +133,19 @@ export async function inspectThread(
   const openerError = openersBefore.error ?? openersAfter.error;
   // Correlation alone is insufficient on Linux. Bind a granted descriptor row
   // to both process-instance samples under the existing native coordination.
-  for (const [probe, openers] of [[probeBefore, openersBefore], [probeAfter, openersAfter]] as const) {
+  for (const [probe, openers, observedLock] of [[probeBefore, openersBefore, lockBefore], [probeAfter, openersAfter, lockAfter]] as const) {
     if (process.platform !== "linux" || probe.status !== "held") continue;
     try {
       if (openers.error || openers.processes.length !== 1) throw new Error("linux_candidate_ambiguous");
       const candidate = openers.processes[0];
       const prepared = prepareLinuxParticipation(candidate.pid);
       if (!candidate.startTicks || prepared.startTicks !== candidate.startTicks) throw new Error("linux_identity_changed");
-      const result = guardedProbeOnce(lockPath, observeLockFile(lockPath), undefined,
+      // Attribute only the ORIGINAL inspected inode. The existing native
+      // thread probe validates this snapshot against path and opened FD.
+      const fresh = observeLockFile(lockPath);
+      if (!fresh.regularFile || fresh.symlink || !fresh.ownedByCurrentUser ||
+        !sameSnapshot(observedLock.snapshot, fresh.snapshot)) throw new Error("linux_target_changed");
+      const result = guardedProbeOnce(lockPath, observedLock, undefined,
         () => verifyLinuxParticipation(lockPath, prepared));
       Object.assign(probe, result);
     } catch {

@@ -48,7 +48,11 @@ export function parseFlockRows(text: string): { major: bigint; minor: bigint; in
     const match = /^lock:\s+\d+:\s+FLOCK\s+ADVISORY\s+WRITE\s+-?\d+\s+([\da-f]+):([\da-f]+):(\d+)\s+0\s+EOF\s*$/i.exec(line);
     // Any other lock row is unsupported, never negative evidence of absence.
     if (!match) throw new Error("linux_lock_row_unsupported");
-    rows.push({ major: BigInt(`0x${match[1]}`), minor: BigInt(`0x${match[2]}`), inode: BigInt(match[3]) });
+    const row = { major: BigInt(`0x${match[1]}`), minor: BigInt(`0x${match[2]}`), inode: BigInt(match[3]) };
+    if (row.major > 0xffffffffn || row.minor > 0xffffffffn || row.inode > 0xffffffffffffffffn) {
+      throw new Error("linux_lock_row_unsupported");
+    }
+    rows.push(row);
   }
   return rows;
 }
