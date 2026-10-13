@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { access, lstat, readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
+import { linuxStartTicks } from "./linux-attribution.js";
 
 import type { ProcessInfo, ProcessStartObservation } from "./types.js";
 import {
@@ -503,6 +504,10 @@ export function reconcileArguments(
 export async function inspectProcess(
   candidate: LsofProcess,
 ): Promise<ProcessInfo> {
+  let startTicks: string | undefined;
+  if (process.platform === "linux") {
+    try { startTicks = linuxStartTicks(candidate.pid); } catch { /* Fail closed below. */ }
+  }
   const [ppidField, uidField, startTime, ttyField, commandField, argumentsField, cwd, commandLine] =
     await Promise.all([
       psField(candidate.pid, "ppid"),
@@ -529,6 +534,11 @@ export async function inspectProcess(
     /(^|\/)codex(?:\s|$)/i.test(args ?? "");
   const isSharedService = argumentEvidence.isSharedService;
   const errors: string[] = [];
+  if (process.platform === "linux") {
+    try {
+      if (!startTicks || linuxStartTicks(candidate.pid) !== startTicks) throw new Error("changed");
+    } catch { errors.push("linux_process_instance_unverified"); startTicks = undefined; }
+  }
   if (ppid === null) errors.push(`ppid_${ppidField.status}${ppidField.error ? `:${ppidField.error}` : ""}`);
   if (uid === null) errors.push(`uid_${uidField.status}${uidField.error ? `:${uidField.error}` : ""}`);
   if (startTime.status !== "present") errors.push(`start_time_${startTime.status}${startTime.error ? `:${startTime.error}` : ""}`);
@@ -537,6 +547,7 @@ export async function inspectProcess(
   else if (args === null) errors.push(`arguments_${argumentsField.status}${argumentsField.error ? `:${argumentsField.error}` : ""}`);
 
   return {
+    ...(startTicks ? { startTicks } : {}),
     pid: candidate.pid,
     ppid,
     uid,

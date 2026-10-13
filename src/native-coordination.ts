@@ -9,7 +9,7 @@ import { flockSync } from "fs-ext-extra-prebuilt";
 
 import { observeLockFile, probeThreadLockOnce, type LockFileObservation } from "./lock.js";
 import type { LockProbe, NativeGuardEvidence } from "./types.js";
-import { delay, errorText } from "./util.js";
+import { delay, errorText, sameSnapshot } from "./util.js";
 
 export const NATIVE_COORDINATION_FILE = ".coordination.lock";
 export const NATIVE_COORDINATION_RETRY_MS = 100;
@@ -39,6 +39,7 @@ export function guardedProbeOnce(
   lockPath: string,
   observation: LockFileObservation = observeLockFile(lockPath),
   hooksForTesting?: { afterGuardAcquired?: () => void; afterThreadAcquired?: () => void },
+  attributeHeld?: () => NonNullable<LockProbe["participation"]>,
 ): LockProbe {
   if (observation.status !== "present") {
     return observation.status === "absent"
@@ -99,6 +100,12 @@ export function guardedProbeOnce(
             ...probeThreadLockOnce(lockPath, observation, hooksForTesting?.afterThreadAcquired),
             guard: { status: "acquired", attempts: 1 },
           };
+          if (result.status === "held" && attributeHeld) {
+            result.participation = attributeHeld();
+            if (!sameSnapshot(observation.snapshot, observeLockFile(lockPath).snapshot)) {
+              throw new Error("linux_target_changed");
+            }
+          }
         }
       }
       const after = lstatSync(path, { bigint: true });

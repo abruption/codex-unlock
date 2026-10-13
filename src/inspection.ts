@@ -2,7 +2,8 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { observeLockDirectory, observeLockFile } from "./lock.js";
-import { probeWithRetry } from "./native-coordination.js";
+import { guardedProbeOnce, probeWithRetry } from "./native-coordination.js";
+import { prepareLinuxParticipation, verifyLinuxParticipation } from "./linux-attribution.js";
 import { isThreadId, defaultOptions, validateThreadId } from "./options.js";
 import { evaluateSafety } from "./policy.js";
 import {
@@ -37,6 +38,7 @@ function sameProcessIdentity(
     before[0].pid === after[0].pid &&
     before[0].startTime !== null &&
     before[0].startTime === after[0].startTime
+    && (process.platform !== "linux" || (before[0].startTicks !== undefined && before[0].startTicks === after[0].startTicks))
   );
 }
 
@@ -129,6 +131,23 @@ export async function inspectThread(
     openersAfter.processes,
   );
   const openerError = openersBefore.error ?? openersAfter.error;
+  // Correlation alone is insufficient on Linux. Bind a granted descriptor row
+  // to both process-instance samples under the existing native coordination.
+  for (const [probe, openers] of [[probeBefore, openersBefore], [probeAfter, openersAfter]] as const) {
+    if (process.platform !== "linux" || probe.status !== "held") continue;
+    try {
+      if (openers.error || openers.processes.length !== 1) throw new Error("linux_candidate_ambiguous");
+      const candidate = openers.processes[0];
+      const prepared = prepareLinuxParticipation(candidate.pid);
+      if (!candidate.startTicks || prepared.startTicks !== candidate.startTicks) throw new Error("linux_identity_changed");
+      const result = guardedProbeOnce(lockPath, observeLockFile(lockPath), undefined,
+        () => verifyLinuxParticipation(lockPath, prepared));
+      Object.assign(probe, result);
+    } catch {
+      probe.status = "unknown";
+      probe.error = "linux_participation_unproven";
+    }
+  }
   const probeStable = probeBefore.status === probeAfter.status;
   const classification = classify(
     lockAfter.status,

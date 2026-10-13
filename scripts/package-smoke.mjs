@@ -186,6 +186,7 @@ try {
     "dist/inspection.js",
     "dist/json-types.d.ts",
     "dist/lock.js",
+    "dist/linux-attribution.js",
     "dist/native-coordination.js",
     "dist/options.js",
     "dist/policy.js",

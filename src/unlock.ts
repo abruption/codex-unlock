@@ -1,5 +1,6 @@
 import { acquireUnlockLease } from "./coordination.js";
 import { inspectThread } from "./inspection.js";
+import { prepareLinuxParticipation, verifyLinuxParticipation } from "./linux-attribution.js";
 import { performance } from "node:perf_hooks";
 import { closeSync, constants, fstatSync, lstatSync, openSync } from "node:fs";
 
@@ -57,6 +58,7 @@ function sameOwnerEvidence(before: ProcessInfo, after: ProcessInfo): boolean {
     before.uid === after.uid &&
     before.startTime !== null &&
     before.startTime === after.startTime &&
+    (process.platform !== "linux" || (before.startTicks !== undefined && before.startTicks === after.startTicks)) &&
     before.command === after.command &&
     before.arguments === after.arguments &&
     before.identityComplete === after.identityComplete &&
@@ -474,7 +476,16 @@ export async function unlockInspectedThread(
     const preSignalLock = observeLockFile(inspection.lock.path);
     // No await from this try-once probe through process.kill. Its native guard
     // is released before returning; a busy coordinator refuses immediately.
-    const preSignalProbe = guardedProbeOnce(inspection.lock.path, preSignalLock);
+    let preSignalProbe: LockProbe;
+    try {
+      const prepared = process.platform === "linux" ? prepareLinuxParticipation(owner.pid) : undefined;
+      if (prepared && (!owner.startTicks || prepared.startTicks !== owner.startTicks ||
+        prepared.startTicks !== finalInspection.owner?.startTicks)) throw new Error("linux_identity_changed");
+      preSignalProbe = guardedProbeOnce(inspection.lock.path, preSignalLock, undefined,
+        prepared ? () => verifyLinuxParticipation(inspection.lock.path, prepared) : undefined);
+    } catch {
+      preSignalProbe = { status: "unknown", method: "flock_exclusive_nonblocking", error: "linux_participation_unproven" };
+    }
     if (preSignalProbe.guard?.status === "busy") {
       revalidationReasons.push("native_coordination_busy_before_signal");
     }
