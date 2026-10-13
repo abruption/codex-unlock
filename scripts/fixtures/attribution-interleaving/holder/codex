@@ -12,12 +12,21 @@ const require = createRequire(process.env.FIXTURE_REQUIRE_FROM)
 const { flockSync } = require('fs-ext-extra-prebuilt')
 
 const lockPath = process.env.FIXTURE_LOCK_PATH
-const guard = fs.openSync(path.join(path.dirname(lockPath), '.coordination.lock'), 'r')
-flockSync(guard, 'ex')
-const thread = fs.openSync(lockPath, 'r+')
-flockSync(thread, 'exnb')
-flockSync(guard, 'un')
-fs.closeSync(guard)
+let guard = null
+let thread = null
+try {
+  guard = fs.openSync(path.join(path.dirname(lockPath), '.coordination.lock'), 'r')
+  flockSync(guard, 'exnb')
+  thread = fs.openSync(lockPath, 'r+')
+  flockSync(thread, 'exnb')
+} catch (error) {
+  if (thread !== null) fs.closeSync(thread)
+  process.stderr.write(`${error.message}\n`)
+  process.exitCode = 1
+} finally {
+  if (guard !== null) { try { flockSync(guard, 'un') } finally { fs.closeSync(guard) } }
+}
+if (process.exitCode) process.exit(process.exitCode)
 process.stdout.write('ready\n')
 process.stdin.resume()
 process.stdin.on('end', () => {

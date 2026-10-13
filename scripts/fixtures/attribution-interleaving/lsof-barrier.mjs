@@ -1,129 +1,79 @@
 #!/usr/bin/env node
-// Barrier-equipped lsof wrapper for interleaving experiment (#100).
-//
-// When FIXTURE_SOCKET is set and FIXTURE_BARRIER is not 'off':
-//   1. Connects to the transient fixture socket.
-//   2. Sends 'attempt\n' so the transient opens the thread file under coordination.
-//   3. Waits for the transient to confirm it is inside the window.
-//   4. Runs the real system lsof with the same arguments.
-//   5. Sends 'finish\n' so the transient closes its descriptors.
-//
-// When FIXTURE_HIDE_PID is set, process sets matching that PID in lsof's
-// NUL-delimited -F0 output are removed before printing. This models the
-// measured clean omission (exit 0, empty stderr) of a holder that lsof
-// cannot see due to UID or namespace filtering.
-//
-// This script is injected only through codex-unlock's in-process diagnostic
-// override seam, never through PATH or as a system lsof replacement.
-import { spawnSync } from 'node:child_process'
+// Private diagnostic override, never a system PATH replacement.
+import { spawn } from 'node:child_process'
+import { Buffer } from 'node:buffer'
 import fs from 'node:fs'
 import net from 'node:net'
 import process from 'node:process'
 import { clearTimeout, setTimeout } from 'node:timers'
+import { pathToFileURL } from 'node:url'
 
-// codex-unlock runs diagnostics with a replaced environment (no PATH to node,
-// no inherited variables), so settings arrive through a config file whose path
-// a generated shell wrapper injects.
-const args = process.argv.slice(2)
-const config = JSON.parse(fs.readFileSync(process.env.FIXTURE_CONFIG, 'utf8'))
-const logPath = config.log
-const socketPath = config.socket
-const barrier = config.barrier !== false
-const hidePid = typeof config.hidePid === 'number' ? config.hidePid : null
-const realLsof = config.realLsof || '/usr/sbin/lsof'
-
-function log(record) {
-  if (logPath) {
-    fs.appendFileSync(
-      logPath,
-      JSON.stringify({ role: 'lsof-barrier', pid: process.pid, t: Date.now(), args, ...record }) + '\n'
-    )
-  }
-}
-
-// The timer must be cleared on every path: a pending timer keeps this process
-// alive past its reply, and codex-unlock kills a diagnostic that outlives its
-// own 5s command budget.
-function barrierRequest(command) {
-  return new Promise((resolve, reject) => {
-    let timer
-    const settle = (fn, value) => { clearTimeout(timer); sock.destroy(); fn(value) }
-    const sock = net.createConnection(socketPath, () => {
-      sock.setEncoding('utf8')
-      let buf = ''
-      sock.on('data', (chunk) => {
-        buf += chunk
-        const nl = buf.indexOf('\n')
-        if (nl >= 0) settle(resolve, buf.slice(0, nl))
-      })
-      sock.write(command + '\n')
-    })
-    sock.on('error', (error) => settle(reject, error))
-    timer = setTimeout(() => settle(reject, new Error('barrier timeout')), 2000)
-  })
-}
-
-function removePidSets(stdout, pid) {
-  // lsof -F0 uses NUL as field separator and newline as record terminator.
-  // Each process set starts with 'p<pid>\0'. We remove entire process sets
-  // whose PID matches.
-  const pidPrefix = `p${pid}\0`
-  const lines = stdout.split('\n')
-  const kept = []
+export function removePidSets(stdout, pid) {
   let skip = false
-  for (const line of lines) {
-    if (line.startsWith('p')) {
-      skip = line.startsWith(pidPrefix)
+  return stdout.split('\n').filter((line) => {
+    if (line.startsWith('p')) skip = line.startsWith(`p${pid}\0`)
+    return !skip
+  }).join('\n')
+}
+
+function runLsof(args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('/usr/sbin/lsof', args, {
+      env: { LC_ALL: 'C', LANG: 'C', PATH: '/usr/bin:/bin:/usr/sbin:/sbin' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''; let stderr = ''; let settled = false
+    const finish = (error, result) => { if (settled) return; settled = true; clearTimeout(timer); if (error) { child.unref(); child.stdout.destroy(); child.stderr.destroy(); reject(error) } else resolve(result) }
+    const timer = setTimeout(() => finish(new Error(`lsof incomplete deadline; pid=${child.pid}; no termination requested`)), 1000)
+    for (const [stream, kind] of [[child.stdout, 'stdout'], [child.stderr, 'stderr']]) {
+      stream.setEncoding('utf8')
+      stream.on('data', (chunk) => { if (kind === 'stdout') stdout += chunk; else stderr += chunk; if (Buffer.byteLength(stdout) + Buffer.byteLength(stderr) > 4 * 1024 * 1024) finish(new Error(`lsof output cap; pid=${child.pid}; no termination requested`)) })
     }
-    if (!skip) kept.push(line)
-  }
-  return kept.join('\n')
+    child.on('error', (error) => finish(error))
+    child.on('close', (status, signal) => finish(null, { stdout, stderr, status, signal }))
+  })
 }
 
 async function main() {
-  let barrierReply = null
-  if (barrier && socketPath) {
-    try {
-      barrierReply = await barrierRequest('attempt')
-      log({ event: 'barrier_entered', reply: barrierReply })
-      if (barrierReply === 'busy') barrierReply = null
-    } catch (error) {
-      log({ event: 'barrier_failed', error: error.message })
+  const args = process.argv.slice(2)
+  const config = JSON.parse(fs.readFileSync(process.env.FIXTURE_CONFIG, 'utf8'))
+  const log = (record) => fs.appendFileSync(config.log, JSON.stringify({ role: 'lsof-barrier', pid: process.pid, t: Date.now(), ...record }) + '\n')
+  let socket
+  let pending = null
+  let buffer = ''
+  const request = (command) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => settle(new Error('barrier timeout')), 500)
+    function settle(error, reply) {
+      clearTimeout(timer); pending = null
+      if (error) reject(error); else resolve(reply)
     }
-  }
-
-  const result = spawnSync(realLsof, args, {
-    env: { LC_ALL: 'C', LANG: 'C', PATH: '/usr/bin:/bin:/usr/sbin:/sbin' },
-    maxBuffer: 4 * 1024 * 1024,
-    timeout: 10000,
+    pending = settle
+    socket.write(`${command}\n`)
   })
-
-  if (barrier && socketPath && barrierReply) {
-    try {
-      await barrierRequest('finish')
-      log({ event: 'barrier_released' })
-    } catch (error) {
-      log({ event: 'barrier_release_failed', error: error.message })
+  try {
+    if (config.barrier !== false) {
+      socket = net.createConnection(config.socket)
+      socket.setEncoding('utf8')
+      socket.on('data', (chunk) => { buffer += chunk; const nl = buffer.indexOf('\n'); if (nl >= 0 && pending) { const reply = buffer.slice(0, nl); buffer = buffer.slice(nl + 1); pending(null, reply) } })
+      socket.on('error', (error) => pending?.(error))
+      socket.on('close', () => pending?.(new Error('barrier disconnected')))
+      const reply = await request('attempt')
+      log({ event: 'barrier_entered', reply })
+      if (reply !== 'inside') throw new Error(`invalid barrier outcome: ${reply}`)
     }
-  }
-
-  let stdout = result.stdout ? result.stdout.toString() : ''
-  const stderr = result.stderr ? result.stderr.toString() : ''
-
-  if (hidePid !== null && stdout) {
-    const before = stdout
-    stdout = removePidSets(stdout, hidePid)
-    log({ event: 'filter', hidePid, removed: before !== stdout })
-  }
-
-  log({ event: 'done', exitCode: result.status, stderrLen: stderr.length, stdoutLen: stdout.length, stdoutHead: stdout.slice(0, 200).replace(/\0/g, '|') })
-
-  process.stdout.write(stdout)
-  process.stderr.write(stderr)
-  process.exitCode = result.status ?? 1
+    const result = await runLsof(args)
+    if (result.error || result.signal || (result.status !== 0 && result.status !== 1)) throw new Error(`lsof incomplete: ${result.error?.code ?? result.signal ?? result.status}`)
+    if (socket && await request('finish') !== 'done') throw new Error('barrier release not acknowledged')
+    let stdout = result.stdout.toString()
+    if (Number.isSafeInteger(config.hidePid) && config.hidePid > 0) { const before = stdout; stdout = removePidSets(stdout, config.hidePid); log({ event: 'filter', hidePid: config.hidePid, removed: before !== stdout }) }
+    log({ event: 'done', exitCode: result.status })
+    process.stdout.write(stdout)
+    process.stderr.write(result.stderr)
+    process.exitCode = result.status
+  } finally { socket?.destroy() }
 }
 
-main().catch((error) => {
-  log({ event: 'fatal', error: error.message })
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch((error) => {
+  process.stderr.write(`${error.message}\n`)
   process.exitCode = 1
 })
