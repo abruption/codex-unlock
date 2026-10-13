@@ -56,6 +56,34 @@ Windows filesystem, network shares, WSL interoperation, or Windows arm64.
 
 ## Next decision gates
 
+### Unix cross-implementation evidence
+
+After `npm ci` and `npm run build` from the repository root and `cargo build
+--locked --offline` here, run from the repository root:
+
+```sh
+CODEX_UNLOCK_LAB_SCRATCH_ROOT=/path/to/private/scratch node experimental/rust/interop.mjs
+```
+
+The harness starts a Rust child that creates fresh private fixture files. It
+compares the production TypeScript `guardedProbeOnce` adapter with Rust standard
+locks in both directions: Rust-held locks must appear held to TypeScript, and
+Node addon-held locks must appear held to Rust. It also checks cooperative
+release, busy/missing coordination as unknown, and unchanged bytes, inode,
+owner, mode and modification time. Only the harness temporarily renames its
+own coordinator for the missing-file case. No existing Codex files are opened.
+
+Each child has a ten-second total protocol deadline; the harness uses bounded
+waits and EOF for cooperative cleanup, never process signals. The lab-only
+`__interop-fixture` command accepts a scratch parent, not an existing lock path.
+The experiment workflow runs this comparison on macOS and Linux. Windows
+retains the Rust-to-Rust fixture test only.
+
+This establishes primitive interoperability with the current TypeScript
+adapter on those CI hosts. It does not establish actual Codex process ownership,
+Windows Codex lock-range/share-mode compatibility, or safe recovery. Upstream
+Codex protocol compatibility and the remaining decision gates below stay open.
+
 1. Match an explicitly pinned upstream Codex coordination protocol and Windows
    lock range/open/share flags, and test actual interoperability. A Rust-to-Rust
    fixture is not that test. Compare Unix evidence with the TypeScript adapter.

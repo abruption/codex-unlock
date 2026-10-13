@@ -2,7 +2,7 @@ name: Rust experiment
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, research/rust-windows-experiment]
   push:
     branches: [main]
 
@@ -37,3 +37,16 @@ jobs:
         run: |
           cargo run --locked --offline -- capabilities
           cargo run --locked --offline -- self-test --scratch-root "$RUNNER_TEMP"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        if: runner.os != 'Windows'
+        with:
+          node-version: '22.13.0'
+      - name: Compare Rust and production TypeScript lock adapters
+        if: runner.os != 'Windows'
+        working-directory: .
+        env:
+          CODEX_UNLOCK_LAB_SCRATCH_ROOT: ${{ runner.temp }}
+        run: |
+          npm ci
+          npm run build
+          node experimental/rust/interop.mjs
