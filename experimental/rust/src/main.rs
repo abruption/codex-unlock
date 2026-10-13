@@ -27,7 +27,10 @@ fn create_fixture(root: &Path) -> io::Result<PathBuf> {
         .map_err(io::Error::other)?
         .as_nanos();
     let dir = root.join(format!("codex-unlock-lab-{}-{stamp}", std::process::id()));
+    #[cfg(unix)]
     let mut builder = fs::DirBuilder::new();
+    #[cfg(not(unix))]
+    let builder = fs::DirBuilder::new();
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;

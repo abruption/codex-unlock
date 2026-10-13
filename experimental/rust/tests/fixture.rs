@@ -15,7 +15,10 @@ fn real_cross_process_fixture_protocol_and_cleanup() {
         "codex-unlock-lab-test-{}-{stamp}",
         std::process::id()
     ));
+    #[cfg(unix)]
     let mut builder = fs::DirBuilder::new();
+    #[cfg(not(unix))]
+    let builder = fs::DirBuilder::new();
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
