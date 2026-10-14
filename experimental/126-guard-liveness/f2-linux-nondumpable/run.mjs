@@ -5,22 +5,20 @@
 //
 // For FIXTURE_DUMPABLE in [1, 0]: start the synthetic `codex` holder in a
 // fresh private scratch directory, validate its ready record, record the
-// same-user /proc access matrix, and, when F2_DIST names a trusted review
-// build, record `inspectThread` for that build. `unlockInspectedThread` is
-// never called.
+// same-user /proc access matrix. In-process build inspection is disabled:
+// a synchronous inspection stall would prevent the timeout and cleanup.
+// No product module is imported and no unlock method is called.
 //
 // Signals: this runner signals neither the holder nor the observer. The holder
 // ends on stdin EOF or its own 20 s lifetime; the observer is waited for with
 // a bound and, if it has not exited, is recorded as incomplete and left
 // running (a /proc read in a killable kernel wait cannot be interrupted by a
-// handled signal anyway). Code loaded from F2_DIST runs in this process and
-// is not covered by that statement: the product's own diagnostics may signal
-// their timed-out children.
+// handled signal anyway). A nonzero status records failed or incomplete
+// collection; it does not assert that the expected access matrix held.
 //
 // Any validation failure, error or unconfirmed exit makes the run exit
 // nonzero. Scratch is always kept.
 import { spawn } from 'node:child_process'
-import { createHash } from 'node:crypto'
 import { log } from 'node:console'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -35,17 +33,7 @@ if (process.getuid() === 0 || process.getuid() !== process.geteuid()) throw new 
 const DIR = path.dirname(fileURLToPath(import.meta.url))
 const THREAD_ID = '01a089e8-3731-7202-ba68-0f4b0a3b2711'
 const OBSERVER_BUDGET_MS = 10000
-const INSPECT_BUDGET_MS = 15000
-
-let inspectThread = null
-let build = null
-if (process.env.F2_DIST) {
-  // Only a build the integrating session reviewed: importing it runs its code.
-  if (!process.env.F2_DIST_COMMIT) throw new Error('F2_DIST requires F2_DIST_COMMIT')
-  const entry = path.join(path.resolve(process.env.F2_DIST), 'inspection.js')
-  build = { commit: process.env.F2_DIST_COMMIT, entry, sha256: createHash('sha256').update(fs.readFileSync(entry)).digest('hex') }
-  inspectThread = (await import(entry)).inspectThread
-}
+if (process.env.F2_DIST) throw new Error('F2_DIST inspection is disabled pending separate-process observation and candidate controls')
 
 const out = freshPrivateDir('126-f2')
 const live = new Set()
@@ -57,7 +45,7 @@ const report = {
     kernel: os.release(), node: process.version, uid: process.getuid(),
     ptraceScope: read('/proc/sys/kernel/yama/ptrace_scope'),
     procMount: fs.readFileSync('/proc/self/mountinfo', 'utf8').split('\n').find((l) => / \/proc /.test(l)) ?? null,
-    build,
+    mode: 'access_matrix_only',
   },
   runs: [],
 }
@@ -109,27 +97,6 @@ for (const dumpable of [1, 0]) {
     run.observe = observed
     if (observed.incomplete) incomplete.push({ role: 'observer', ...observed })
     else if (!observed.result) failures.push(`observer dumpable=${dumpable}: ${JSON.stringify(observed)}`)
-    if (inspectThread) {
-      const settled = await Promise.race([
-        inspectThread(THREAD_ID, { codexHome: home, stabilityMs: 50, terminationTimeoutMs: 3000 }).then((value) => ({ value }), (error) => ({ error: String(error) })),
-        delay(INSPECT_BUDGET_MS).then(() => null),
-      ])
-      if (settled === null) {
-        // The pending call cannot be cancelled; the holder still gets EOF below.
-        run.inspect = { incomplete: true }
-        incomplete.push({ role: 'inspect', dumpable })
-      } else if (settled.error) {
-        run.inspect = { error: settled.error }
-        failures.push(`inspect dumpable=${dumpable}: ${settled.error}`)
-      } else {
-        const inspection = settled.value
-        run.inspect = {
-          classification: inspection.classification, safeToUnlock: inspection.safeToUnlock,
-          blockers: inspection.blockers, ownerPid: inspection.owner?.pid ?? null,
-          attribution: inspection.attribution ?? null,
-        }
-      }
-    }
   } catch (error) {
     run.error = String(error?.stack ?? error)
     failures.push(`dumpable=${dumpable}: ${run.error}`)

@@ -30,14 +30,15 @@ What is recorded, not guaranteed:
   not instrumented here.
 - **What a bound means.** Waits on children are bounded, and an exceeded bound
   is reported as `incomplete`. It is never escalated to a signal. A bound does
-  not guarantee that the child ended: an `incomplete` run exits nonzero,
+  not guarantee that the child ended: an `incomplete` run sets a nonzero exit status,
   keeps its scratch, and M2 keeps its socket directory. Every completed
   measurement and validation run below recorded `incomplete: 0`.
 
-Runners create a fresh private `codex-*` directory under
-`/Volumes/Kingston NV/tmp` (macOS) or `/tmp` (elsewhere). `RESEARCH_TMP_ROOT`
+Runners create a fresh private `codex-*` directory under the temporary root
+required by `AGENTS.md` (set `RESEARCH_TMP_ROOT` on macOS), or `/tmp` elsewhere. `RESEARCH_TMP_ROOT`
 replaces only that root: the supplied directory is never chmod-ed, and
-existing files are never overwritten. A runner exits nonzero on any error,
+existing files outside that fresh scratch are never overwritten. M2 rewrites
+its own scratch configuration between scenarios. A runner exits nonzero on any error,
 incomplete child, or missing or mismatched round or result.
 
 ## F1: injected delay inside the native guard (`f1-guard-delay/`)
@@ -68,11 +69,12 @@ can be negative. None of the 50 measured values was negative.
 | 200 ms | 0.02 ms | 203.4 / 206.9 / 210.4 ms | 0.035 – 0.137 ms |
 | 1000 ms | 0.03 ms | 1002.6 / 1006.5 / 1010.1 ms | 0.037 – 0.111 ms |
 
-Result: the waiter's blocked time tracks the guard hold time one for one. Any
-synchronous stall inside the guard callback becomes a stall of every Codex
-process in the same `CODEX_HOME` that needs coordination. Overshoot above the
-injected value (for example 10 → 15 ms) is `Atomics.wait` scheduling and
-already shows in the hook's own duration. All guarded rounds returned probe
+Result: increasing injected delay increased the synthetic waiter's measured
+blocked time. A process waiting on the same coordination lock cannot acquire
+it until release. This measured one polling fixture, not every Codex process.
+Overshoot above the injected value (for example 10 → 15 ms) was also recorded
+in the hook's own duration; this does not isolate every scheduling cause.
+All guarded rounds returned probe
 `free` with guard `acquired`. Native file identities (dev, ino, size, mtime)
 were unchanged.
 
@@ -87,14 +89,15 @@ refusal-only. Per PID it aggregates every descriptor on the path:
 
 | Condition | Decision |
 | --- | --- |
-| The scan failed, was signalled, wrote stderr, or its output is malformed or partial | `unknown` |
+| The scan failed, was signalled, wrote stderr, or has detectable malformed/truncated output | `unknown` |
 | The PID is absent from the scan | `unknown` |
 | No descriptor of the PID has the bit | `reject` |
 | At least one descriptor has the bit | `not_excluded` |
 
 There is no "holder" outcome. `fg-scan.test.mjs` checks these rules
 deterministically, including multi-descriptor PIDs and failed or partial
-output.
+output. Entire valid records can be omitted without a detectable format error;
+this filter does not prove a complete descriptor inventory.
 
 Part 1, flag matrix. The original measurement ran 3 repeats and all were
 identical. The validation runs add `holder_multi_opener`: a holder with a
@@ -127,8 +130,9 @@ Findings:
 
 1. The filter removes the failed-acquirer and never-locked opener cases,
    including the #100 wrong-target reproduction.
-2. It does not remove a former holder that keeps its descriptor. That process
-   is a wrong target accepted by every current check and by the filter. Its
+2. It does not remove a former holder that keeps its descriptor. With the actual
+   holder omitted by the model, this is a wrong target accepted by the sampled
+   current checks and the filter. Its
    bit is identical to the actual holder's. Because the bit is sticky, it can
    never be positive holder evidence.
 3. Scope of #100: with the barrier around the opener scan only, the
@@ -165,12 +169,18 @@ EOF (exit 0) or 20 s (exit 3).
 `observe.py` records the same-user access matrix for the reads #137 performs.
 It has no self-alarm, because a handled signal cannot wake a killable kernel
 wait. `run.mjs` validates the ready record, waits for the observer with a
-bound (recording `incomplete` without signalling it), and bounds
-`inspectThread`. The holder still gets EOF if that call never settles; the
-pending call itself cannot be cancelled. `F2_DIST` must name a build the
-integrating session reviewed, together with `F2_DIST_COMMIT`. The runner
-records that commit and the SHA-256 of `inspection.js`. Imported product code
-is not covered by the runner's own no-signal statement.
+bound (recording `incomplete` without signalling it). It collects only the
+access matrix. `F2_DIST` is rejected before any fixture starts. The earlier
+in-process inspection was removed because synchronous inspection can block
+the event loop, its timeout and holder EOF cleanup. The holder's own lifetime
+does not bound the parent. Outcomes are recorded rather than asserted against
+the expected table.
+
+Build inspection requires separate-process observation and a validated
+dumpable=1 candidate-recognition control.
+Results after holder exit cannot establish access policy.
+`ok` currently describes collection completion, not satisfaction of the
+expected table or a proven fail-closed decision. These are open execution gates.
 
 Only parse and syntax checks were done. No Linux host was used.
 
@@ -225,7 +235,24 @@ No kernel wait was induced. The following comes from source reasoning only:
 
 ```sh
 npm ci && npm run build
+export RESEARCH_TMP_ROOT="<existing approved temporary root>"
 node --test experimental/126-guard-liveness/m2-macos-fwaslocked/fg-scan.test.mjs
 node experimental/126-guard-liveness/f1-guard-delay/run.mjs
 node experimental/126-guard-liveness/m2-macos-fwaslocked/run.mjs
 ```
+
+## Evidence and review revisions
+
+Original measurement files and validation files remain private because they
+contain local paths and process identifiers. Their SHA-256 values and sanitized
+outcome summaries are recorded in [evidence.md](evidence.md). The original
+measurement and later runner validation are separate revisions.
+
+Independent read-only CLI reviews used Claude Code 2.1.296 with
+`claude-opus-5-5` (actual response model confirmed) and Codex CLI 0.162.1 with
+its isolated default selection (actual model unconfirmed), in parallel on
+revision `e782e396df3f5feebb556bfe2f371d101176e03f`. Input SHA-256:
+`70db601c2d878f86621c2f153758b89ea1fbe2973ee60f7cee6deda1ff0fa6da`.
+Both completed successfully without running tests. Later corrections were
+checked by the integrating Codex; the CLI reviews do not certify those later
+commits. F2 remains unexecuted on Linux, and product adoption is unresolved.

@@ -28,6 +28,11 @@ let guard = null
 let thread = null
 
 function attempt() {
+  // A second barrier must not overwrite the descriptors from an open window.
+  if (guard !== null || thread !== null) {
+    log({ event: 'attempt', guard: 'busy', reason: 'already_inside' })
+    return null
+  }
   guard = fs.openSync(guardPath, 'r')
   // Real Codex blocks here. This fixture must not: codex-unlock's guarded
   // probe also takes coordination, and a blocking wait would deadlock both

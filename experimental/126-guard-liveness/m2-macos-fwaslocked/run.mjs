@@ -30,13 +30,13 @@ import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { assertSocketPath, freshPrivateDir, startChild, stopAll, stopChild, writeNew } from '../lib/common.mjs'
 import { fgScan, filterDecision, withoutPid } from './fg-scan.mjs'
+import { options, wrapperText } from './options.mjs'
 
 const DIR = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(DIR, '../../..')
 const DIST = path.join(ROOT, 'dist')
 const THREAD_ID = '01a089e8-3731-7202-ba68-0f4b0a3b2711'
-const REPEATS = Number(process.env.M2_REPEATS ?? 3)
-const PARTS = (process.env.M2_PARTS ?? '1,2').split(',')
+const { repeats: REPEATS, parts: PARTS } = options(process.env)
 const FAULT = process.env.M2_FAULT ?? null
 const LIFETIME_MS = 60000
 const REQUIRE_FROM = path.join(ROOT, 'node_modules', 'fs-ext-extra-prebuilt', 'package.json')
@@ -129,11 +129,16 @@ async function part1() {
       const { lockPath } = createHome()
       const actors = await setup(lockPath)
       const scan = fgScan(lockPath)
+      if (!scan.valid) failures.push(`part1 ${rep} ${name}: invalid +fg scan ${scan.problems.join(',')}`)
+      const state = probe(lockPath)
+      if (state !== 'free' && state !== 'held') failures.push(`part1 ${rep} ${name}: probe ${state}`)
       const pids = Object.fromEntries(Object.entries(actors).map(([k, h]) => [k, h.pid]))
+      const roles = roleView(scan, pids)
+      if (Object.values(roles).some((r) => r.decision === 'unknown')) failures.push(`part1 ${rep} ${name}: fixture descriptor evidence unknown`)
       results.push({
-        part: 1, rep, case: name, probe: probe(lockPath),
+        part: 1, rep, case: name, probe: state,
         scan: { valid: scan.valid, problems: scan.problems, status: scan.status, signal: scan.signal, raw: scan.raw.replace(/\0/g, '|') },
-        roles: roleView(scan, pids),
+        roles,
       })
       for (const handle of Object.values(actors)) await stop(handle)
     }
@@ -143,14 +148,13 @@ async function part1() {
 function writeWrapper() {
   const wrapper = path.join(out, 'lsof-wrapper.sh')
   const configPath = path.join(out, 'barrier-config.json')
-  writeNew(wrapper, '#!/bin/sh\n' +
-    `FIXTURE_CONFIG=${JSON.stringify(configPath)} exec ${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(DIR, 'lsof-barrier.mjs'))} "$@"\n`, 0o700)
+  writeNew(wrapper, wrapperText(configPath, process.execPath, path.join(DIR, 'lsof-barrier.mjs')), 0o700)
   return { wrapper, configPath }
 }
 
-function scanEventsSince(offset) {
-  const text = fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf8').slice(offset) : ''
-  return text.split('\n').filter(Boolean).map((line) => JSON.parse(line)).filter((e) => e.event === 'fg_scan')
+function eventsSince(offset) {
+  const text = fs.existsSync(logFile) ? fs.readFileSync(logFile).subarray(offset).toString('utf8') : ''
+  return text.split('\n').filter(Boolean).map((line) => JSON.parse(line))
 }
 
 async function part2() {
@@ -192,9 +196,23 @@ async function part2() {
       } finally {
         overrideDiagnosticExecutableForTesting('lsof', null)
       }
-      const events = scanEventsSince(offset)
+      const allEvents = eventsSince(offset)
+      const events = allEvents.filter((e) => e.event === 'fg_scan')
+      for (const event of allEvents) {
+        if (['barrier_failed', 'barrier_release_failed', 'fatal'].includes(event.event) ||
+          (event.event === 'barrier_entered' && event.reply !== 'inside') ||
+          (event.event === 'done' && (event.signal || event.error))) {
+          failures.push(`part2 ${rep} ${scenario}: barrier evidence ${JSON.stringify(event)}`)
+        }
+      }
+      if (config.socket) {
+        const entered = allEvents.filter((e) => e.event === 'barrier_entered' && e.reply === 'inside').length
+        const finished = allEvents.filter((e) => e.role === 'transient' && e.event === 'finish').length
+        if (!entered || finished !== entered) failures.push(`part2 ${rep} ${scenario}: barrier windows entered=${entered} finished=${finished}`)
+      }
       if (!events.length) failures.push(`part2 ${rep} ${scenario}: no +fg scan recorded`)
       const scans = events.map((e) => {
+        if (!e.scan.valid) failures.push(`part2 ${rep} ${scenario}: invalid +fg scan ${e.scan.problems.join(',')}`)
         const hidden = typeof config.hidePid === 'number' ? withoutPid(e.scan, config.hidePid) : e.scan
         return {
           valid: e.scan.valid, problems: e.scan.problems, signal: e.scan.signal, raw: e.scan.raw.replace(/\0/g, '|'),
@@ -203,15 +221,17 @@ async function part2() {
         }
       })
       const ownerDecisions = scans.map((s) => s.owner?.decision ?? 'no_owner')
+      const filterMeasurementValid = scans.length > 0 && scans.every((s) => s.valid && s.owner && s.owner.decision !== 'unknown')
       results.push({
         part: 2, rep, scenario,
         classification: inspection.classification, safeToUnlock: inspection.safeToUnlock,
         blockers: inspection.blockers, openers: inspection.openers.length,
         ownerPid: inspection.owner?.pid ?? null, actualHolderPid: holder.pid, visiblePid: visible.pid,
         wrongTarget: inspection.safeToUnlock && inspection.owner?.pid !== holder.pid,
-        // Refusal needs a decision other than not_excluded in some scan;
-        // unknown counts as refusal, never as a holder.
-        filterWouldRefuse: ownerDecisions.length > 0 && ownerDecisions.some((d) => d !== 'not_excluded'),
+        // An unavailable owner or invalid evidence cannot establish a filter
+        // measurement. A present flag still never establishes lock ownership.
+        filterMeasurementValid,
+        filterWouldRefuse: filterMeasurementValid ? ownerDecisions.some((d) => d === 'reject') : null,
         ownerDecisions, scans,
       })
       for (const handle of handles) await stop(handle)
@@ -245,6 +265,7 @@ try {
 }
 for (const result of await stopAll(live)) {
   if (result.incomplete) incomplete.push(result)
+  else if (result.exitCode !== 0 || result.signal || result.error) failures.push(`cleanup exit ${JSON.stringify(result)}`)
 }
 const expected = FAULT ? 0
   : (PARTS.includes('1') ? REPEATS * Object.keys(MATRIX).length : 0) + (PARTS.includes('2') ? REPEATS * 4 : 0)

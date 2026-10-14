@@ -11,14 +11,14 @@ import path from 'node:path'
 import process from 'node:process'
 import readline from 'node:readline'
 import { clearTimeout, setTimeout } from 'node:timers'
-import { setTimeout as delay } from 'node:timers/promises'
 
-// The repository's temporary root for work under /Volumes/Kingston NV is
-// /Volumes/Kingston NV/tmp; other hosts use /tmp. RESEARCH_TMP_ROOT overrides
+// Select the repository's temporary root from AGENTS.md; other hosts use /tmp.
+// RESEARCH_TMP_ROOT overrides
 // the root only: a fresh private child is always created beneath it, and the
 // supplied directory itself is never chmod-ed or written into directly.
 export function defaultTmpRoot() {
-  return process.platform === 'darwin' ? '/Volumes/Kingston NV/tmp' : '/tmp'
+  if (process.platform === 'darwin') throw new Error('RESEARCH_TMP_ROOT is required on macOS; select the AGENTS.md temporary root')
+  return '/tmp'
 }
 
 export function freshPrivateDir(prefix, root = process.env.RESEARCH_TMP_ROOT ?? defaultTmpRoot()) {
@@ -50,13 +50,14 @@ export function assertSocketPath(socketPath) {
 // when readiness fails.
 export function startChild(command, args, options, live, readyMs = 5000) {
   const child = spawn(command, args, { ...options, stdio: ['pipe', 'pipe', 'pipe'] })
-  const handle = { child, pid: child.pid, stderr: '' }
+  const handle = { child, pid: child.pid, stderr: '', stdinErrors: [] }
+  child.stdin.on('error', (error) => { handle.stdinErrors.push(error.message) })
   handle.exited = new Promise((resolve) => {
     child.once('exit', (code, signal) => resolve({ exitCode: code, signal }))
     child.once('error', (error) => resolve({ exitCode: null, signal: null, error: error.message }))
   })
   live.add(handle)
-  handle.exited.then(() => live.delete(handle))
+  // Keep early exits until cleanup verifies every started child's result.
   child.stderr.setEncoding('utf8')
   child.stderr.on('data', (chunk) => { handle.stderr += chunk })
   const lines = readline.createInterface({ input: child.stdout })
@@ -76,8 +77,23 @@ export function startChild(command, args, options, live, readyMs = 5000) {
 // observed; nothing here signals the child.
 export async function stopChild(handle, budgetMs = 10000) {
   try { handle.child.stdin.end() } catch { /* already closed */ }
-  const result = await Promise.race([handle.exited, delay(budgetMs).then(() => null)])
-  return result ?? { incomplete: true, pid: handle.pid }
+  let timer
+  let result
+  try {
+    result = await Promise.race([handle.exited, new Promise((resolve) => {
+      timer = setTimeout(() => resolve(null), budgetMs)
+    })])
+  } finally { clearTimeout(timer) }
+  if (result === null) {
+    handle.child.unref()
+    handle.lines.close()
+    handle.child.stdin.destroy()
+    handle.child.stdout.destroy()
+    handle.child.stderr.destroy()
+    return { incomplete: true, pid: handle.pid, stdinErrors: handle.stdinErrors }
+  }
+  return { ...result, stdinErrors: handle.stdinErrors,
+    ...(handle.stdinErrors.length ? { error: 'stdin_io_failed' } : {}) }
 }
 
 export async function stopAll(live, budgetMs = 10000) {
