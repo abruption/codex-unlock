@@ -29,6 +29,7 @@ const ROOT = path.resolve(DIR, '../../..')
 const THREAD_ID = '01a089e8-3731-7202-ba68-0f4b0a3b2711'
 const DELAYS = [0, 10, 50, 200, 1000]
 const REPEATS = Number(process.env.F1_REPEATS ?? 5)
+if (!Number.isInteger(REPEATS) || REPEATS < 1 || REPEATS > 10) throw new Error('F1_REPEATS must be an integer from 1 to 10')
 const WAITER_DEADLINE_MS = 5000
 const REPLY_BUDGET_MS = WAITER_DEADLINE_MS + 2000
 const FAULT = process.env.F1_FAULT ?? null
@@ -106,7 +107,11 @@ try {
         }
         const returned = now()
         const reply = JSON.parse(await nextLine())
-        if (reply.round !== n || reply.outcome !== 'acquired') failures.push(`round ${n}: ${JSON.stringify(reply)}`)
+        if (reply.round !== n || reply.outcome !== 'acquired' ||
+          !Number.isFinite(reply.blockedMs) || reply.blockedMs < 0 ||
+          typeof reply.acquiredNs !== 'string' || !/^\d+$/.test(reply.acquiredNs)) {
+          failures.push(`round ${n}: ${JSON.stringify(reply)}`)
+        }
         if (mode === 'guarded' && (probe?.status !== 'free' || probe?.guard?.status !== 'acquired')) {
           failures.push(`round ${n}: probe ${JSON.stringify(probe)}`)
         }
@@ -130,7 +135,7 @@ try {
 }
 const stops = await stopAll(live)
 const incomplete = stops.filter((s) => s.incomplete)
-for (const stop of stops) if (!stop.incomplete && stop.exitCode !== 0) failures.push(`waiter exit ${JSON.stringify(stop)}`)
+for (const stop of stops) if (!stop.incomplete && (stop.exitCode !== 0 || stop.error)) failures.push(`waiter exit ${JSON.stringify(stop)}`)
 if (results.length !== expectedRounds) failures.push(`rounds ${results.length}/${expectedRounds}`)
 
 const after = { guard: identity(guardPath), lock: identity(lockPath) }

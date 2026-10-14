@@ -50,6 +50,13 @@ test('partial or malformed output is unknown for every PID', () => {
     rec('px') + rec('f3', 'G0x3;0x2'),
     rec('p100') + rec('f3', 'G0x3;0x2', 'n/x'),
     rec('p100') + rec('f3', 'G0x3;0x2') + rec('p200') + rec('f4'),
+    rec('p100') + 'f3\0G0x3;0x2',
+    rec('p100') + 'f3\0G0x3;0x2\0',
+    rec('p100') + 'f3\0G0x3;0x2\n',
+    rec('p100') + rec('f3', 'G0x4003;0x2', 'G0x3;0x2'),
+    rec('p100') + rec('f', 'G0x3;0x2'),
+    rec('p9007199254740993') + rec('f3', 'G0x3;0x2'),
+    rec('p0') + rec('f3', 'G0x3;0x2'),
   ]) {
     const scan = ok(stdout)
     assert.equal(scan.valid, false, JSON.stringify(stdout))

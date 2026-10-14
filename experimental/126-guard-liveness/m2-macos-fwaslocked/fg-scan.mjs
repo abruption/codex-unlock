@@ -10,6 +10,8 @@
 //   - every descriptor of the PID lacks the bit           -> reject
 //   - at least one descriptor has the bit                 -> not_excluded
 // A present bit never proves a holder: it is sticky after LOCK_UN.
+// Detectable truncation is invalid. A clean omission of whole process/file
+// records cannot be detected from this output and is not ruled out here.
 import { spawnSync } from 'node:child_process'
 
 export const FWASLOCKED = 0x4000
@@ -34,10 +36,12 @@ export function interpretScan({ status, signal = null, error = null, stderr = ''
   if (signal) scan.problems.push(`signal:${signal}`)
   if (status !== 0) scan.problems.push(`status:${status}`)
   if (stderr) scan.problems.push('stderr')
+  if (stdout && !stdout.endsWith('\0\n')) scan.problems.push('unterminated_record')
   let pid = null
   let file = null
   for (const record of stdout.split('\n')) {
     if (!record) continue
+    if (!record.endsWith('\0')) scan.problems.push('unterminated_field')
     for (const field of record.split('\0')) {
       if (!field) continue
       const tag = field[0]
@@ -45,18 +49,20 @@ export function interpretScan({ status, signal = null, error = null, stderr = ''
       if (tag === 'p') {
         if (file && file.flags === null) scan.problems.push(`no_flags:${file.pid}:${file.fd}`)
         file = null
-        pid = /^\d+$/.test(value) ? Number(value) : null
+        pid = /^[1-9]\d*$/.test(value) && Number.isSafeInteger(Number(value)) ? Number(value) : null
         if (pid === null) scan.problems.push(`bad_pid:${value}`)
       } else if (tag === 'f') {
         if (file && file.flags === null) scan.problems.push(`no_flags:${file.pid}:${file.fd}`)
         if (pid === null) scan.problems.push('file_without_process')
+        if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) scan.problems.push(`bad_fd:${value}`)
         file = { pid, fd: value, flags: null, wasLocked: null }
         scan.files.push(file)
       } else if (tag === 'G') {
         if (!file) { scan.problems.push('flags_without_file'); continue }
+        if (file.flags !== null) scan.problems.push(`duplicate_flags:${file.pid}:${file.fd}`)
         file.flags = value
         const match = /^0x([0-9a-f]+)(;0x[0-9a-f]+)?$/i.exec(value)
-        if (match) file.wasLocked = (parseInt(match[1], 16) & FWASLOCKED) !== 0
+        if (match) file.wasLocked = (BigInt(`0x${match[1]}`) & BigInt(FWASLOCKED)) !== 0n
         else scan.problems.push(`bad_flags:${value}`)
       } else {
         scan.problems.push(`unexpected_field:${tag}`)

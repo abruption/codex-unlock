@@ -4,9 +4,9 @@
 Acquires the thread flock under `.coordination.lock` like Codex v0.162.1 and
 holds it until stdin EOF (exit 0) or a 20 s lifetime (exit 3). It explicitly sets and verifies
 both requested dumpable values with prctl, modelling a process
-that hardened itself. Pinned v0.162.1 source shows the lock-owning `codex`
-binary does not do this; the fixture exists to measure fail-closed behaviour
-if some build or wrapper does.
+that hardened itself. A targeted search of pinned v0.162.1 found no direct
+hardening call in the ordinary CLI main; this does not establish a deployed
+writer's dumpability. The fixture models a non-dumpable candidate.
 
 Prints one JSON line {"ready":true,"pid":..,"fd":..,"dumpable":..}.
 """
