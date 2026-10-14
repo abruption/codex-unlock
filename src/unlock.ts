@@ -70,14 +70,14 @@ function sameStringArray(before: string[] | null, after: string[] | null): boole
 }
 
 function transcriptSnapshot(path: string): PublicFileSnapshot {
-  const before = lstatSync(path);
+  const before = lstatSync(path, { bigint: true });
   if (!before.isFile() || before.isSymbolicLink()) {
     throw new Error("transcript is a symlink or non-regular file");
   }
   const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
-    const opened = fstatSync(fd);
-    const after = lstatSync(path);
+    const opened = fstatSync(fd, { bigint: true });
+    const after = lstatSync(path, { bigint: true });
     if (
       !opened.isFile() || !after.isFile() || after.isSymbolicLink() ||
       !sameSnapshot(publicSnapshot(before), publicSnapshot(opened)) ||

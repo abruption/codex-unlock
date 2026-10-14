@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import type { Stats } from "node:fs";
+import type { BigIntStats, Stats } from "node:fs";
 
 import type { PublicFileSnapshot } from "./types.js";
 
@@ -232,17 +232,41 @@ export function errorText(error: unknown): string {
 }
 
 export function publicSnapshot(
-  value: Stats,
+  value: Stats | BigIntStats,
 ): PublicFileSnapshot {
+  const integer = (field: string, input: number | bigint): number => {
+    const converted = Number(input);
+    if (!Number.isSafeInteger(converted) || converted < 0) {
+      throw new Error(`file snapshot ${field} is not a safe non-negative integer`);
+    }
+    return converted;
+  };
+  const identity = (field: string, input: number | bigint): string => {
+    if (typeof input === "bigint") {
+      if (input < 0n) throw new Error(`file snapshot ${field} is negative`);
+      return input.toString();
+    }
+    // Already-rounded numeric identities cannot be recovered by BigInt().
+    return String(integer(field, input));
+  };
+  // BigIntStats.mtimeMs truncates sub-millisecond precision. Retain the v1
+  // number field and its fractional milliseconds without converting the
+  // entire nanosecond timestamp to a (potentially rounded) Number first.
+  const modifiedMs = "mtimeNs" in value
+    ? Number(value.mtimeNs / 1_000_000n) + Number(value.mtimeNs % 1_000_000n) / 1_000_000
+    : value.mtimeMs;
+  if (!Number.isFinite(modifiedMs) || Math.abs(modifiedMs) > Number.MAX_SAFE_INTEGER) {
+    throw new Error("file snapshot modification time is not representable");
+  }
   return {
-    device: String(value.dev),
-    inode: String(value.ino),
-    mode: value.mode,
-    uid: value.uid,
-    links: value.nlink,
-    size: value.size,
+    device: identity("device", value.dev),
+    inode: identity("inode", value.ino),
+    mode: integer("mode", value.mode),
+    uid: integer("uid", value.uid),
+    links: integer("links", value.nlink),
+    size: integer("size", value.size),
     modifiedAt: value.mtime.toISOString(),
-    modifiedMs: value.mtimeMs,
+    modifiedMs,
   };
 }
 

@@ -121,7 +121,7 @@ export async function inspectTranscriptPath(
   candidates: string[] = [path],
 ): Promise<TranscriptInspection> {
   try {
-    const beforeStat = await lstat(path);
+    const beforeStat = await lstat(path, { bigint: true });
     if (!beforeStat.isFile() || beforeStat.isSymbolicLink()) {
       return {
         status: "unreadable",
@@ -135,7 +135,7 @@ export async function inspectTranscriptPath(
     }
     const before = publicSnapshot(beforeStat);
     const lastRecord = parseLastRecord(await readLastNonEmptyLine(path, before.size));
-    const after = publicSnapshot(await lstat(path));
+    const after = publicSnapshot(await lstat(path, { bigint: true }));
     return {
       status: "found",
       path,
@@ -194,10 +194,10 @@ export function sameLastRecord(
 export async function stableFileHash(
   path: string,
 ): Promise<{ hash: string; snapshot: PublicFileSnapshot }> {
-  const before = publicSnapshot(await lstat(path));
+  const before = publicSnapshot(await lstat(path, { bigint: true }));
   const { sha256File } = await import("./util.js");
   const hash = await sha256File(path);
-  const after = publicSnapshot(await lstat(path));
+  const after = publicSnapshot(await lstat(path, { bigint: true }));
   if (!sameSnapshot(before, after)) {
     throw new Error("transcript changed while hashing");
   }
