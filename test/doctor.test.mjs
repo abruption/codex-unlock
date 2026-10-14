@@ -684,7 +684,28 @@ test("matches owner locks by device and inode under a non-ASCII Codex home", asy
   t.after(async () => await stopChild(value.child));
 
   const inspection = await inspectThread(THREAD_ID, value.options);
-  assert.equal(inspection.classification, "live_owner");
+  // A classification failure occurs before ownerLockFiles mapping. Preserve
+  // its evidence without emitting argv, cwd, transcript contents or raw paths.
+  const diagnostics = JSON.stringify({
+    classification: inspection.classification,
+    blockers: inspection.blockers,
+    warnings: inspection.warnings,
+    lock: {
+      observation: inspection.lock.observation,
+      stable: inspection.lock.stable,
+      probe: {
+        status: inspection.lock.probe.status,
+        guard: inspection.lock.probe.guard,
+        errorCode: inspection.lock.probe.error?.split(":", 1)[0],
+      },
+    },
+    ownerIdentityStable: inspection.ownerIdentityStable,
+    openers: inspection.openers.map(({ pid, identityComplete, errors }) => ({
+      pid, identityComplete, errorCodes: errors.map((error) => error.split(":", 1)[0]),
+    })),
+    fixture: { exitCode: value.child.exitCode, signalCode: value.child.signalCode },
+  });
+  assert.equal(inspection.classification, "live_owner", diagnostics);
   assert.deepEqual(inspection.ownerLockFiles, [value.lockPath]);
   assert.ok(!inspection.blockers.includes("owner_lock_file_lookup_failed"));
   assert.equal(inspection.safeToUnlock, true, inspection.blockers.join(","));
