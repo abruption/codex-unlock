@@ -6,12 +6,15 @@
 // Between `attempt` and `finish` it holds both descriptors, so an independently
 // timed lsof scan can observe it as an opener. It never holds the thread lock.
 // Commands arrive over a Unix socket; stdin EOF ends the process normally.
+// FIXTURE_LIFETIME_MS bounds the process (exit 3). Copied from the #100
+// fixture with only this lifetime added.
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import net from 'node:net'
 import path from 'node:path'
 import { performance } from 'node:perf_hooks'
 import process from 'node:process'
+import { setTimeout } from 'node:timers'
 
 const require = createRequire(process.env.FIXTURE_REQUIRE_FROM)
 const { flockSync } = require('fs-ext-extra-prebuilt')
@@ -85,6 +88,11 @@ const server = net.createServer((socket) => {
   socket.on('error', () => {})
 })
 server.listen(socketPath, () => process.stdout.write('ready\n'))
+setTimeout(() => {
+  finish()
+  try { fs.unlinkSync(socketPath) } catch { /* already gone */ }
+  process.exit(3)
+}, Number(process.env.FIXTURE_LIFETIME_MS ?? 60000)).unref()
 process.stdin.resume()
 process.stdin.on('end', () => {
   finish()

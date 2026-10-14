@@ -8,12 +8,15 @@
 // orchestrator's marker file exists (written while the orchestrator holds the
 // guard), then poll the guard until it is acquired or the deadline passes.
 // Release immediately and print one JSON line. stdin EOF ends the process.
+// FIXTURE_LIFETIME_MS bounds the whole process: when it passes, the waiter
+// exits on its own with code 3. FIXTURE_FAULT_SKIP_ROUND (fault checks only)
+// arms that round but never answers it.
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import process from 'node:process'
 import readline from 'node:readline'
-import { setImmediate } from 'node:timers'
+import { setImmediate, setTimeout } from 'node:timers'
 
 const require = createRequire(process.env.FIXTURE_REQUIRE_FROM)
 const { flockSync } = require('fs-ext-extra-prebuilt')
@@ -21,17 +24,24 @@ const { flockSync } = require('fs-ext-extra-prebuilt')
 const guardPath = process.env.FIXTURE_GUARD
 const markerDir = process.env.FIXTURE_MARKER_DIR
 const deadlineMs = Number(process.env.FIXTURE_DEADLINE_MS)
+const lifetimeMs = Number(process.env.FIXTURE_LIFETIME_MS ?? 120000)
+const skipRound = Number(process.env.FIXTURE_FAULT_SKIP_ROUND ?? 0)
 const POLL_MS = 0.1
 const sleeper = new Int32Array(new SharedArrayBuffer(4))
 const nap = () => Atomics.wait(sleeper, 0, 0, POLL_MS)
 const now = () => process.hrtime.bigint()
 const ms = (a, b) => Number(b - a) / 1e6
+// The lifetime is enforced in the polling loops themselves: a timer alone
+// cannot fire while a synchronous round is running.
+const processDeadline = now() + BigInt(Math.round(lifetimeMs * 1e6))
+const checkLifetime = () => { if (now() > processDeadline) process.exit(3) }
 
 function round(n) {
   const start = now()
   const limit = start + BigInt(Math.round(deadlineMs * 1e6))
   const marker = path.join(markerDir, `marker-${n}`)
   while (!fs.existsSync(marker)) {
+    checkLifetime()
     if (now() > limit) return { round: n, outcome: 'marker_timeout' }
     nap()
   }
@@ -47,6 +57,7 @@ function round(n) {
       } catch (error) {
         if (error.code !== 'EAGAIN' && error.code !== 'EWOULDBLOCK') throw error
       }
+      checkLifetime()
       if (now() > limit) return { round: n, outcome: 'acquire_timeout', polls }
       nap()
     }
@@ -66,9 +77,12 @@ const lines = readline.createInterface({ input: process.stdin })
 lines.on('line', (line) => {
   const match = /^round (\d+)$/.exec(line)
   if (!match) return
+  checkLifetime()
   process.stdout.write(`armed ${match[1]}\n`)
+  if (Number(match[1]) === skipRound) return
   // Let the reply flush before the synchronous wait starts.
   setImmediate(() => process.stdout.write(JSON.stringify(round(Number(match[1]))) + '\n'))
 })
 lines.on('close', () => process.exit(0))
+setTimeout(() => process.exit(3), lifetimeMs).unref()
 process.stdout.write('ready\n')

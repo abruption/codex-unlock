@@ -4,7 +4,8 @@
 // open window, optional removal of one PID's process sets (modelled clean
 // omission), plus an `lsof +fg` scan taken in the same window and logged for
 // the hypothetical FWASLOCKED refusal filter. The product's own scan output
-// is passed through unchanged apart from the modelled omission.
+// is passed through unchanged apart from the modelled omission. spawnSync's
+// timeout makes Node send SIGTERM to a slow lsof; `signal` is logged.
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import net from 'node:net'
@@ -75,7 +76,7 @@ async function main() {
   }
   let stdout = result.stdout?.toString() ?? ''
   if (typeof config.hidePid === 'number') stdout = removePidSets(stdout, config.hidePid)
-  log({ event: 'done', isPathScan, exitCode: result.status, stdoutHead: stdout.slice(0, 200).replace(/\0/g, '|') })
+  log({ event: 'done', isPathScan, exitCode: result.status, signal: result.signal, error: result.error?.message ?? null, stdoutHead: stdout.slice(0, 200).replace(/\0/g, '|') })
   process.stdout.write(stdout)
   process.stderr.write(result.stderr?.toString() ?? '')
   process.exitCode = result.status ?? 1
