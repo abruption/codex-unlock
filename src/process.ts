@@ -320,8 +320,15 @@ export interface ArgumentEvidence {
   error?: string;
 }
 
-// Deliberately bounded grammar from `codex-cli 0.159.2 --help`, `exec --help`,
-// and `resume --help`. Unknown options/modes (including variadic --image) do
+// Internal maintenance metadata, not an observed owner's version or public API.
+export const CODEX_GRAMMAR_BASELINE = Object.freeze({
+  version: "0.159.2",
+  tag: "rust-v0.159.2",
+  commit: "ff6aec96948b70d94983af2641a6b67c94faeff5",
+});
+
+// Deliberately bounded grammar from the baseline's CLI source and root,
+// exec, and resume help. Unknown options/modes (including variadic --image) do
 // not authorize an owner. New Codex grammar requires explicit verification.
 const ROOT_VALUE_OPTIONS = new Set([
   "--config", "-c", "--enable", "--disable", "--model", "-m",

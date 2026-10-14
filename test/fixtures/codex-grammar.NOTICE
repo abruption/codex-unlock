@@ -1,0 +1,14 @@
+The source excerpts in codex-grammar.json are from OpenAI Codex at
+ff6aec96948b70d94983af2641a6b67c94faeff5 and remain under Apache-2.0;
+see codex-grammar.LICENSE. The excerpts are unmodified, with their original
+file paths, line ranges and Git blob identifiers recorded in the JSON.
+The surrounding metadata and test cases were added by codex-unlock.
+
+Upstream NOTICE (at the same commit):
+
+OpenAI Codex
+Copyright 2025 OpenAI
+
+This project includes code derived from [Ratatui](https://github.com/ratatui/ratatui), licensed under the MIT license.
+Copyright (c) 2016-2022 Florian Dehau
+Copyright (c) 2023-2025 The Ratatui Developers

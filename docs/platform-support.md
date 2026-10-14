@@ -61,7 +61,18 @@ Process evidence is collected with the same rules on every supported platform:
   `codex -C /work/app-server` is not a shared-service invocation. Actual
   `app-server`, `remote-control`, `daemon`, `exec-server`, and remote connection
   options remain refused. The bounded grammar follows `codex-cli 0.159.2`
-  help and CLI source for interactive, exec, resume, and fork modes. The
+  help and CLI source for interactive, exec, resume, and fork modes, pinned to
+  [upstream commit ff6aec96948b70d94983af2641a6b67c94faeff5](https://github.com/openai/codex/tree/ff6aec96948b70d94983af2641a6b67c94faeff5).
+  `CODEX_GRAMMAR_BASELINE` in `src/process.ts` is internal maintenance metadata;
+  it does not identify the running owner's version. Offline tests in
+  `test/grammar-contract.test.mjs` use manually reviewed examples and source
+  excerpts in `test/fixtures/codex-grammar.json`, recording immutable source
+  links and Git blob IDs. These tests preserve the reviewed subset; they do
+  not fetch upstream or automatically certify new Codex releases. Before
+  adding an option, review its source declaration, arity, aliases, mode scope,
+  and shared-service implications at a pinned commit, then add acceptance and
+  refusal cases. Never run an owner's executable or trust local `codex --version`
+  as evidence of that owner's identity or argument safety. The
   official `--yolo` and `--not-so-yolo` aliases share the recognized scope of
   their canonical flags, and exec accepts `--experimental-json` as an alias
   of `--json`. Unknown options,

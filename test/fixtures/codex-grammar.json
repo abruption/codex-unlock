@@ -1,0 +1,296 @@
+{
+  "baseline": {
+    "version": "0.159.2",
+    "tag": "rust-v0.159.2",
+    "commit": "ff6aec96948b70d94983af2641a6b67c94faeff5"
+  },
+  "description": "Manually source-reviewed examples for the bounded owner-recognition grammar, not a complete upstream CLI parser or automatic compatibility certification. Refusals may be stricter than upstream.",
+  "upstreamLicense": {
+    "spdx": "Apache-2.0",
+    "licenseFile": "codex-grammar.LICENSE",
+    "noticeFile": "codex-grammar.NOTICE",
+    "url": "https://github.com/openai/codex/blob/ff6aec96948b70d94983af2641a6b67c94faeff5/LICENSE"
+  },
+  "sources": [
+    {
+      "id": "root",
+      "path": "codex-rs/cli/src/main.rs",
+      "blob": "bdd7771b3aadfd69f46698c14844a6d65e1e65ba",
+      "startLine": 143,
+      "endLine": 225,
+      "url": "https://github.com/openai/codex/blob/ff6aec96948b70d94983af2641a6b67c94faeff5/codex-rs/cli/src/main.rs#L143-L225",
+      "excerpt": "enum Subcommand {\n    /// Browse all agent sessions on the shared local app-server daemon.\n    Agents(AgentsCommand),\n\n    /// Internal: forward a local TCP socket through an HTTP/3 CONNECT proxy.\n    #[clap(hide = true)]\n    TcpTunnel(codex_tcp_tunnel::Args),\n    /// Run Codex non-interactively.\n    #[clap(visible_alias = \"e\")]\n    Exec(ExecCli),\n\n    /// Run a code review non-interactively.\n    Review(ReviewCommand),\n\n    /// Manage login.\n    Login(LoginCommand),\n\n    /// Remove stored authentication credentials.\n    Logout(LogoutCommand),\n\n    /// Manage external MCP servers for Codex.\n    Mcp(McpCli),\n\n    /// Manage Codex plugins.\n    Plugin(PluginCli),\n\n    /// [experimental] Run the app server or related tooling.\n    AppServer(AppServerCommand),\n\n    /// [experimental] Manage the app-server daemon with remote control enabled.\n    RemoteControl(RemoteControlCommand),\n\n    /// Launch the Desktop app (opens the app installer if missing).\n    #[cfg(any(target_os = \"macos\", target_os = \"windows\"))]\n    App(app_cmd::AppCommand),\n\n    /// Generate shell completion scripts.\n    Completion(CompletionCommand),\n\n    /// Update Codex to the latest version.\n    Update,\n\n    /// Diagnose local Codex installation, config, auth, and runtime health.\n    Doctor(DoctorCommand),\n\n    /// Run commands within a Codex-provided sandbox.\n    Sandbox(HostSandboxArgs),\n\n    /// Debugging tools.\n    Debug(DebugCommand),\n\n    /// Execpolicy tooling.\n    #[clap(hide = true)]\n    Execpolicy(ExecpolicyCommand),\n\n    /// Apply the latest diff produced by Codex agent as a `git apply` to your local working tree.\n    #[clap(visible_alias = \"a\")]\n    Apply(ApplyCommand),\n\n    /// Resume a previous interactive session (picker by default; use --last to continue the most recent).\n    Resume(ResumeCommand),\n\n    /// Queue a message for an existing session.\n    Queue(QueueCommand),\n\n    /// Archive a saved session by id or session name.\n    Archive(SessionArchiveCommand),\n\n    /// Permanently delete a saved session by id or session name.\n    Delete(DeleteCommand),\n\n    /// Inspect or migrate legacy local sessions to paginated thread history.\n    MigrateRollouts(migrate_rollouts::MigrateRolloutsCommand),\n\n    /// Unarchive a saved session by id or session name.\n    Unarchive(SessionArchiveCommand),\n\n    /// Fork a previous interactive session (picker by default; use --last to fork the most recent).\n    Fork(ForkCommand),\n\n    /// [EXPERIMENTAL] Browse tasks from Codex Cloud and apply changes locally.\n    #[clap(name = \"cloud\", alias = \"cloud-tasks\")]\n    Cloud(CloudTasksCli),"
+    },
+    {
+      "id": "shared",
+      "path": "codex-rs/utils/cli/src/shared_options.rs",
+      "blob": "5e525662d49ce0697ff6965473be178378443776",
+      "startLine": 9,
+      "endLine": 78,
+      "url": "https://github.com/openai/codex/blob/ff6aec96948b70d94983af2641a6b67c94faeff5/codex-rs/utils/cli/src/shared_options.rs#L9-L78",
+      "excerpt": "#[derive(Args, Clone, Debug, Default)]\npub struct SharedCliOptions {\n    /// Optional image(s) to attach to the initial prompt.\n    #[arg(\n        long = \"image\",\n        short = 'i',\n        value_name = \"FILE\",\n        value_delimiter = ',',\n        num_args = 1..\n    )]\n    pub images: Vec<PathBuf>,\n\n    /// Model the agent should use.\n    #[arg(long, short = 'm')]\n    pub model: Option<String>,\n\n    /// Use open-source provider.\n    #[arg(long = \"oss\", default_value_t = false)]\n    pub oss: bool,\n\n    /// Specify which local provider to use (lmstudio or ollama).\n    /// If not specified with --oss, will use config default or show selection.\n    #[arg(long = \"local-provider\")]\n    pub oss_provider: Option<String>,\n\n    /// Layer $CODEX_HOME/<name>.config.toml on top of the base user config.\n    #[arg(long = \"profile\", short = 'p')]\n    pub config_profile_v2: Option<ProfileV2Name>,\n\n    /// Select the sandbox policy to use when executing model-generated shell\n    /// commands.\n    #[arg(long = \"sandbox\", short = 's')]\n    pub sandbox_mode: Option<SandboxModeCliArg>,\n\n    /// Route approval requests through automatic review using the workspace-write sandbox.\n    #[arg(\n        long = \"approve-for-me\",\n        alias = \"not-so-yolo\",\n        default_value_t = false,\n        conflicts_with_all = [\"sandbox_mode\", \"dangerously_bypass_approvals_and_sandbox\"]\n    )]\n    pub auto_review: bool,\n\n    /// Skip all confirmation prompts and execute commands without sandboxing.\n    /// EXTREMELY DANGEROUS. Intended solely for running in environments that are externally sandboxed.\n    #[arg(\n        long = \"dangerously-bypass-approvals-and-sandbox\",\n        alias = \"yolo\",\n        default_value_t = false\n    )]\n    pub dangerously_bypass_approvals_and_sandbox: bool,\n\n    /// Run enabled hooks without requiring persisted hook trust for this invocation.\n    /// DANGEROUS. Intended only for automation that already vets hook sources.\n    #[arg(long = \"dangerously-bypass-hook-trust\", default_value_t = false)]\n    pub bypass_hook_trust: bool,\n\n    /// Tell the agent to use the specified directory as its working root.\n    #[clap(long = \"cd\", short = 'C', value_name = \"DIR\")]\n    pub cwd: Option<PathBuf>,\n\n    /// Run the session in a new managed Git worktree.\n    #[arg(long = \"worktree\", default_value_t = false)]\n    pub worktree: bool,\n\n    /// Additional directories that should be writable alongside the primary workspace.\n    #[arg(long = \"add-dir\", value_name = \"DIR\", value_hint = clap::ValueHint::DirPath)]\n    pub add_dir: Vec<PathBuf>,\n}\n"
+    },
+    {
+      "id": "exec",
+      "path": "codex-rs/exec/src/cli.rs",
+      "blob": "0ef0be6af9cc177e86da68e9fa20df05f9ac813c",
+      "startLine": 10,
+      "endLine": 85,
+      "url": "https://github.com/openai/codex/blob/ff6aec96948b70d94983af2641a6b67c94faeff5/codex-rs/exec/src/cli.rs#L10-L85",
+      "excerpt": "#[derive(Parser, Debug)]\n#[command(\n    version,\n    override_usage = \"codex exec [OPTIONS] [PROMPT]\\n       codex exec [OPTIONS] <COMMAND> [ARGS]\"\n)]\npub struct Cli {\n    /// Action to perform. If omitted, runs a new non-interactive session.\n    #[command(subcommand)]\n    pub command: Option<Command>,\n\n    /// Error out when config.toml contains fields that are not recognized by this version of Codex.\n    #[arg(long = \"strict-config\", global = true, default_value_t = false)]\n    pub strict_config: bool,\n\n    #[clap(flatten)]\n    pub shared: ExecSharedCliOptions,\n\n    /// Source classification for newly created or forked threads.\n    #[arg(long = \"thread-source\", value_name = \"SOURCE\", global = true)]\n    pub thread_source: Option<ThreadSource>,\n\n    /// Allow running Codex outside a Git repository.\n    #[arg(long = \"skip-git-repo-check\", global = true, default_value_t = false)]\n    pub skip_git_repo_check: bool,\n\n    /// Run without persisting session files to disk.\n    #[arg(long = \"ephemeral\", global = true, default_value_t = false)]\n    pub ephemeral: bool,\n\n    /// Do not load `$CODEX_HOME/config.toml`; auth still uses `CODEX_HOME`.\n    #[arg(long = \"ignore-user-config\", global = true, default_value_t = false)]\n    pub ignore_user_config: bool,\n\n    /// Do not load user or project execpolicy `.rules` files.\n    #[arg(long = \"ignore-rules\", global = true, default_value_t = false)]\n    pub ignore_rules: bool,\n\n    /// Path to a JSON Schema file describing the model's final response shape.\n    #[arg(long = \"output-schema\", value_name = \"FILE\", global = true)]\n    pub output_schema: Option<PathBuf>,\n\n    #[clap(skip)]\n    pub config_overrides: CliConfigOverrides,\n\n    /// Specifies color settings for use in the output.\n    #[arg(long = \"color\", value_enum, default_value_t = Color::Auto)]\n    pub color: Color,\n\n    /// Print events to stdout as JSONL.\n    #[arg(\n        long = \"json\",\n        alias = \"experimental-json\",\n        default_value_t = false,\n        global = true\n    )]\n    pub json: bool,\n\n    /// Specifies file where the last message from the agent should be written.\n    #[arg(\n        long = \"output-last-message\",\n        short = 'o',\n        value_name = \"FILE\",\n        global = true\n    )]\n    pub last_message_file: Option<PathBuf>,\n\n    /// Initial instructions for the agent. If not provided as an argument (or\n    /// if `-` is used), instructions are read from stdin. If stdin is piped and\n    /// a prompt is also provided, stdin is appended as a `<stdin>` block.\n    #[arg(value_name = \"PROMPT\", value_hint = clap::ValueHint::Other)]\n    pub prompt: Option<String>,\n}\n\nimpl std::ops::Deref for Cli {\n    type Target = SharedCliOptions;\n"
+    }
+  ],
+  "cases": [
+    {
+      "id": "literal-prompt",
+      "argv": ["codex", "exec", "--", "fix the daemon"],
+      "expected": "accepted",
+      "source": "exec"
+    },
+    {
+      "id": "literal-service-conservative-refusal",
+      "argv": ["codex", "--", "app-server"],
+      "expected": "shared",
+      "source": "root"
+    },
+    {
+      "id": "new-service-looking-mode",
+      "argv": ["codex", "daemon-worker"],
+      "expected": "unverified",
+      "source": "root"
+    },
+    {
+      "id": "interactive",
+      "argv": [
+        "codex",
+        "fix bugs"
+      ],
+      "expected": "accepted",
+      "source": "shared"
+    },
+    {
+      "id": "exec",
+      "argv": [
+        "codex",
+        "exec",
+        "fix bugs"
+      ],
+      "expected": "accepted",
+      "source": "root"
+    },
+    {
+      "id": "exec-alias",
+      "argv": [
+        "codex",
+        "e",
+        "fix bugs"
+      ],
+      "expected": "accepted",
+      "source": "root"
+    },
+    {
+      "id": "resume",
+      "argv": [
+        "codex",
+        "resume",
+        "--last"
+      ],
+      "expected": "accepted",
+      "source": "root"
+    },
+    {
+      "id": "fork",
+      "argv": [
+        "codex",
+        "fork",
+        "thread-id",
+        "fix bugs"
+      ],
+      "expected": "accepted",
+      "source": "root"
+    },
+    {
+      "id": "single-value",
+      "argv": [
+        "codex",
+        "-m",
+        "example",
+        "exec",
+        "fix bugs"
+      ],
+      "expected": "accepted",
+      "source": "shared"
+    },
+    {
+      "id": "missing-value",
+      "argv": [
+        "codex",
+        "-m"
+      ],
+      "expected": "unverified",
+      "source": "shared"
+    },
+    {
+      "id": "attached-value",
+      "argv": [
+        "codex",
+        "--model=example",
+        "exec",
+        "fix bugs"
+      ],
+      "expected": "accepted",
+      "source": "shared"
+    },
+    {
+      "id": "yolo",
+      "argv": [
+        "codex",
+        "--yolo",
+        "exec",
+        "fix bugs"
+      ],
+      "expected": "accepted",
+      "source": "shared"
+    },
+    {
+      "id": "yolo-canonical",
+      "argv": [
+        "codex",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "exec",
+        "fix bugs"
+      ],
+      "expected": "accepted",
+      "source": "shared"
+    },
+    {
+      "id": "not-so-yolo",
+      "argv": [
+        "codex",
+        "--not-so-yolo",
+        "fix bugs"
+      ],
+      "expected": "accepted",
+      "source": "shared"
+    },
+    {
+      "id": "not-so-yolo-canonical",
+      "argv": [
+        "codex",
+        "--approve-for-me",
+        "fix bugs"
+      ],
+      "expected": "accepted",
+      "source": "shared"
+    },
+    {
+      "id": "json-alias",
+      "argv": [
+        "codex",
+        "exec",
+        "--experimental-json",
+        "fix bugs"
+      ],
+      "expected": "accepted",
+      "source": "exec"
+    },
+    {
+      "id": "json-canonical",
+      "argv": [
+        "codex",
+        "exec",
+        "--json",
+        "fix bugs"
+      ],
+      "expected": "accepted",
+      "source": "exec"
+    },
+    {
+      "id": "json-root-scope",
+      "argv": [
+        "codex",
+        "--json",
+        "fix bugs"
+      ],
+      "expected": "unverified",
+      "source": "exec"
+    },
+    {
+      "id": "exec-value",
+      "argv": [
+        "codex",
+        "exec",
+        "--output-schema",
+        "schema.json",
+        "fix bugs"
+      ],
+      "expected": "accepted",
+      "source": "exec"
+    },
+    {
+      "id": "exec-value-root-scope",
+      "argv": [
+        "codex",
+        "--output-schema",
+        "schema.json",
+        "fix bugs"
+      ],
+      "expected": "unverified",
+      "source": "exec"
+    },
+    {
+      "id": "variadic-refusal",
+      "argv": [
+        "codex",
+        "--image",
+        "a.png",
+        "b.png",
+        "fix bugs"
+      ],
+      "expected": "unverified",
+      "source": "shared"
+    },
+    {
+      "id": "unknown-option",
+      "argv": [
+        "codex",
+        "exec",
+        "--future-option",
+        "fix bugs"
+      ],
+      "expected": "unverified",
+      "source": "exec"
+    },
+    {
+      "id": "nested-refusal",
+      "argv": [
+        "codex",
+        "exec",
+        "resume",
+        "--last"
+      ],
+      "expected": "unverified",
+      "source": "exec"
+    },
+    {
+      "id": "shared-service",
+      "argv": [
+        "codex",
+        "app-server"
+      ],
+      "expected": "shared",
+      "source": "root"
+    },
+    {
+      "id": "ambiguous-operands",
+      "argv": [
+        "codex",
+        "exec",
+        "fix",
+        "bugs"
+      ],
+      "expected": "unverified",
+      "source": "exec"
+    }
+  ]
+}
