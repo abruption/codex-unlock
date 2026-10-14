@@ -199,6 +199,7 @@ try {
     "docs/cli-reference.md",
     "docs/json-v1.md",
     "docs/maintainer-release.md",
+    "docs/macos-lock-attribution.md",
     "docs/platform-support.md",
     "docs/safety-race-matrix.md",
     "docs/update-security.md",
@@ -260,30 +261,31 @@ try {
   const packageRoot = join(installDirectory, "node_modules", "codex-unlock");
   const manifest = readJson(join(packageRoot, "package.json"));
   const readmes = ["README.md", "README.ko.md", "README.ja.md", "README.zh-CN.md"];
-  for (const readme of readmes) {
-    const source = readFileSync(resolve(readme), "utf8");
-    const artifact = readFileSync(join(packageRoot, readme), "utf8");
-    assert.equal(artifact, source, `${readme} content must be preserved in the packed artifact`);
+  const documents = [...readmes, "SECURITY.md", "docs/platform-support.md", "docs/macos-lock-attribution.md"];
+  for (const document of documents) {
+    const source = readFileSync(resolve(document), "utf8");
+    const artifact = readFileSync(join(packageRoot, document), "utf8");
+    assert.equal(artifact, source, `${document} content must be preserved in the packed artifact`);
     const destinations = markdownLinkDestinations(artifact);
-    for (const localeReadme of readmes) {
-      if (localeReadme === readme) continue;
+    for (const localeReadme of readmes.includes(document) ? readmes : []) {
+      if (localeReadme === document) continue;
       assert.ok(
         destinations.includes(localeReadme),
-        `${readme} must link to the ${localeReadme} language version`,
+        `${document} must link to the ${localeReadme} language version`,
       );
     }
     for (const href of destinations) {
       if (isExternalLink(href) || href.startsWith("#")) continue;
       const target = decodeLinkPath(href.split(/[?#]/, 1)[0]);
       if (!target) continue;
-      const targetPath = resolve(packageRoot, target);
+      const targetPath = resolve(packageRoot, dirname(document), target);
       assert.ok(
         !relative(packageRoot, targetPath).startsWith(".."),
-        `${readme} link must stay within the packed artifact: ${href}`,
+        `${document} link must stay within the packed artifact: ${href}`,
       );
       assert.ok(
         existsSync(targetPath),
-        `${readme} relative link target must be included in the packed artifact: ${href}`,
+        `${document} relative link target must be included in the packed artifact: ${href}`,
       );
     }
   }
