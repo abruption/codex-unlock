@@ -62,9 +62,19 @@ not interpret participation as independent permission to terminate a process.
 
 The pinned Codex
 [process-hardening implementation](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/process-hardening/src/lib.rs#L43-L60)
-sets `PR_SET_DUMPABLE` to zero on Linux. Depending on the caller's privileges and
-procfs access policy, directory ownership checks or fdinfo/exe access can then
-refuse a real native Codex process even though a same-user Node fixture passes.
+sets `PR_SET_DUMPABLE` to zero on Linux when called. This library behavior alone
+does not establish that an ordinary thread-lock owner calls it. Verified callers
+include the
+[responses API proxy](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/responses-api-proxy/src/main.rs#L4-L7),
+[voice host](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/voice-host/src/main.rs#L48-L49),
+and [sandbox host bridge](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/linux-sandbox/src/proxy_lifecycle.rs#L116-L120).
+The inspected [CLI entry point](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/cli/src/main.rs#L1031-L1039)
+does not directly call these hardening functions. This is a targeted source
+check, not an exhaustive call-graph proof or a measurement of the deployed
+owner's dumpability; helper dispatch, launch context and procfs policy still
+matter. If a candidate is non-dumpable, descriptor/executable access can be
+denied even for a same-user observer; proc-directory UID alone is not proof of
+accessibility. A passing same-user Node fixture cannot establish native access.
 The implementation fails closed; it never requests elevated access or changes
 dumpability. The native release binary's positive or intentionally refused
 behavior has not been measured by these tests.
