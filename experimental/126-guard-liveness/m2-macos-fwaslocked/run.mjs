@@ -8,41 +8,48 @@
 // that released with LOCK_UN but kept its descriptor. The +fg scan is taken in
 // the same barrier window, and the modelled omission is applied to it too.
 //
-// No process is signalled. `inspectThread` is called, `unlockInspectedThread`
-// never is. Every child ends on stdin EOF within a bounded wait.
-import { spawn } from 'node:child_process'
+// `inspectThread` is called; `unlockInspectedThread` never is, so no owner
+// is signalled. This runner sends no signal to its children: it closes their
+// stdin and waits with a bound, and each fixture has its own lifetime. Node
+// can still SIGTERM a timed-out `lsof` (spawnSync timeout here, and the
+// product's own diagnostic timeout); the +fg scans record such signals.
+//
+// Any error, unconfirmed child exit, missing scan or result count mismatch
+// makes the run exit nonzero. Scratch is always kept; the socket directory is
+// removed only when every child's exit was observed.
+//
+// M2_FAULT (fault checks only): `early_exit` (an actor exits before ready),
+// `ignore_eof` (an actor ignores EOF, stop budget shorter than its lifetime),
+// `long_socket` (socket path over the platform limit, refused before start).
 import { log } from 'node:console'
-import { once } from 'node:events'
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
-import { clearTimeout, setTimeout } from 'node:timers'
-import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
-import { fgScan, filterDecision } from './fg-scan.mjs'
+import { assertSocketPath, freshPrivateDir, startChild, stopAll, stopChild, writeNew } from '../lib/common.mjs'
+import { fgScan, filterDecision, withoutPid } from './fg-scan.mjs'
 
 const DIR = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(DIR, '../../..')
 const DIST = path.join(ROOT, 'dist')
 const THREAD_ID = '01a089e8-3731-7202-ba68-0f4b0a3b2711'
 const REPEATS = Number(process.env.M2_REPEATS ?? 3)
+const PARTS = (process.env.M2_PARTS ?? '1,2').split(',')
+const FAULT = process.env.M2_FAULT ?? null
+const LIFETIME_MS = 60000
 const REQUIRE_FROM = path.join(ROOT, 'node_modules', 'fs-ext-extra-prebuilt', 'package.json')
 const { inspectThread } = await import(path.join(DIST, 'inspection.js'))
 const { overrideDiagnosticExecutableForTesting } = await import(path.join(DIST, 'process.js'))
 const fsExt = createRequire(REQUIRE_FROM)('fs-ext-extra-prebuilt')
 
-const out = process.env.M2_OUT ?? fs.mkdtempSync(path.join(os.tmpdir(), 'codex-127-m2-'))
-fs.chmodSync(out, 0o700)
+const out = freshPrivateDir('127-m2')
+const sockets = freshPrivateDir('127-s')
 const logFile = path.join(out, 'events.jsonl')
-// Unix socket paths are limited to 104 bytes on macOS, so sockets live in a
-// short private directory supplied by the caller (or os.tmpdir()).
-const sockets = fs.mkdtempSync(path.join(process.env.M2_SOCKET_ROOT ?? os.tmpdir(), 'codex-127-'))
-fs.chmodSync(sockets, 0o700)
-// Every started child, so an error path still ends them by stdin EOF.
 const live = new Set()
 const results = []
+const failures = []
 const incomplete = []
 let homeIndex = 0
 
@@ -52,39 +59,29 @@ function createHome() {
   const sessionDir = path.join(home, 'sessions', '2026', '10', '14')
   fs.mkdirSync(lockDir, { recursive: true, mode: 0o700 })
   fs.mkdirSync(sessionDir, { recursive: true, mode: 0o700 })
-  fs.writeFileSync(path.join(lockDir, '.coordination.lock'), '', { mode: 0o600 })
+  writeNew(path.join(lockDir, '.coordination.lock'), '')
   const lockPath = path.join(lockDir, `${THREAD_ID}.lock`)
-  fs.writeFileSync(lockPath, '', { mode: 0o600 })
-  fs.writeFileSync(path.join(sessionDir, `rollout-2026-10-14T00-00-00-${THREAD_ID}.jsonl`),
+  writeNew(lockPath, '')
+  writeNew(path.join(sessionDir, `rollout-2026-10-14T00-00-00-${THREAD_ID}.jsonl`),
     JSON.stringify({ timestamp: '2026-10-14T00:00:00.000Z', type: 'event_msg', payload: { type: 'task_complete' } }) + '\n')
   return { home, lockPath }
 }
 
-function start(script, env, args = []) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(script.endsWith('.mjs') ? process.execPath : script,
-      script.endsWith('.mjs') ? [script, ...args] : args,
-      { env: { PATH: process.env.PATH, FIXTURE_REQUIRE_FROM: REQUIRE_FROM, ...env }, stdio: ['pipe', 'pipe', 'pipe'] })
-    live.add(child)
-    child.once('exit', () => live.delete(child))
-    let stderr = ''
-    child.stderr.on('data', (chunk) => { stderr += chunk })
-    const timer = setTimeout(() => reject(new Error(`ready timeout ${script}`)), 5000)
-    child.stdout.once('data', (chunk) => {
-      clearTimeout(timer)
-      if (String(chunk).includes('ready')) resolve(child)
-      else reject(new Error(`unexpected output ${chunk}`))
-    })
-    child.once('exit', (code) => { clearTimeout(timer); reject(new Error(`exited early ${code}: ${stderr}`)) })
-  })
+async function start(script, env) {
+  const node = script.endsWith('.mjs')
+  const handle = startChild(node ? process.execPath : script, node ? [script] : [], {
+    env: { PATH: process.env.PATH, FIXTURE_REQUIRE_FROM: REQUIRE_FROM, FIXTURE_LIFETIME_MS: String(LIFETIME_MS), ...env },
+  }, live)
+  const line = await handle.ready
+  if (line !== 'ready') throw new Error(`unexpected first line from ${script}: ${line}`)
+  return handle
 }
 
-async function stop(child) {
-  if (child.exitCode !== null) return child.exitCode
-  child.stdin.end()
-  const code = await Promise.race([once(child, 'exit').then(([c]) => c), delay(10000).then(() => 'incomplete')])
-  if (code === 'incomplete') incomplete.push(child.pid)
-  return code
+async function stop(handle, budgetMs = 10000, expectedExit = 0) {
+  const result = await stopChild(handle, budgetMs)
+  if (result.incomplete) incomplete.push(result)
+  else if (result.exitCode !== expectedExit) failures.push(`pid ${handle.pid} exit ${JSON.stringify(result)} ${handle.stderr}`)
+  return result
 }
 
 // The observer uses its own descriptor and closes it; its bit never appears
@@ -103,36 +100,26 @@ function probe(lockPath) {
   }
 }
 
-function decisions(scan, pids) {
-  return Object.fromEntries(Object.entries(pids).map(([role, pid]) => {
-    const entry = scan.entries.find((e) => e.pid === pid)
-    return [role, { pid, flags: entry?.flags ?? null, wasLocked: entry ? entry.wasLocked : 'absent', decision: filterDecision(entry) }]
-  }))
-}
+const roleView = (scan, pids) => Object.fromEntries(Object.entries(pids).map(([role, pid]) => {
+  const { decision, reason, descriptors } = filterDecision(scan, pid)
+  return [role, { pid, decision, reason, flags: descriptors.map((d) => `${d.fd}:${d.flags}`) }]
+}))
 
 const ACTOR = path.join(DIR, 'actor.mjs')
-const actor = (role, lockPath) => start(ACTOR, { FIXTURE_ROLE: role, FIXTURE_LOCK_PATH: lockPath })
+const actor = (role, lockPath, extra = {}) => start(ACTOR, { FIXTURE_ROLE: role, FIXTURE_LOCK_PATH: lockPath, ...extra })
 
-// Part 1 cases. Each returns { pids, children, after? }.
 const MATRIX = {
-  holder: async (lockPath) => { const h = await actor('holder', lockPath); return { pids: { holder: h.pid }, children: [h] } },
-  holder_opener: async (lockPath) => {
-    const h = await actor('holder', lockPath); const o = await actor('opener', lockPath)
-    return { pids: { holder: h.pid, opener: o.pid }, children: [h, o] }
-  },
-  holder_failed: async (lockPath) => {
-    const h = await actor('holder', lockPath); const f = await actor('failed', lockPath)
-    return { pids: { holder: h.pid, failed: f.pid }, children: [h, f] }
-  },
-  former_holder: async (lockPath) => {
-    const p = await actor('former', lockPath); const h = await actor('holder', lockPath)
-    return { pids: { former: p.pid, holder: h.pid }, children: [p, h] }
-  },
-  former_only: async (lockPath) => { const p = await actor('former', lockPath); return { pids: { former: p.pid }, children: [p] } },
-  failed_after_holder_exit: async (lockPath) => {
-    const h = await actor('holder', lockPath); const f = await actor('failed', lockPath)
-    const code = await stop(h)
-    return { pids: { failed: f.pid, exitedHolder: h.pid }, children: [f], note: `holder exit ${code}` }
+  holder: async (p) => ({ holder: await actor('holder', p) }),
+  holder_multi_opener: async (p) => ({ holder: await actor('holder_multi', p), opener: await actor('opener', p) }),
+  holder_opener: async (p) => ({ holder: await actor('holder', p), opener: await actor('opener', p) }),
+  holder_failed: async (p) => ({ holder: await actor('holder', p), failed: await actor('failed', p) }),
+  former_holder: async (p) => ({ former: await actor('former', p), holder: await actor('holder', p) }),
+  former_only: async (p) => ({ former: await actor('former', p) }),
+  failed_after_holder_exit: async (p) => {
+    const holder = await actor('holder', p)
+    const failed = await actor('failed', p)
+    await stop(holder)
+    return { failed }
   },
 }
 
@@ -140,20 +127,24 @@ async function part1() {
   for (let rep = 0; rep < REPEATS; rep += 1) {
     for (const [name, setup] of Object.entries(MATRIX)) {
       const { lockPath } = createHome()
-      const { pids, children, note } = await setup(lockPath)
+      const actors = await setup(lockPath)
       const scan = fgScan(lockPath)
-      const state = probe(lockPath)
-      results.push({ part: 1, rep, case: name, note, probe: state, scanStatus: scan.status, stderr: scan.stderr, raw: scan.raw.replace(/\0/g, '|'), roles: decisions(scan, pids) })
-      for (const child of children) await stop(child)
+      const pids = Object.fromEntries(Object.entries(actors).map(([k, h]) => [k, h.pid]))
+      results.push({
+        part: 1, rep, case: name, probe: probe(lockPath),
+        scan: { valid: scan.valid, problems: scan.problems, status: scan.status, signal: scan.signal, raw: scan.raw.replace(/\0/g, '|') },
+        roles: roleView(scan, pids),
+      })
+      for (const handle of Object.values(actors)) await stop(handle)
     }
   }
 }
 
-async function writeWrapper() {
+function writeWrapper() {
   const wrapper = path.join(out, 'lsof-wrapper.sh')
   const configPath = path.join(out, 'barrier-config.json')
-  fs.writeFileSync(wrapper, '#!/bin/sh\n' +
-    `FIXTURE_CONFIG=${JSON.stringify(configPath)} exec ${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(DIR, 'lsof-barrier.mjs'))} "$@"\n`, { mode: 0o755 })
+  writeNew(wrapper, '#!/bin/sh\n' +
+    `FIXTURE_CONFIG=${JSON.stringify(configPath)} exec ${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(DIR, 'lsof-barrier.mjs'))} "$@"\n`, 0o700)
   return { wrapper, configPath }
 }
 
@@ -163,33 +154,36 @@ function scanEventsSince(offset) {
 }
 
 async function part2() {
-  const { wrapper, configPath } = await writeWrapper()
+  const { wrapper, configPath } = writeWrapper()
   const scenarios = ['B_failed', 'B_failed_all_scans', 'B_former', 'control_visible_holder']
   for (let rep = 0; rep < REPEATS; rep += 1) {
     for (const scenario of scenarios) {
       const { home, lockPath } = createHome()
       const env = { FIXTURE_LOCK_PATH: lockPath }
-      const holder = await start(path.join(DIR, 'holder', 'codex'), env)
-      const children = [holder]
       const config = { log: logFile }
-      let visible = holder
-      if (scenario.startsWith('B_failed')) {
-        const socket = path.join(sockets, `s${homeIndex}.sock`)
-        visible = await start(path.join(DIR, 'transient', 'codex'), { ...env, FIXTURE_SOCKET: socket, FIXTURE_LOG: logFile })
-        Object.assign(config, { socket, hidePid: holder.pid, barrierAll: scenario === 'B_failed_all_scans' })
-      } else if (scenario === 'B_former') {
-        // The former holder must release before the hidden holder acquires,
-        // so start it on a fresh home first and the holder after it.
-        await stop(holder)
-        children.length = 0
+      const handles = []
+      let holder
+      let visible
+      if (scenario === 'B_former') {
+        // The former holder releases before the hidden holder acquires.
         visible = await start(path.join(DIR, 'former', 'codex'), env)
-        const realHolder = await start(path.join(DIR, 'holder', 'codex'), env)
-        children.push(visible, realHolder)
-        Object.assign(config, { hidePid: realHolder.pid })
-        config.realHolder = realHolder.pid
+        handles.push(visible)
+        holder = await start(path.join(DIR, 'holder', 'codex'), env)
+        handles.push(holder)
+        config.hidePid = holder.pid
+      } else {
+        holder = await start(path.join(DIR, 'holder', 'codex'), env)
+        handles.push(holder)
+        visible = holder
+        if (scenario.startsWith('B_failed')) {
+          const socket = path.join(sockets, `s${homeIndex}.sock`)
+          assertSocketPath(socket)
+          visible = await start(path.join(DIR, 'transient', 'codex'), { ...env, FIXTURE_SOCKET: socket, FIXTURE_LOG: logFile })
+          handles.push(visible)
+          Object.assign(config, { socket, hidePid: holder.pid, barrierAll: scenario === 'B_failed_all_scans' })
+        }
       }
-      if (visible !== holder) children.push(visible)
-      fs.writeFileSync(configPath, JSON.stringify(config) + '\n')
+      fs.writeFileSync(configPath, JSON.stringify(config) + '\n', { mode: 0o600 })
       const offset = fs.existsSync(logFile) ? fs.statSync(logFile).size : 0
       overrideDiagnosticExecutableForTesting('lsof', wrapper)
       let inspection
@@ -198,15 +192,14 @@ async function part2() {
       } finally {
         overrideDiagnosticExecutableForTesting('lsof', null)
       }
-      const actualHolder = config.realHolder ?? holder.pid
-      const scans = scanEventsSince(offset).map((e) => {
-        // Apply the same modelled omission to the +fg view as to the product
-        // scan, then evaluate the filter on the product's selected owner.
-        const hidden = { ...e.scan, entries: e.scan.entries.filter((x) => x.pid !== config.hidePid) }
+      const events = scanEventsSince(offset)
+      if (!events.length) failures.push(`part2 ${rep} ${scenario}: no +fg scan recorded`)
+      const scans = events.map((e) => {
+        const hidden = typeof config.hidePid === 'number' ? withoutPid(e.scan, config.hidePid) : e.scan
         return {
-          raw: e.scan.raw.replace(/\0/g, '|'),
-          owner: inspection.owner ? decisions(hidden, { owner: inspection.owner.pid }).owner : null,
-          actualHolderUnfiltered: decisions(e.scan, { holder: actualHolder }).holder,
+          valid: e.scan.valid, problems: e.scan.problems, signal: e.scan.signal, raw: e.scan.raw.replace(/\0/g, '|'),
+          owner: inspection.owner ? roleView(hidden, { owner: inspection.owner.pid }).owner : null,
+          actualHolderUnfiltered: roleView(e.scan, { holder: holder.pid }).holder,
         }
       })
       const ownerDecisions = scans.map((s) => s.owner?.decision ?? 'no_owner')
@@ -214,34 +207,62 @@ async function part2() {
         part: 2, rep, scenario,
         classification: inspection.classification, safeToUnlock: inspection.safeToUnlock,
         blockers: inspection.blockers, openers: inspection.openers.length,
-        ownerPid: inspection.owner?.pid ?? null, actualHolderPid: actualHolder, visiblePid: visible.pid,
-        wrongTarget: inspection.safeToUnlock && inspection.owner?.pid !== actualHolder,
+        ownerPid: inspection.owner?.pid ?? null, actualHolderPid: holder.pid, visiblePid: visible.pid,
+        wrongTarget: inspection.safeToUnlock && inspection.owner?.pid !== holder.pid,
+        // Refusal needs a decision other than not_excluded in some scan;
+        // unknown counts as refusal, never as a holder.
         filterWouldRefuse: ownerDecisions.length > 0 && ownerDecisions.some((d) => d !== 'not_excluded'),
         ownerDecisions, scans,
       })
-      for (const child of children) await stop(child)
+      for (const handle of handles) await stop(handle)
     }
   }
 }
 
+async function faultCase() {
+  const { lockPath } = createHome()
+  if (FAULT === 'early_exit') {
+    await actor('early_exit', lockPath)
+  } else if (FAULT === 'ignore_eof') {
+    const handle = await actor('ignore_eof', lockPath, { FIXTURE_LIFETIME_MS: '4000' })
+    await stop(handle, 1000)
+  } else if (FAULT === 'long_socket') {
+    assertSocketPath(path.join(sockets, 'x'.repeat(200) + '.sock'))
+    await start(path.join(DIR, 'transient', 'codex'), { FIXTURE_LOCK_PATH: lockPath, FIXTURE_SOCKET: 'unused', FIXTURE_LOG: logFile })
+  } else {
+    throw new Error(`unknown fault ${FAULT}`)
+  }
+}
+
 try {
-  const parts = (process.env.M2_PARTS ?? '1,2').split(',')
-  if (parts.includes('1')) await part1()
-  if (parts.includes('2')) await part2()
+  if (FAULT) await faultCase()
+  else {
+    if (PARTS.includes('1')) await part1()
+    if (PARTS.includes('2')) await part2()
+  }
 } catch (error) {
-  results.push({ error: String(error?.stack ?? error) })
-} finally {
-  for (const child of [...live]) await stop(child)
-  fs.rmSync(sockets, { recursive: true, force: true })
+  failures.push(String(error?.stack ?? error))
 }
+for (const result of await stopAll(live)) {
+  if (result.incomplete) incomplete.push(result)
+}
+const expected = FAULT ? 0
+  : (PARTS.includes('1') ? REPEATS * Object.keys(MATRIX).length : 0) + (PARTS.includes('2') ? REPEATS * 4 : 0)
+if (results.length !== expected) failures.push(`results ${results.length}/${expected}`)
+const diagnosticSignals = results.flatMap((r) => r.part === 1 ? [r.scan.signal] : r.scans?.map((s) => s.signal) ?? []).filter(Boolean)
+const ok = failures.length === 0 && incomplete.length === 0
+// Keep the socket directory when any child's exit is unconfirmed.
+if (incomplete.length === 0) fs.rmSync(sockets, { recursive: true, force: true })
 const report = {
+  ok, fault: FAULT, failures, incomplete, socketsKept: incomplete.length ? sockets : null,
+  diagnosticSignalsRecorded: diagnosticSignals,
   environment: { platform: process.platform, release: os.release(), arch: process.arch, node: process.version, commit: process.env.M2_COMMIT ?? null },
-  incomplete, results,
+  results,
 }
-fs.writeFileSync(path.join(out, 'm2-results.json'), JSON.stringify(report, null, 2) + '\n', { mode: 0o600 })
+writeNew(path.join(out, 'm2-results.json'), JSON.stringify(report, null, 2) + '\n')
 const brief = results.map((r) => r.part === 1
-  ? `P1 ${r.rep} ${r.case} probe=${r.probe} ` + Object.entries(r.roles).map(([k, v]) => `${k}:${v.flags}/${v.decision}`).join(' ')
-  : r.part === 2
-    ? `P2 ${r.rep} ${r.scenario} cls=${r.classification} safe=${r.safeToUnlock} owner=${r.ownerPid} holder=${r.actualHolderPid} wrong=${r.wrongTarget} filter=${r.ownerDecisions.join(',')} refuse=${r.filterWouldRefuse}`
-    : JSON.stringify(r))
-log([`out=${out}`, `incomplete=${incomplete.length}`, ...brief].join('\n'))
+  ? `P1 ${r.rep} ${r.case} probe=${r.probe} valid=${r.scan.valid} ` + Object.entries(r.roles).map(([k, v]) => `${k}:${v.flags.join('+')}/${v.decision}`).join(' ')
+  : `P2 ${r.rep} ${r.scenario} cls=${r.classification} safe=${r.safeToUnlock} wrong=${r.wrongTarget} filter=${r.ownerDecisions.join(',')} refuse=${r.filterWouldRefuse}`)
+log([`out=${out}`, `ok=${ok} fault=${FAULT} failures=${failures.length} incomplete=${incomplete.length} diagSignals=${diagnosticSignals.length}`,
+  ...failures.map((f) => `FAIL ${f.split('\n')[0]}`), ...brief].join('\n'))
+process.exitCode = ok ? 0 : 1

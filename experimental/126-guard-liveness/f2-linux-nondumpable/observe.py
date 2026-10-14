@@ -11,9 +11,19 @@ import json
 import os
 import sys
 
-pid, fd, lock_path = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+if sys.platform != "linux" or os.getuid() == 0 or os.getuid() != os.geteuid():
+    raise RuntimeError("observer requires unprivileged same-user Linux")
+pid, fd, lock_path = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
+if pid <= 0 or fd < 0:
+    raise ValueError("invalid PID or FD")
 base = f"/proc/{pid}"
 out = {"pid": pid, "fd": fd, "observer_uid": os.getuid(), "kernel": os.uname().release}
+
+
+# No self-alarm: a non-fatal signal with a Python handler cannot wake a
+# killable kernel wait in a /proc read, so it would not bound this process.
+# The runner waits for this observer with a bound and records `incomplete`
+# without signalling it.
 
 
 def attempt(name, fn):
