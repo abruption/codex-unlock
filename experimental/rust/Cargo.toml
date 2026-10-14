@@ -1,0 +1,10 @@
+[package]
+name = "codex-unlock-lab"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+[[bin]]
+name = "codex-unlock-lab"
+path = "src/main.rs"

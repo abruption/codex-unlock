@@ -1,0 +1,39 @@
+name: Rust experiment
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  fixture-locks:
+    name: Rust fixture locks (${{ matrix.runner }})
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-15, windows-2022]
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: experimental/rust
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned experimental toolchain
+        run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt --component clippy
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --offline --all-targets -- -D warnings
+      - run: cargo test --locked --offline
+        env:
+          CODEX_UNLOCK_LAB_SCRATCH_ROOT: ${{ runner.temp }}
+      - name: Exercise fixture-only CLI
+        run: |
+          cargo run --locked --offline -- capabilities
+          cargo run --locked --offline -- self-test --scratch-root "$RUNNER_TEMP"
