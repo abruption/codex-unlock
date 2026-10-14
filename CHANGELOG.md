@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.6](https://github.com/abruption/codex-unlock/compare/v0.4.5...v0.4.6) (2026-10-14)
+
+
+### Bug Fixes
+
+* preserve lossless lock and transcript identities ([#135](https://github.com/abruption/codex-unlock/issues/135)) ([95ea586](https://github.com/abruption/codex-unlock/commit/95ea58692e2d44cef807f34122de887286194db7))
+* recognize source-reviewed exec cyber access option ([#130](https://github.com/abruption/codex-unlock/issues/130)) ([38b7ad0](https://github.com/abruption/codex-unlock/commit/38b7ad094499b018abcc0fbdffcaf7d59587a660))
+
 ## [0.4.5](https://github.com/abruption/codex-unlock/compare/v0.4.4...v0.4.5) (2026-10-09)
 
 
