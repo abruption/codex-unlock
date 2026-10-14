@@ -202,10 +202,15 @@ adapter has this contract:
 2. In a synchronous native-guard section, sample the candidate's process
    instance and descriptor identity, read bounded `/proc/<pid>/fdinfo/<fd>`
    records, and recheck identity. Require a granted `FLOCK ADVISORY WRITE`
-   whole-file row matching the exact device/inode observed by the held probe.
+   whole-file row whose file identity is bound to the held probe through a
+   verified filesystem identity mapping. A row's superblock device/inode and
+   filesystem stat values are not universally interchangeable. Matching the
+   candidate-FD and target-path stat identities alone does not validate the
+   row; unsupported or inconsistent mappings are unknown.
    A waiting row, a POSIX/OFD byte-range lock, or a path string match is not a
-   substitute. Convert device numbers explicitly; do not compare formatted
-   device strings or lossy JavaScript numbers.
+   substitute. Collect stat identities with bigint and parse row identities
+   losslessly; converting an already-rounded JavaScript number cannot recover
+   the original identity. Do not compare formatted device strings directly.
 3. Bind evidence to PID, Linux process start ticks, UID, FD number, and
    device/inode. Reuse of a descriptor, process, or path during collection is
    unknown. A lock row's acquisition PID may legitimately differ after fork;
@@ -230,7 +235,8 @@ Adoption requires deterministic tests using real guarded locks: hidden holder
 plus sole visible nonholder refuses with zero signals; namespace-filtered
 global rows do not override candidate evidence; inherited acquisition PID
 mismatch is handled without false absence; denied/malformed/truncated fdinfo,
-FD reuse, process replacement, inode replacement, and lock release between
+unsupported filesystem identity mappings, FD reuse, process replacement,
+inode replacement, and lock release between
 discovery and final sample all refuse. An eligible positive fixture must still
 recover, while a surviving inherited copy must fail post-release verification.
 These are proposed implementation gates, not results of this documentation PR.
