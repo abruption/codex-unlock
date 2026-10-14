@@ -1,0 +1,26 @@
+#!/usr/bin/env node
+// Synthetic actual holder (#100 research). Acquires the thread flock under the
+// native coordination lock like Codex v0.162.1 and keeps it until stdin EOF.
+// Its process name is not Codex-like; the experiment hides it from lsof to
+// model the measured clean omission of a foreign-UID or other-namespace holder.
+import fs from 'node:fs'
+import { createRequire } from 'node:module'
+import path from 'node:path'
+import process from 'node:process'
+
+const require = createRequire(process.env.FIXTURE_REQUIRE_FROM)
+const { flockSync } = require('fs-ext-extra-prebuilt')
+
+const lockPath = process.env.FIXTURE_LOCK_PATH
+const guard = fs.openSync(path.join(path.dirname(lockPath), '.coordination.lock'), 'r')
+flockSync(guard, 'ex')
+const thread = fs.openSync(lockPath, 'r+')
+flockSync(thread, 'exnb')
+flockSync(guard, 'un')
+fs.closeSync(guard)
+process.stdout.write('ready\n')
+process.stdin.resume()
+process.stdin.on('end', () => {
+  fs.closeSync(thread)
+  process.exit(0)
+})

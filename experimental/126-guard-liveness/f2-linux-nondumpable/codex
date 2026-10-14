@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+"""Synthetic Linux holder named `codex` (#126 research, F2). NOT RUN YET.
+
+Acquires the thread flock under `.coordination.lock` like Codex v0.162.1 and
+holds it until stdin EOF. With FIXTURE_DUMPABLE=0 it first calls
+prctl(PR_SET_DUMPABLE, 0) and verifies PR_GET_DUMPABLE, modelling a process
+that hardened itself. Pinned v0.162.1 source shows the lock-owning `codex`
+binary does not do this; the fixture exists to measure fail-closed behaviour
+if some build or wrapper does.
+
+Prints one JSON line {"ready":true,"pid":..,"fd":..,"dumpable":..}.
+"""
+import ctypes
+import fcntl
+import json
+import os
+import sys
+
+PR_SET_DUMPABLE = 4
+PR_GET_DUMPABLE = 3
+
+lock_path = os.environ["FIXTURE_LOCK_PATH"]
+want = os.environ.get("FIXTURE_DUMPABLE", "1")
+libc = ctypes.CDLL(None, use_errno=True)
+if want == "0":
+    if libc.prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), "prctl(PR_SET_DUMPABLE, 0)")
+dumpable = libc.prctl(PR_GET_DUMPABLE, 0, 0, 0, 0)
+
+guard = os.open(os.path.join(os.path.dirname(lock_path), ".coordination.lock"), os.O_RDONLY | os.O_CLOEXEC)
+fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+thread = os.open(lock_path, os.O_RDWR | os.O_CLOEXEC)
+fcntl.flock(thread, fcntl.LOCK_EX | fcntl.LOCK_NB)
+fcntl.flock(guard, fcntl.LOCK_UN)
+os.close(guard)
+print(json.dumps({"ready": True, "pid": os.getpid(), "fd": thread, "dumpable": dumpable}), flush=True)
+sys.stdin.read()
+os.close(thread)
