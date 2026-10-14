@@ -155,6 +155,50 @@ matrix and package smoke before Release Please ships it. After a manual
 runtime dependency change, run `npm install` and commit both files; package
 smoke fails if they disagree.
 
+## Development dependency policy
+
+Development manifest ranges and installed versions serve different purposes.
+Caret ranges in `devDependencies` describe compatible update candidates;
+`package-lock.json` records the exact dependency tree used by contributors and
+CI. Use `npm ci` to reproduce that tree. A caret range does not cause `npm ci`
+to select a newer version on each run. The consumer contract is separate:
+exact runtime pins and the generated runtime-only shrinkwrap described above
+control the published CLI's dependencies. Development tools must not enter
+that shrinkwrap or a consumer's installed dependency tree.
+
+Going forward, retain `marked`, `parse5`, and `srcset` as deliberate exact-pin
+exceptions. Package smoke uses them to interpret Markdown, HTML, and image
+candidate links when checking the published documentation. Their behavior is
+part of the artifact validator, so a version change should be visible in the
+manifest and reviewed with the validator's link/content checks. This states
+the maintenance policy; it does not establish why the pins were originally
+chosen. Exact pins still need timely updates and are not a security guarantee.
+Other development tools may retain their existing caret ranges. Changes to
+these exceptions or to resolution policy need a focused review rather than
+bulk normalization for consistency alone.
+
+Under the current Dependabot configuration:
+
+- npm updates are checked weekly with `increase-if-necessary`. An update that
+  fits an existing range can change only the lockfile; an exact pin requires a
+  manifest update too.
+- Production updates enter the separate `runtime` group first. Remaining
+  minor/patch updates are grouped in `minor-and-patch`; development commits use
+  `chore(deps)` while runtime commits use `fix(deps)`.
+- Automatic major updates for TypeScript and `@types/node` are excluded.
+  Keep `@types/node` on the minimum supported Node major (currently 22), and
+  validate against the supported Node matrix. Newer declarations must not
+  silently raise the runtime requirement. Reconsider the types major only
+  alongside an explicit support-policy change; review compiler-major changes
+  separately too.
+
+Review the actual manifest and lockfile diff, upstream changes, and CI for each
+dependency PR. Before committing dependency-resolution changes, run `npm ci`,
+`npm run check`, `npm run lint`, `npm test`, and `npm run smoke:package`; require
+the supported platform matrix and package checks before merging. Keep runtime
+upgrades in separately reviewed PRs. Documentation of this policy alone does
+not change any dependency version or resolution behavior.
+
 ## npm lifecycle contract
 
 `prepare` supports fresh-clone installation and is also the single lifecycle
