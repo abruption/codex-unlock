@@ -28,7 +28,9 @@ async function runCli(args, env = process.env) {
   child.stderr.on("data", (chunk) => {
     stderr += chunk;
   });
-  const [code, signal] = await once(child, "exit");
+  // Process exit can precede the last pipe data event. Wait until stdio closes
+  // before parsing the captured JSON; once() still rejects on spawn errors.
+  const [code, signal] = await once(child, "close");
   return { code, signal, stdout, stderr };
 }
 

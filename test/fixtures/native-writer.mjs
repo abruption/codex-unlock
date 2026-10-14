@@ -18,8 +18,11 @@ if (mode === "hold") {
   else readline.createInterface({ input: process.stdin }).once("line", (command) => {
     if (command === "unlink") fs.unlinkSync(lockPath);
     if (command === "replace") {
-      fs.renameSync(lockPath, `${lockPath}.old`);
-      fs.writeFileSync(lockPath, "replacement inode");
+      // Keep the observed path present throughout replacement. A rename-away
+      // gap would exercise the separate absent/unlink case instead.
+      const replacementPath = `${lockPath}.replacement`;
+      fs.writeFileSync(replacementPath, "replacement inode", { flag: "wx" });
+      fs.renameSync(replacementPath, lockPath);
     }
     finish();
   });
