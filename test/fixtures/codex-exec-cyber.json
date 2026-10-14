@@ -1,0 +1,35 @@
+{
+  "extension": {
+    "option": "--cyber-access-program",
+    "version": "0.162.1",
+    "commit": "092d3acd6bec3e3a14bdc7e7a2810ab628ab759d",
+    "values": [
+      "standard",
+      "daybreak_blue",
+      "daybreak_red"
+    ]
+  },
+  "source": {
+    "path": "codex-rs/exec/src/cli.rs",
+    "blob": "6a268da298380344c22ea12620606c3e6713f5fa",
+    "url": "https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/exec/src/cli.rs",
+    "excerpts": [
+      {
+        "startLine": 31,
+        "endLine": 34,
+        "text": "    /// Request an experimental Cyber access program for this turn (OpenAI provider only).\n    /// Omit to use server defaults. Not supported with review; fork requires a prompt.\n    #[arg(long, value_enum, value_name = \"PROGRAM\", global = true)]\n    pub cyber_access_program: Option<CyberAccessProgramCliArg>,"
+      },
+      {
+        "startLine": 88,
+        "endLine": 94,
+        "text": "#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]\n#[value(rename_all = \"snake_case\")]\npub enum CyberAccessProgramCliArg {\n    Standard,\n    DaybreakBlue,\n    DaybreakRed,\n}"
+      }
+    ]
+  },
+  "attribution": {
+    "license": "Apache-2.0",
+    "licenseFile": "codex-grammar.LICENSE",
+    "noticeFile": "codex-grammar.NOTICE"
+  },
+  "scope": "Single enum value in exec/e only. Upstream nested scope is deliberately not supported by this bounded parser. No whole-version certification."
+}

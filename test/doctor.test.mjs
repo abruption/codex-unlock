@@ -659,7 +659,7 @@ test("Linux unknown option without service words refuses a real lock owner witho
   const marker = join(codexHome, "signal-received");
   const owner = await fixture("task_complete", {
     codexHome,
-    ownerArgs: ["exec", "--cyber-access-program", "standard", "fix bugs"],
+    ownerArgs: ["exec", "--future-unreviewed-option", "standard", "fix bugs"],
     ownerEnv: { CODEX_FIXTURE_SIGTERM_MARKER: marker },
   });
   t.after(async () => await stopChild(owner.child));
@@ -676,6 +676,55 @@ test("Linux unknown option without service words refuses a real lock owner witho
   assert.equal(parsed.signalSent, null);
   assert.equal(owner.child.exitCode, null);
   await assert.rejects(access(marker), { code: "ENOENT" });
+});
+
+test("Linux recognizes the reviewed exec enum on a real held lock without signaling", {
+  skip: process.platform !== "linux",
+}, async (t) => {
+  for (const program of ["standard", "daybreak_blue", "daybreak_red"]) {
+    const value = await fixture("task_complete", {
+      ownerArgs: ["exec", `--cyber-access-program=${program}`, "fix bugs"],
+    });
+    t.after(async () => await stopChild(value.child));
+    const inspection = await inspectThread(THREAD_ID, value.options);
+    assert.equal(inspection.lock.probe.status, "held");
+    assert.equal(inspection.owner.pid, value.child.pid);
+    assert.equal(inspection.owner.identityComplete, true);
+    assert.equal(inspection.owner.isSharedService, false);
+    assert.equal(inspection.safeToUnlock, true, inspection.blockers.join(","));
+    assert.equal(value.child.exitCode, null);
+    await stopChild(value.child);
+  }
+});
+
+test("Linux invalid reviewed enum and wrong scope refuse a real lock owner without SIGTERM", {
+  skip: process.platform !== "linux",
+}, async (t) => {
+  for (const args of [
+    ["exec", "--cyber-access-program", "invalid-program", "fix bugs"],
+    ["exec", "--cyber-access-program"],
+    ["--cyber-access-program", "standard", "exec", "fix bugs"],
+  ]) {
+    const codexHome = await mkdtemp(join(tmpdir(), "codex-unlock-exec-enum-"));
+    const marker = join(codexHome, "signal-received");
+    const value = await fixture("task_complete", {
+      codexHome, ownerArgs: args, ownerEnv: { CODEX_FIXTURE_SIGTERM_MARKER: marker },
+    });
+    t.after(async () => await stopChild(value.child));
+    const result = await runCli([
+      "unlock", THREAD_ID, "--json", "--codex-home", codexHome, "--stability-ms", "250",
+    ]);
+    const decoded = JSON.parse(result.stdout);
+    assert.equal(result.code, 2, result.stdout);
+    assert.equal(decoded.inspection.lock.probe.status, "held");
+    assert.equal(decoded.inspection.owner.arguments, null);
+    assert.equal(decoded.inspection.owner.isSharedService, false);
+    assert.equal(decoded.outcome, "refused");
+    assert.equal(decoded.signalSent, null);
+    assert.equal(value.child.exitCode, null);
+    await assert.rejects(access(marker), { code: "ENOENT" });
+    await stopChild(value.child);
+  }
 });
 
 test("ps and lsof on PATH cannot supply process evidence", async (t) => {

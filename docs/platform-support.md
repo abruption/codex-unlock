@@ -83,7 +83,16 @@ Process evidence is collected with the same rules on every supported platform:
   as evidence of that owner's identity or argument safety. The
   official `--yolo` and `--not-so-yolo` aliases share the recognized scope of
   their canonical flags, and exec accepts `--experimental-json` as an alias
-  of `--json`. Unknown options,
+  of `--json`. One separately reviewed extension from `codex-cli 0.162.1`
+  ([source commit 092d3acd6bec3e3a14bdc7e7a2810ab628ab759d](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/exec/src/cli.rs#L31-L34))
+  recognizes `--cyber-access-program` in `exec`/`e` only, with exactly one of
+  `standard`, `daybreak_blue`, or `daybreak_red`, supplied separately or with
+  `=`. Missing, invalid, or repeated values and use before `exec` remain
+  unverified; nested exec modes remain unsupported. This does not certify the
+  rest of version 0.162.1. `CODEX_EXEC_CYBER_GRAMMAR` and the source fixture
+  `test/fixtures/codex-exec-cyber.json` record this narrow extension. Baseline
+  metadata stays internal; no runtime version probe or new public JSON field
+  is required to authorize an argument spelling. Unknown options,
   variadic image options, unsupported modes (including service-looking root
   tokens such as `daemon-worker`), and ambiguous operands make
   identity incomplete. Exact service/subcommand-looking operands after `--`

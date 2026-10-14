@@ -327,6 +327,14 @@ export const CODEX_GRAMMAR_BASELINE = Object.freeze({
   commit: "ff6aec96948b70d94983af2641a6b67c94faeff5",
 });
 
+// A source-reviewed extension, not certification of the full 0.162.1 grammar.
+export const CODEX_EXEC_CYBER_GRAMMAR = Object.freeze({
+  option: "--cyber-access-program",
+  version: "0.162.1",
+  commit: "092d3acd6bec3e3a14bdc7e7a2810ab628ab759d",
+  values: Object.freeze(["standard", "daybreak_blue", "daybreak_red"]),
+});
+
 // Deliberately bounded grammar from the baseline's CLI source and root,
 // exec, and resume help. Unknown options/modes (including variadic --image) do
 // not authorize an owner. New Codex grammar requires explicit verification.
@@ -349,6 +357,7 @@ const OTHER_MODES = new Set([
 ]);
 const EXEC_VALUE_OPTIONS = new Set([
   "--thread-source", "--output-schema", "--color", "--output-last-message", "-o",
+  CODEX_EXEC_CYBER_GRAMMAR.option,
 ]);
 const EXEC_FLAGS = new Set([
   "--skip-git-repo-check", "--ephemeral", "--ignore-user-config", "--ignore-rules",
@@ -375,6 +384,7 @@ function classifyCodexMode(argv: readonly string[]): { shared: boolean; error?: 
   let modeChosen = false;
   let literalOperands = false;
   let operands = 0;
+  let cyberProgramSeen = false;
   for (let index = offset; index < argv.length; index += 1) {
     const token = argv[index];
     if (!literalOperands && token === "--") {
@@ -396,6 +406,12 @@ function classifyCodexMode(argv: readonly string[]): { shared: boolean; error?: 
           : (token.length === 2 ? null : token.slice(2));
         const value = attached ?? argv[++index];
         if (!value || value.startsWith("-")) return { shared: false, error: "missing option value" };
+        if (option === CODEX_EXEC_CYBER_GRAMMAR.option) {
+          if (cyberProgramSeen || !CODEX_EXEC_CYBER_GRAMMAR.values.includes(value)) {
+            return { shared: false, error: "unsupported or repeated option value" };
+          }
+          cyberProgramSeen = true;
+        }
         continue;
       }
       if (token !== option || !(ROOT_FLAGS.has(option) ||
