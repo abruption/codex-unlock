@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthetic Linux holder named `codex` (#126 research, F2). NOT RUN YET.
+"""Synthetic Linux holder named `codex` (#126 research, F2).
 
 Acquires the thread flock under `.coordination.lock` like Codex v0.162.1 and
 holds it until stdin EOF (exit 0) or a 20 s lifetime (exit 3). It explicitly sets and verifies

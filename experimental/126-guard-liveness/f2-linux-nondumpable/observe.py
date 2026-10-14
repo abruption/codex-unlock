@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Same-user /proc access matrix for one target (#126 research, F2). NOT RUN YET.
+"""Same-user /proc access matrix for one target (#126 research, F2).
 
 Usage: python3 -I observe.py PID FD LOCK_PATH
 Records, per read, either a short result or the errno name. Nothing here
