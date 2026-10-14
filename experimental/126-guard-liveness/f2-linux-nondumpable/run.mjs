@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-// F2 runner (#126 research). NOT RUN YET: prepared for a Linux host chosen by
-// the integrating session. Refuses to run anywhere else, as root, or with
+// F2 access-matrix runner (#126 research). Refuses to run off Linux, as root, or with
 // differing real and effective UIDs.
 //
 // For FIXTURE_DUMPABLE in [1, 0]: start the synthetic `codex` holder in a

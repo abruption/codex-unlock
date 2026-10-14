@@ -6,7 +6,7 @@ support, dependencies, or the JSON contract, and nothing is published by
 `unlockInspectedThread`, so no Codex or lock owner is signalled by the
 product's unlock path.
 
-Measured on Darwin 27.0.0 arm64 (macOS 27.0.1, 26A434), Node v24.16.0,
+F1 and M2 measured on Darwin 27.0.0 arm64 (macOS 27.0.1, 26A434), Node v24.16.0,
 lsof 4.91, APFS, same user, main `3bc4091`.
 
 ## Signals and process lifetime
@@ -157,7 +157,7 @@ holder now takes both locks with bounded nonblocking polling instead of a
 blocking coordination flock. Both fixtures, and `former/codex`, have a
 lifetime. All three are named `codex`.
 
-## F2: Linux non-dumpable holder (`f2-linux-nondumpable/`), prepared, not run
+## F2: Linux non-dumpable holder (`f2-linux-nondumpable/`), access matrix measured
 
 `codex` (Python) refuses root and differing real/effective UIDs. It declares
 the `prctl` ABI (`int` option and result, `unsigned long` arguments), sets the
@@ -182,20 +182,39 @@ Results after holder exit cannot establish access policy.
 `ok` currently describes collection completion, not satisfaction of the
 expected table or a proven fail-closed decision. These are open execution gates.
 
-Only parse and syntax checks were done. No Linux host was used.
+The unchanged `cfa2eba` fixtures ran once on a Linux test host on 2026-10-14:
+Linux `7.0.0-1013-oracle`, aarch64, Node 24.18.0, Python 3.12.3, UID/EUID
+1001, effective/permitted capabilities zero, Yama `ptrace_scope=1`, ordinary
+procfs mount and a local ext-family temporary filesystem. Both requested
+dumpable values were verified by the holder. Collection exited 0, with no
+failures or incomplete observations. Both holders exited 0 and their recorded
+process instances were absent at the post-check. Raw result SHA-256 and scope
+are recorded in [evidence.md](evidence.md).
 
-Expected from Linux v6.17 source, all unverified until run:
+Source-derived matrix below was observed on that test host:
 
 | Read | dumpable=1 | dumpable=0 |
 | --- | --- | --- |
 | `stat /proc/PID` uid | owner | owner (the 0555 directory is exempt in `task_dump_owner`) |
-| `/proc/PID/fd`, `fdinfo` directory uid | owner | root |
-| `fd` listdir and readlink, `fdinfo` open, `exe` readlink | allowed | EACCES/EPERM (`ptrace_may_access` READ_FSCREDS) |
+| `/proc/PID/fd` directory uid | owner | root |
+| `/proc/PID/fdinfo` directory uid | owner | owner (0555 directory exception) |
+| `fd` listdir/readlink/stat, `fdinfo` open, `exe` readlink | allowed | EACCES |
 | `cmdline` | allowed | allowed (no ptrace check) |
-| `stat` start ticks | allowed | allowed |
+| `stat` start ticks and status UID | allowed | allowed |
 
-On a non-dumpable target, #137 should therefore end `unknown` at
-`/proc/PID/fd`, before any participation claim.
+The original combined fd/fdinfo ownership prediction was incorrect. Pinned
+[Linux v6.17 directory definitions](https://github.com/torvalds/linux/blob/e5f0a698b34ed76002dc5cff3804a61c80233a7a/fs/proc/base.c#L3316)
+give `fd` mode 0500 and `fdinfo` mode 0555. The
+[dumpability ownership exception](https://github.com/torvalds/linux/blob/e5f0a698b34ed76002dc5cff3804a61c80233a7a/fs/proc/base.c#L1906)
+therefore leaves fdinfo's UID unchanged. Its directory/file access still uses
+a separate [ptrace permission check](https://github.com/torvalds/linux/blob/e5f0a698b34ed76002dc5cff3804a61c80233a7a/fs/proc/fd.c#L81).
+Ownership alone does not establish readability. This result provides no
+evidence of kernel-version drift.
+
+The denial supports the source-derived expectation that #137 should refuse
+FD discovery for this candidate. F2 did not execute #137 or validate its
+classification, candidate recognition, or final signal boundary. This Python
+fixture does not measure a deployed native Codex process's dumpability.
 
 Hardening callers, within a targeted search of pinned v0.162.1 source:
 `pre_main_hardening` appears in the `codex-responses-api-proxy` and
@@ -258,8 +277,8 @@ checked by the integrating Codex. At `e5cf6dd`, the focused tests and one
 F1/M2 nominal run each plus the five documented faults were executed; all
 seven runner exit statuses and failure/incomplete records matched expectations.
 The cooperating session also reviewed that revision read-only. The CLI reviews
-do not certify later commits. F2 remains unexecuted on Linux, and product
-adoption is unresolved. Barrier contention can invalidate a nominal scenario
+do not certify later commits. F2's access matrix is now measured on one Linux
+host; product integration and adoption remain unresolved. Barrier contention can invalidate a nominal scenario
 and produce a nonzero result; successful runs do not establish a failure rate.
 Cleanup can report both an earlier incomplete wait and a later nonzero exit
 for the same child. These are observations, not counts of distinct processes.

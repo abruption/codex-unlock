@@ -44,7 +44,7 @@ count that signal or every product diagnostic timeout signal.
 | M2 nominal | ok, 33 records, incomplete 0 | adecdb22b9730d86d1ed1cfbf086c795285ca246caf1c169c7daad96af672b6a |
 
 These files were checked separately from later source corrections. F2 has
-syntax checks only; no Linux runtime matrix or native Codex access is proven.
+syntax checks only at that revision; the later Linux matrix is recorded below.
 
 ## Runner validation at e5cf6dd
 
@@ -68,3 +68,33 @@ historical; these checks do not replace the original five/three repetitions.
 This validates the measured paths, not every schedule. The later child exit in
 the ignored-EOF case is a second observation of the same child; it does not
 remove the recorded incomplete wait. No actual Codex session was exercised.
+
+## F2 Linux access matrix at cfa2eba
+
+One approved execution on 2026-10-14 used source
+`cfa2eba9e3809afa060d85c15ff487f811c925e4`, transferred as a four-file archive.
+Archive SHA-256: `cac2171ba9424d229a204b32a140321795fad000b6bef9fbbc709192a154ec4a`;
+the remote copy matched before extraction. No dependency installation was needed.
+
+Environment: Linux 7.0.0-1013-oracle/aarch64, Node 24.18.0, Python 3.12.3,
+UID/EUID 1001, permitted/effective capabilities zero, Yama ptrace_scope 1.
+Stage and result directories were 0700 and the result was 0600, owned by the
+test user. No privilege or host policy change was made.
+
+Runner exit was 0, `ok=true`, failures 0 and incomplete 0. Both ready records
+matched the actual child PID, requested dumpability and observer UID. The
+dumpable=1 case read one exclusive FLOCK row and matched FD/lock device+inode.
+The dumpable=0 case returned EACCES for FD listing/readlink/stat, fdinfo-file
+read and executable readlink. Both cases could read cmdline, start ticks and
+status. The fdinfo directory retained the user's UID even with dumpable=0;
+this corrects the original source expectation, as explained in the README.
+
+Raw result SHA-256: `656c1d08d816303dfac870a87e426f4ace0f6972698a46f491a81a4c3b1900fc`.
+The downloaded result matched the remote hash. Both holder exit records were
+0 with no signal; neither recorded process instance remained at the post-check.
+The two owned remote temporary directories were then removed; source archive,
+raw result and verification records remain private on the integrating host.
+
+This is an access-matrix result only. It does not run the #137 adapter,
+establish product `unknown` behavior or candidate recognition, measure native
+Codex dumpability, or reproduce a procfs hang. F2_DIST remains disabled.
