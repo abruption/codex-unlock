@@ -158,6 +158,116 @@ dependency, forced recovery, or unguarded fallback is introduced. The research
 and source evidence establish which stronger claims need a separately reviewed
 implementation; they do not demonstrate a wrong-target Codex signal.
 
+## Codex descriptor lifetime cross-check
+
+The following source audit pins official tag `rust-v0.162.1`, annotated tag
+object `7a078f6bb4ce0dc2a81408b334ce52979d92c603`, to commit
+`092d3acd6bec3e3a14bdc7e7a2810ab628ab759d`. It describes that version, not an
+unbounded claim about newer releases or every caller of the writer API.
+
+| Path in the pinned `writer_lock.rs` | Descriptor lifetime and attribution implication |
+| --- | --- |
+| [Acquire, lines 43–86](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/rollout/src/writer_lock.rs#L43) | Coordination is acquired before opening the thread file. On success the file moves into `WriterLockGuard`. Both failed try-lock return paths drop the local thread file before the earlier coordination local. They do not retain an ordinary nonholding descriptor after returning. |
+| [Publication, lines 91–106](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/rollout/src/writer_lock.rs#L91) | The temporary thread file is scoped to the match. On success only coordination is returned; on contention no guard is returned. The temporary thread descriptor is not published as an owner handle. |
+| [Stale cleanup, lines 124–171](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/rollout/src/writer_lock.rs#L124) | Called from acquire while coordination is held. Successful probes explicitly close before unlink; failed probes close at iteration scope end. These opens can appear in an independently timed process scan. |
+| [Normal drop, lines 174–195](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/rollout/src/writer_lock.rs#L174) | Acquires coordination, closes the stored thread file, removes its path, then releases coordination. If acquiring coordination fails, the early return still leaves the stored `File` to field destruction; it does not establish that every close is coordinated. |
+
+Rust's [destructor and drop-scope rules](https://doc.rust-lang.org/reference/destructors.html)
+explain the local and field lifetimes above. This is source reasoning, not a
+new execution of actual Codex or a proof against inherited descriptors.
+
+The ordinary failed-acquisition path therefore does **not** support a claim
+that Codex keeps a failed thread open indefinitely. However, current
+`inspectThread` runs opener discovery independently of the guarded probe, and
+the final unlock path awaits its per-process lock-set scan before a later
+process sample and synchronous probe. A temporary opener observed during
+another process's coordinated cleanup or failed acquire can be gone when the
+later probe observes the actual holder. Repeated identity checks reduce the
+available interleavings but do not make these observations one atomic sample.
+No real Codex execution satisfying every eligibility check and producing a
+wrong-target signal has been reproduced. Neither the synthetic silent-omission
+measurements nor this source audit justify claiming that execution impossible.
+
+## Linux implementation boundary
+
+The next Linux change should establish **positive participation in the held
+file description**, not complete visibility or exclusive lifetime control.
+Keep the existing guarded probe as the held/free authority. The proposed
+adapter has this contract:
+
+1. Discover a bounded set of candidate FD numbers outside the native guard.
+   Limit descriptors, bytes per record, and total work; truncation is unknown,
+   not a partial success. Retain the existing same-user process, command,
+   transcript, and single-thread eligibility checks.
+2. In a synchronous native-guard section, sample the candidate's process
+   instance and descriptor identity, read bounded `/proc/<pid>/fdinfo/<fd>`
+   records, and recheck identity. Require a granted `FLOCK ADVISORY WRITE`
+   whole-file row whose file identity is bound to the held probe through a
+   verified filesystem identity mapping. A row's superblock device/inode and
+   filesystem stat values are not universally interchangeable. Matching the
+   candidate-FD and target-path stat identities alone does not validate the
+   row; unsupported or inconsistent mappings are unknown.
+   A waiting row, a POSIX/OFD byte-range lock, or a path string match is not a
+   substitute. Collect stat identities with bigint and parse row identities
+   losslessly; converting an already-rounded JavaScript number cannot recover
+   the original identity. Do not compare formatted device strings directly.
+3. Bind evidence to PID, Linux process start ticks, UID, FD number, and
+   device/inode. Reuse of a descriptor, process, or path during collection is
+   unknown. A lock row's acquisition PID may legitimately differ after fork;
+   do not require it to equal the surviving candidate PID. Opening the target
+   through procfs is not a way to acquire or duplicate the candidate's lock.
+4. Keep a positive/unknown attribution result separate from opener records and
+   lock-held state. Missing, denied, malformed, oversized, changed, ambiguous,
+   or inconsistent records cannot authorize recovery. Proposed reason names
+   and any optional JSON evidence need schema/type/documentation review before
+   implementation; this document does not introduce a public JSON contract.
+5. Repeat positive attribution after all awaited revalidation and in the last
+   synchronous guarded probe before signal. Release the native guard before
+   signal, with no intervening await or child process. Never spawn `lsof` or
+   retain a guard across polling, network access, or sleeps. Bounded reads
+   reduce guard work but are not a hard real-time latency guarantee.
+6. A forked copy may still keep the lock after the selected participant exits.
+   Positive fdinfo does not enumerate every hidden copy. Preserve the existing
+   post-signal process-exit, actual lock-release, and transcript-hash checks;
+   do not describe this change as guaranteed recovery or unique holder proof.
+
+Adoption requires deterministic tests using real guarded locks: hidden holder
+plus sole visible nonholder refuses with zero signals; namespace-filtered
+global rows do not override candidate evidence; inherited acquisition PID
+mismatch is handled without false absence; denied/malformed/truncated fdinfo,
+unsupported filesystem identity mappings, FD reuse, process replacement,
+inode replacement, and lock release between
+discovery and final sample all refuse. An eligible positive fixture must still
+recover, while a surviving inherited copy must fail post-release verification.
+These are proposed implementation gates, not results of this documentation PR.
+
+## macOS decision and separate follow-up scopes
+
+The Linux adapter must not be inserted as a universal requirement that
+incidentally disables macOS. A separate macOS contract decision is needed:
+
+- Keeping today's correlation-based support requires explicitly retaining its
+  measured visibility limitation. Empty stderr, one visible opener, and a held
+  probe cannot be advertised as positive holder attribution.
+- Requiring positive holder attribution would leave macOS unlock unavailable
+  until a validated native API or owner-cooperative mechanism exists.
+  Diagnostics can retain opener evidence. Such a compatibility change needs
+  an explicit reviewed support policy and migration note, not a missing-field
+  fallback in Linux implementation code.
+- A new macOS primitive must distinguish current holders from former holders,
+  failed reacquisitions, and independently opened nonholders; it must cover
+  inheritance, visibility failures, and final-sample identity races before it
+  can authorize signals. The published XNU getlock behavior above does not
+  establish a usable PID attribution API.
+
+Track Linux positive-fdinfo implementation and the macOS policy/primitive
+decision as separate follow-up scopes under #100. The Codex lifetime audit is
+a shared prerequisite, not a replacement for either. The Rust experiment
+(#122) may reuse these fixtures and contracts but does not resolve attribution
+by changing implementation language. This document changes neither runtime
+behavior nor platform support; #100 remains open until the adoption criteria
+or an explicitly accepted research-only disposition are satisfied.
+
 PR #115 is research plus partial hardening for explicit lsof diagnostics. It
 does not establish the stronger cross-platform attribution contract. Issue #100
 must not be closed as an implemented attribution fix on that evidence. Before
