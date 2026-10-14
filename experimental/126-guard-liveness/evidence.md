@@ -9,6 +9,8 @@ privately; hashes identify the original files, not this sanitized summary.
 | File | SHA-256 |
 | --- | --- |
 | F1 result, 50 rounds | 2e27c2155a03e028cb24634feedf6b735209935a370952031c871a9a0ddb6ad4 |
+| M2 run2 result | 928f8e94ed2960d0cad0a148f5f2386314d28c6be66b14160c95f8023abbf714 |
+| M2 run2 events | 7c28f7fa9ecbe6ec6c9f488b3ac12d7219d4000d113229b582eca14583ba8c8c |
 | M2 run3 result | 9785e60fb27b339655a995c2a8c9bd59afe2c2189e6bb2c99492b733789f67e5 |
 | M2 run3 events | 25e985a5353777514948338d2f84b4e46a03de2dc200162181834309c58ae513 |
 | Initial failed M2 attempt | f0a896b04df1a7dbf11af5bc4517c6a7e9540455f72085ca232de793ee5b1d67 |
@@ -43,3 +45,26 @@ count that signal or every product diagnostic timeout signal.
 
 These files were checked separately from later source corrections. F2 has
 syntax checks only; no Linux runtime matrix or native Codex access is proven.
+
+## Runner validation at e5cf6dd
+
+The integrating Codex executed one repetition of each nominal runner and all
+five documented fault cases on unchanged script revision
+`e5cf6dd7af5f61542a842527a216fa5eec918e61`. It checked actual exit status,
+report `ok`, failure text and incomplete observations. No runner timed out in
+the outer 60-second observation window. The original measurement tables remain
+historical; these checks do not replace the original five/three repetitions.
+
+| Run | Exit / recorded outcome | Raw result SHA-256 |
+| --- | --- | --- |
+| F1 nominal | 0 / ok, 10 rounds | 199adc3f3a7708e4d8f2d8d76b51c8ec25eb111e33fddcd2d3dcc749f6419a0a |
+| F1 missing round | 1 / reply timeout, 2/10 rounds | 322e1e49c7938bb64456a84421b2ceccce073283fd6b74f309c71615508410fa |
+| F1 waiter lifetime | 1 / waiter exit 3, 9/10 rounds | 41e243d667beb8e035c9a3dea525e406be22a71b8d5f086c9115b80aec8f26f7 |
+| M2 nominal | 0 / ok, 11 records | d3a20b736e5db1a2af111c51d38ab0cb10daf57fe060479e88d9e98b8866d37b |
+| M2 early exit | 1 / EOF before readiness, child exit 1 | 08d95011d17bef5e4be60838a604d57269199fe5d7b9567d41a5ded54114d915 |
+| M2 ignored EOF | 1 / incomplete 1, later child exit 3 | c20e6dfcdf96f6de021f64a8fb1a865d5c06f9515ed5ea5991f029e58ef1e8cb |
+| M2 long socket | 1 / length rejected before startup | b25e9fa1297b7d1ef510d4d084b489a32f33f0f31d1399de59aa5362bb5d68d0 |
+
+This validates the measured paths, not every schedule. The later child exit in
+the ignored-EOF case is a second observation of the same child; it does not
+remove the recorded incomplete wait. No actual Codex session was exercised.

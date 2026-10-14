@@ -31,8 +31,8 @@ What is recorded, not guaranteed:
 - **What a bound means.** Waits on children are bounded, and an exceeded bound
   is reported as `incomplete`. It is never escalated to a signal. A bound does
   not guarantee that the child ended: an `incomplete` run sets a nonzero exit status,
-  keeps its scratch, and M2 keeps its socket directory. Every completed
-  measurement and validation run below recorded `incomplete: 0`.
+  keeps its scratch, and M2 keeps its socket directory. Every
+  nominal measurement and nominal validation run below recorded `incomplete: 0`.
 
 Runners create a fresh private `codex-*` directory under the temporary root
 required by `AGENTS.md` (set `RESEARCH_TMP_ROOT` on macOS), or `/tmp` elsewhere. `RESEARCH_TMP_ROOT`
@@ -236,7 +236,7 @@ No kernel wait was induced. The following comes from source reasoning only:
 ```sh
 npm ci && npm run build
 export RESEARCH_TMP_ROOT="<existing approved temporary root>"
-node --test experimental/126-guard-liveness/m2-macos-fwaslocked/fg-scan.test.mjs
+node --test experimental/126-guard-liveness/lib/common.test.mjs experimental/126-guard-liveness/m2-macos-fwaslocked/*.test.mjs
 node experimental/126-guard-liveness/f1-guard-delay/run.mjs
 node experimental/126-guard-liveness/m2-macos-fwaslocked/run.mjs
 ```
@@ -254,5 +254,12 @@ its isolated default selection (actual model unconfirmed), in parallel on
 revision `e782e396df3f5feebb556bfe2f371d101176e03f`. Input SHA-256:
 `70db601c2d878f86621c2f153758b89ea1fbe2973ee60f7cee6deda1ff0fa6da`.
 Both completed successfully without running tests. Later corrections were
-checked by the integrating Codex; the CLI reviews do not certify those later
-commits. F2 remains unexecuted on Linux, and product adoption is unresolved.
+checked by the integrating Codex. At `e5cf6dd`, the focused tests and one
+F1/M2 nominal run each plus the five documented faults were executed; all
+seven runner exit statuses and failure/incomplete records matched expectations.
+The cooperating session also reviewed that revision read-only. The CLI reviews
+do not certify later commits. F2 remains unexecuted on Linux, and product
+adoption is unresolved. Barrier contention can invalidate a nominal scenario
+and produce a nonzero result; successful runs do not establish a failure rate.
+Cleanup can report both an earlier incomplete wait and a later nonzero exit
+for the same child. These are observations, not counts of distinct processes.
