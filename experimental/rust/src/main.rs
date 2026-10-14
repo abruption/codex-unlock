@@ -37,7 +37,7 @@ fn create_fixture(root: &Path) -> io::Result<PathBuf> {
         builder.mode(0o700);
     }
     builder.create(&dir)?;
-    for name in ["guard.fixture", "thread.fixture"] {
+    for name in ["guard.fixture", "00000000-0000-4000-8000-000000000122.lock"] {
         let mut options = OpenOptions::new();
         options.read(true).write(true).create_new(true);
         #[cfg(unix)]
@@ -73,7 +73,7 @@ fn observe(dir: &Path, guard_name: &str) -> io::Result<Observation> {
         Err(std::fs::TryLockError::Error(e)) => return Err(e),
     }
     let result = (|| {
-        let thread = open_fixture(dir, "thread.fixture")?;
+        let thread = open_fixture(dir, "00000000-0000-4000-8000-000000000122.lock")?;
         match thread.try_lock() {
             Ok(()) => {
                 thread.unlock()?;
@@ -115,7 +115,7 @@ fn fixture_owner(root: &Path) -> io::Result<()> {
     let deadline = Instant::now() + LIMIT;
     let dir = create_fixture(root)?;
     let guard = open_fixture(&dir, "guard.fixture")?;
-    let thread = open_fixture(&dir, "thread.fixture")?;
+    let thread = open_fixture(&dir, "00000000-0000-4000-8000-000000000122.lock")?;
     guard.try_lock().map_err(io::Error::other)?;
     thread.try_lock().map_err(io::Error::other)?;
     guard.unlock()?;
@@ -238,7 +238,7 @@ fn self_test(root: &Path) -> io::Result<()> {
             return Err(io::Error::other("fixture child failed"));
         }
         expect(observe(&dir, "guard.fixture")?, Observation::Free)?;
-        for name in ["guard.fixture", "thread.fixture"] {
+        for name in ["guard.fixture", "00000000-0000-4000-8000-000000000122.lock"] {
             if fs::read(dir.join(name))? != CONTENT {
                 return Err(io::Error::other("fixture contents changed"));
             }
@@ -255,7 +255,7 @@ fn self_test(root: &Path) -> io::Result<()> {
     if wait(&mut child, deadline).is_ok() {
         if let Some(dir) = owned_dir {
             fs::remove_file(dir.join("guard.fixture"))?;
-            fs::remove_file(dir.join("thread.fixture"))?;
+            fs::remove_file(dir.join("00000000-0000-4000-8000-000000000122.lock"))?;
             fs::remove_dir(dir)?;
         }
     } else {
@@ -288,10 +288,67 @@ fn run() -> io::Result<()> {
         if args[0] == "__fixture-owner" {
             return fixture_owner(Path::new(&args[2]));
         }
+        if args[0] == "__interop-fixture" {
+            return interop_fixture(Path::new(&args[2]));
+        }
     }
     Err(io::Error::other(
         "usage: codex-unlock-lab capabilities | self-test --scratch-root EXISTING_PRIVATE_DIRECTORY",
     ))
+}
+
+// Lab-only protocol: never accepts an existing lock path. The harness owns the
+// newly created directory and removes it only after cooperative child exit.
+fn interop_fixture(root: &Path) -> io::Result<()> {
+    let dir = create_fixture(root)?;
+    fs::rename(dir.join("guard.fixture"), dir.join(".coordination.lock"))?;
+    let guard = open_fixture(&dir, ".coordination.lock")?;
+    let thread = open_fixture(&dir, "00000000-0000-4000-8000-000000000122.lock")?;
+    say(dir
+        .file_name()
+        .and_then(|x| x.to_str())
+        .ok_or_else(|| io::Error::other("invalid fixture name"))?)?;
+    let commands = lines(io::stdin());
+    let deadline = Instant::now() + LIMIT;
+    let mut held = false;
+    let mut guarded = false;
+    loop {
+        match receive(&commands, deadline)?.as_str() {
+            "acquire" if !held && !guarded => {
+                guard.try_lock().map_err(io::Error::other)?;
+                let result = thread.try_lock();
+                guard.unlock()?;
+                result.map_err(io::Error::other)?;
+                held = true;
+                say("held")?;
+            }
+            "release" if held && !guarded => {
+                guard.try_lock().map_err(io::Error::other)?;
+                thread.unlock()?;
+                guard.unlock()?;
+                held = false;
+                say("free")?;
+            }
+            "guard" if !guarded => {
+                guard.try_lock().map_err(io::Error::other)?;
+                guarded = true;
+                say("guarded")?;
+            }
+            "unguard" if guarded => {
+                guard.unlock()?;
+                guarded = false;
+                say("unguarded")?;
+            }
+            "probe" if !guarded => say(match observe(&dir, ".coordination.lock")? {
+                Observation::Held => "held",
+                Observation::Free => "free",
+                Observation::UnknownMissingGuard => "unknown-missing",
+                Observation::UnknownBusyGuard => "unknown-busy",
+            })?,
+            "quit" if !held && !guarded => return Ok(()),
+            _ => return Err(io::Error::other("invalid interop fixture command/state")),
+        }
+    }
 }
 
 fn main() {
