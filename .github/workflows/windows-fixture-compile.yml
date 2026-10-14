@@ -1,0 +1,121 @@
+name: Windows fixture compile
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  compile-only:
+    name: Windows PowerShell 5.1 fixture syntax and compile
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Parse orchestrator without executing it
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($PSVersionTable.PSVersion.Major -ne 5) {
+            throw 'This gate requires Windows PowerShell 5.1'
+          }
+          $tokens = $null
+          $parseErrors = $null
+          $path = Join-Path $env:GITHUB_WORKSPACE 'experimental/windows-fixture/lab.ps1'
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            $path, [ref]$tokens, [ref]$parseErrors
+          )
+          if ($parseErrors.Count -gt 0) {
+            $parseErrors | ForEach-Object { Write-Error $_.Message }
+            throw 'Fixture script has syntax errors'
+          }
+          Write-Output 'PowerShell syntax checked; orchestrator was not executed.'
+          # Define only the pure path predicate; never dot-source the orchestrator.
+          $inside = $ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+              $node.Name -eq 'Test-Inside'
+          }, $true)
+          if ($null -eq $inside) { throw 'Missing result-path predicate' }
+          . ([scriptblock]::Create($inside.Extent.Text))
+          $cases = @(
+            @{ Path = 'C:\Temp\Lab\results.jsonl'; Root = 'C:\Temp\Lab'; Expected = $true },
+            @{ Path = 'c:\TEMP\lab\results.jsonl'; Root = 'C:\Temp\Lab'; Expected = $true },
+            @{ Path = 'C:\Temp\Lab-other\results.jsonl'; Root = 'C:\Temp\Lab'; Expected = $false },
+            @{ Path = 'C:\Temp\Lab'; Root = 'C:\Temp\Lab\'; Expected = $true },
+            @{ Path = '\\server\share\Lab\results.jsonl'; Root = '\\server\share\Lab'; Expected = $true }
+          )
+          foreach ($case in $cases) {
+            $observed = Test-Inside $case.Path $case.Root
+            if ($observed -ne $case.Expected) { throw 'Result-path boundary regression' }
+          }
+          Write-Output 'Result-path case/boundary checks passed without filesystem access.'
+          # Extract parameter binding only; no fixture body is evaluated.
+          $binding = [scriptblock]::Create($ast.ParamBlock.Extent.Text + "`n'validated'")
+          foreach ($case in @(
+            @{ ReadyBudgetMs = 0; WaitBudgetMs = 0; TotalBudgetSec = 0 },
+            @{ ReadyBudgetMs = 600000; WaitBudgetMs = 600000; TotalBudgetSec = 3600 }
+          )) {
+            if ((& $binding @case) -ne 'validated') { throw 'Valid budget binding failed' }
+          }
+          foreach ($case in @(
+            @{ ReadyBudgetMs = -1 }, @{ WaitBudgetMs = -1 }, @{ TotalBudgetSec = -1 },
+            @{ ReadyBudgetMs = 600001 }, @{ WaitBudgetMs = 600001 }, @{ TotalBudgetSec = 3601 }
+          )) {
+            $rejected = $false
+            try { & $binding @case | Out-Null } catch { $rejected = $true }
+            if (-not $rejected) { throw 'Unsafe budget passed parameter validation' }
+          }
+          $remainingFunction = $ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+              $node.Name -eq 'Remaining'
+          }, $true)
+          if ($null -eq $remainingFunction) { throw 'Missing budget clamp' }
+          . ([scriptblock]::Create($remainingFunction.Extent.Text))
+          $TotalMs = [int64]10000
+          $Clock = [pscustomobject]@{ ElapsedMilliseconds = [int64]9000 }
+          if ((Remaining 15000) -ne 1000 -or (Remaining 500) -ne 500 -or (Remaining -1) -ne 0) {
+            throw 'Remaining budget clamp failed'
+          }
+          $Clock.ElapsedMilliseconds = [int64]11000
+          if ((Remaining 15000) -ne 0) { throw 'Expired budget must be zero' }
+          $TotalMs = [int64][int]::MaxValue + 1000
+          $Clock.ElapsedMilliseconds = 0
+          if ((Remaining ([int]::MaxValue)) -ne [int]::MaxValue) { throw 'Budget integer bound failed' }
+          Write-Output 'Budget parameter and monotonic-clamp checks passed without fixture execution.'
+          $verdictFunction = $ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+              $node.Name -eq 'Test-Expect'
+          }, $true)
+          if ($null -eq $verdictFunction) { throw 'Missing verdict predicate' }
+          . ([scriptblock]::Create($verdictFunction.Extent.Text))
+          $expect = @{ ok = $false; win32 = 33 }
+          if ((Test-Expect ([pscustomobject]@{ ok = $false; win32 = 33 }) $expect) -ne 'match') {
+            throw 'Observed lock violation must match the explicit hypothesis'
+          }
+          if ((Test-Expect ([pscustomobject]@{ ok = $true; bytes = 0 }) $expect) -ne 'mismatch') {
+            throw 'Successful empty EOF must not count as a lock violation'
+          }
+          if ((Test-Expect $null $expect) -ne 'incomplete') { throw 'Missing observation must remain incomplete' }
+          Write-Output 'Pure lock-read verdict cases passed without native calls.'
+      - name: Compile native declarations without calling them
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = Join-Path $env:GITHUB_WORKSPACE 'experimental/windows-fixture/WinLockLab.cs'
+          Add-Type -Path $path
+          $methods = [WinLockLab].GetMethods() | Select-Object -ExpandProperty Name
+          foreach ($expected in 'Execute', 'GuardProbe', 'ProcessIdentity', 'RmList') {
+            if ($methods -notcontains $expected) {
+              throw "Missing expected fixture method: $expected"
+            }
+          }
+          Write-Output 'C# declarations compiled; no fixture or native API method was called.'
