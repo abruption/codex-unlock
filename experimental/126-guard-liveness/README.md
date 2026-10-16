@@ -169,8 +169,10 @@ EOF (exit 0) or 20 s (exit 3).
 `observe.py` records the same-user access matrix for the reads #137 performs.
 It has no self-alarm, because a handled signal cannot wake a killable kernel
 wait. `run.mjs` validates the ready record, waits for the observer with a
-bound (recording `incomplete` without signalling it). It collects only the
-access matrix. `F2_DIST` is rejected before any fixture starts. The earlier
+bound (recording `incomplete` without signalling it). Without `F2_BUILD` it
+collects only the access matrix, as in the measured run (the observer now also
+records mount-namespace readlinks). `F2_BUILD` runs a separate-process
+inspection, described below. The earlier
 in-process inspection was removed because synchronous inspection can block
 the event loop, its timeout and holder EOF cleanup. The holder's own lifetime
 does not bound the parent. Outcomes are recorded rather than asserted against
@@ -226,6 +228,187 @@ also resets dumpable on credential changes and on exec of an unreadable
 image. Packaging or wrappers may differ from source. Real Codex's dumpable
 state needs a real binary and is not claimed.
 
+### F2 isolated inspection (`F2_BUILD`), prepared, not yet run on Linux
+
+`F2_BUILD=<build.mjs output>` enables product inspection in a **separate
+child** (`inspect-child.mjs`, run through `lib/isolated-observer.mjs`). The
+runner never imports a product module. Layers:
+
+| File | Role |
+| --- | --- |
+| `lib/isolated-observer.mjs` | generic: handshake, two bounds, byte-limited stdout/stderr, stage-record protocol, per-instance late exits |
+| `protocol.mjs` | F2: exact stage order and uniqueness, result/error shapes, `F2_CHILD_FAULT` allowlist |
+| `build.mjs` | trusted build input and its verification, import-graph check |
+| `inspect-child.mjs` | product calls, one stage each |
+| `expectations.mjs` | expected table, kept apart from collection |
+| `plumbing-smoke.mjs` | cross-platform wiring check; not an F2 result |
+
+**Stages**, exactly once each, in this order: `dist_identity` (re-hash the
+build against its manifest; stop before import on mismatch), `module_load`
+(static and literal dynamic relative import graph of the imported modules
+must not reach `unlock.js`, then import), `openers` (product `lsof` discovery
+and `inspectProcess`), `prepare` (`prepareLinuxParticipation`),
+`guarded_verify` (`guardedProbeOnce` with `verifyLinuxParticipation`) and
+`inspect_thread` (`inspectThread`, policy blockers). Only `prepare` may end in
+an error that counts as a product outcome. An error in any other stage, a
+malformed result, a missing, duplicate or out-of-order stage, or an `end`
+with both or neither of `result`/`error` is a collection fault.
+`guarded_verify` returns `{ skipped: 'prepare_failed' }` after a failed
+`prepare`. That is harness bookkeeping, not a product refusal.
+
+**Build identity.** `build.mjs --repo R --commit C [--patch P] --out O`
+resolves the commit and tree with `git rev-parse` in the named local
+repository and builds from that repository's `git archive`. It records the
+archive, lockfile and patch SHA-256, then runs `npm ci` and `npm run build`.
+It also records a sorted manifest of `dist/` files and of the native addons
+(`*.node`) under `node_modules`. `run.mjs` and `inspect-child.mjs` each re-hash
+that content against the manifest before use. This verifies only the recorded
+`dist/` and native-addon bytes; dependency JavaScript and package metadata are
+not covered. It does not prove that the local
+repository matches upstream. A commit string supplied by anyone else is
+never used as provenance. A deployed native Codex binary is unrelated and
+remains unverified.
+
+The build helper uses bounded synchronous subprocesses for Git and npm. Their
+timeout/output-limit handling can send a termination signal to those build
+subprocesses; the inspector's no-owner-signal contract is not a claim that
+building or collecting diagnostic output is signal-free.
+
+**Lifecycle**, as designed and locally tested:
+
+- The child writes a `hello` line first. The startup bound (10 s) runs until
+  that line. The stage bound (15 s) starts only then, so child startup
+  latency does not consume the stage budget. Exceeding either bound returns
+  `incomplete` with its phase and the open stage.
+- stdout (1 MiB) and stderr (64 KiB) are capped by bytes per chunk. Bytes past
+  the cap are dropped and recorded as a fault, as is an unterminated last line.
+  The Python observer's output is capped (256 KiB) and parsed only after its
+  stdout closes.
+- No cancellation guarantee. The parent sends no signal. It closes stdin,
+  destroys the pipes and unrefs the child. The child has **no lifetime timer**:
+  it checks its 30 s deadline and stdin EOF only between stages. It then writes
+  a `stop` record, sets exit code 3 (lifetime) or 4 (parent gone) and lets
+  pending work drain instead of calling `process.exit`. A refused build or
+  import exits 5. A child stuck in a syscall, or awaiting work that never
+  settles, can outlive the runner. Late exits are looked for with a 2 s bound
+  and recorded per instance as `exited` or `unconfirmed`.
+- Signals: the child sends no signal to the holder, a lock owner or any
+  unlock path. Product diagnostics it calls (`lsof`, `ps`) run with the
+  product's own timeout. That timeout sends SIGTERM and then SIGKILL to the
+  timed-out diagnostic's own process group.
+
+**Same instance.** The runner reads the holder's `/proc/PID/stat` start ticks
+itself at readiness, after observation and after inspection. A changed or
+missing instance, or a holder exit at any point before inspection ends,
+invalidates the run. The holder's lifetime is 60 s
+(`FIXTURE_LIFETIME_SECONDS`). Before inspection, the runner checks that the
+remaining lifetime covers observer + startup + stage bounds + 5 s. Opener,
+`prepare`, participation and inspection ticks are compared with the runner's
+sample as decimal strings.
+
+**Expected table.** A mismatch is recorded, never repaired by policy:
+
+| dumpable | Row | Expected |
+| --- | --- | --- |
+| both | V | one opener, the holder's PID, no opener error |
+| 1 | E1 | opener identity complete, no opener errors, start ticks equal to the runner's sample |
+| 1 | E2 | `prepare` PID and ticks equal, holder FD listed and kept as a candidate |
+| 1 | E3 | guarded probe `held`, guard `acquired`, participation PID, FD and ticks equal |
+| 1 | E4 | `inspectThread` probe `held` with the same participation; owner PID and ticks equal; no `linux_participation_unproven` |
+| 0 | R1 | `prepare` fails with `EACCES` or `EPERM`. `ENOENT`, `TypeError`, the product budget error or a build error fail this row |
+| 0 | R2 | `safeToUnlock=false`, blockers include `linux_participation_unproven`, no participation |
+
+R2 is a contract choice tied to source: #137 `b483cd5`
+`evaluateSafety` adds that blocker when owner start ticks or a matching
+participation are absent. R2 requires that blocker but allows additional
+blockers; passing R2 does not establish that participation was the sole cause
+of refusal. A refusal without that blocker fails R2 as "refused, not
+attributed". V fails if
+`lsof` does not show the non-dumpable owner. A dumpable=0 result counts only
+if the same report's dumpable=1 control passed (`evaluateReport`). The
+following are recorded and never asserted: `firstObservedError`,
+`guardedAttempted`, participation, final eligibility (`safeToUnlock`,
+blockers), owner/probe details and `fixtureIsCodex`. The fixture is `python3 …/codex`, and the
+product's `isCodex` regex can match that path. That says nothing about a
+native Codex binary. No allowlist or policy is changed to make it pass.
+
+**Local evidence** (macOS 27.0.1, Node v24.16.0, not Linux). Tests:
+`lib/isolated-observer.test.mjs` (13), `f2-linux-nondumpable/expectations.test.mjs`
+(10: protocol order/duplicates/shapes, fault allowlist, forged ticks, changed
+instance, ENOENT/TypeError/budget not counted, unrelated refusal, hidden owner,
+missing control, malformed payloads and coexisting blockers),
+`f2-linux-nondumpable/build.test.mjs` (4). Together with the existing common/M2
+tests, all 38 focused tests passed without skips after integration. The generic tests
+cover a 3 s synchronous stall after the handshake under a 300 ms stage bound,
+a stall before the handshake (startup timeout), late exit 4, per-instance
+unconfirmed exits, 2 MiB without a newline under a 64 KiB cap, a byte-capped
+multibyte stderr, a split multibyte line, and a lifetime that does not
+interrupt an async stage.
+
+`plumbing-smoke.mjs` ran against two `build.mjs` builds of `b483cd5`
+(unpatched, and with `f4-guard-scope/guard-scope.patch`). It used a
+same-user Python flock holder on APFS, not the Linux `codex` fixture. Both
+runs passed. Nominal reported all six stages in order with no observer or
+protocol faults. `prepare` failed with ENOENT on `/proc`, a macOS artifact.
+`stall:prepare` returned `incomplete` at the stage bound with open stage
+`prepare`, and the stalled child later exited with code 4 on its own.
+`run.mjs` itself refuses non-Linux hosts and was not run on macOS. **None of this is a
+Linux result.**
+
+**Linux isolated measurement, 2026-10-16.** On the approved unprivileged
+Linux 7.0.0-1013-oracle aarch64 host (Node 24.18.0), the unpatched
+`b483cd587c62329243366e64aaaac477edd36adc` build completed all stages for both
+dumpability values. Collection passed, but the expected table failed and the
+runner exited 1. `lsof` reported inaccessible overlay/nsfs mounts and warned
+that information could be incomplete. The Python fixture also failed the
+product's executable/argument verification. The dumpable=1 direct prepare and
+guarded participation rows E2/E3 passed, but V/E1/E4 failed. At dumpable=0,
+prepare returned EACCES and inspection refused with the participation blocker
+(R1/R2 passed), but V failed and there was no passing positive control.
+Consequently **no refusal success is counted**. This does not validate a native
+Codex candidate or clear either #137 gate. Warnings were not suppressed and no
+allowlist or policy was relaxed.
+
+A second, `stall:prepare` run exited 1 and recorded both inspectors as
+incomplete at the stage bound with open stage `prepare`. Both later exited 4
+without a signal; holders exited 0. This validates the parent observation bound
+for an injected finite stall, not cancellation or a real kernel hang. Raw
+hashes and build identity are in [evidence.md](evidence.md#isolated-f2-linux-measurement-2026-10-16).
+
+Reproduction commands (a mismatch must remain nonzero):
+
+```sh
+node experimental/126-guard-liveness/f2-linux-nondumpable/build.mjs \
+  --repo <local codex-unlock clone> --commit b483cd587c62329243366e64aaaac477edd36adc --out "$BUILD"
+F2_BUILD="$BUILD" node experimental/126-guard-liveness/f2-linux-nondumpable/run.mjs
+F2_BUILD="$BUILD" F2_CHILD_FAULT=stall:prepare node experimental/126-guard-liveness/f2-linux-nondumpable/run.mjs  # must exit nonzero, incomplete 1+
+```
+
+## #126 acceptance matrix (status at this revision)
+
+`done` means implemented with a real-lock test that runs somewhere in CI or
+locally. `partial` means implemented without the required execution or with
+a documented residual. `open` means not addressed.
+
+| #126 criterion / case | Status | Evidence | Missing |
+| --- | --- | --- | --- |
+| Reviewed contract against pinned Codex source and measured cases | partial | #137 `docs/linux-lock-attribution.md` | final review; native Codex dumpability |
+| Bounded enumeration, size, time | partial | 256 FDs, 64 KiB, 25 ms checked between calls | no hard syscall deadline (F3, F4) |
+| Only held exclusive whole-file FLOCK counts | done | `parseFlockRows` rejects POSIX/OFDLCK/LEASE/`->`/READ; v6.17 `show_fd_locks` lists granted entries | — |
+| Acquisition PID not required to match | done | inherited-FD real-lock test (Linux CI) | — |
+| Denied evidence (non-dumpable) | partial | access matrix and isolated run measured (F2); R1/R2 observed; simulated fdinfo denial in `signal-evidence.test.mjs` | passing native-candidate control; current isolated expected table failed |
+| Malformed/truncated proc records | partial | parser unit tests; 64 KiB overflow throws | no real truncated-proc fixture |
+| PID/start-time change | partial | start ticks in prepare and guard; forged-ticks unit tests | PID-reuse window at `kill` (no pidfd) |
+| Namespace mismatch | partial | `/proc/self` and mount ns checks, unit test; observer now records ns readlinks | no real foreign-namespace fixture |
+| FD replacement / inode replacement | partial | replacement-inode guard test, descriptor-list change test | real FD-reuse race fixture; fdinfo `show_fdinfo` wait on a reused FD (F4) |
+| Budget exceeded | partial | `filterCandidateDescriptors` budget unit test | no real slow-proc fixture (cannot be induced safely) |
+| Inherited-description ambiguity defined | open | docs say participation ≠ sole control | eligibility and release-verification rule for shared descriptions |
+| Final boundary: no await/spawn, guard not held across signal | partial | #137 structure | F4's 25 ms check covers only its confirm step, not evidence age or release-to-signal; not applied |
+| Refusals send zero SIGTERM | done | nonlocking-candidate and fdinfo-denial tests count signals | — |
+| JSON/exit compatibility | partial | additive optional v1 fields with schema | reviewer confirmation |
+| Guard liveness (#137 gate 2) | partial | F4 proposal removes cmdline/exe and stat via FD from the guard (not applied) | fdinfo `show_fdinfo` and lock filesystem waits remain; Linux run |
+| Native access (#137 gate 1) | open | F2 access matrix and isolated synthetic run; expected table failed | native binary dumpability and passing candidate control not measured |
+
 ## F3: indefinite waits, source limits only
 
 No kernel wait was induced. The following comes from source reasoning only:
@@ -240,7 +423,7 @@ No kernel wait was induced. The following comes from source reasoning only:
   path. Some are expected to be short, but none is guaranteed finite. The
   25 ms budget is checked between calls and cannot interrupt one.
 - Moving cmdline out of the guard (reading before and after the guard, with no
-  await before the signal) removes the coordination stall. It does not make
+  await before the signal) removes that cmdline coordination-stall path. It does not make
   the signal safe: a slow read after the guard leaves the inode,
   participation, and PID evidence from inside the guard stale by the time
   of the signal.
@@ -255,7 +438,8 @@ No kernel wait was induced. The following comes from source reasoning only:
 ```sh
 npm ci && npm run build
 export RESEARCH_TMP_ROOT="<existing approved temporary root>"
-node --test experimental/126-guard-liveness/lib/common.test.mjs experimental/126-guard-liveness/m2-macos-fwaslocked/*.test.mjs
+node --test experimental/126-guard-liveness/lib/*.test.mjs experimental/126-guard-liveness/m2-macos-fwaslocked/*.test.mjs \
+  experimental/126-guard-liveness/f2-linux-nondumpable/*.test.mjs
 node experimental/126-guard-liveness/f1-guard-delay/run.mjs
 node experimental/126-guard-liveness/m2-macos-fwaslocked/run.mjs
 ```

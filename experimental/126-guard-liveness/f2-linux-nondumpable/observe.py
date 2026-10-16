@@ -41,6 +41,9 @@ def read(path, limit=65536):
 attempt("proc_dir_uid", lambda: os.stat(base).st_uid)
 attempt("fd_dir_uid", lambda: os.stat(f"{base}/fd").st_uid)
 attempt("fdinfo_dir_uid", lambda: os.stat(f"{base}/fdinfo").st_uid)
+# prepareLinuxParticipation compares mount namespaces before listing FDs.
+attempt("self_ns_mnt_readlink", lambda: os.readlink("/proc/self/ns/mnt"))
+attempt("ns_mnt_readlink", lambda: os.readlink(f"{base}/ns/mnt"))
 attempt("fd_listdir", lambda: sorted(os.listdir(f"{base}/fd"), key=int))
 attempt("fd_readlink", lambda: os.readlink(f"{base}/fd/{fd}"))
 attempt("fd_stat_matches_lock", lambda: (lambda a, b: [a.st_dev == b.st_dev, a.st_ino == b.st_ino])(os.stat(f"{base}/fd/{fd}"), os.stat(lock_path)))
