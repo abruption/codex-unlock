@@ -97,4 +97,49 @@ raw result and verification records remain private on the integrating host.
 
 This is an access-matrix result only. It does not run the #137 adapter,
 establish product `unknown` behavior or candidate recognition, measure native
-Codex dumpability, or reproduce a procfs hang. F2_DIST remains disabled.
+Codex dumpability, or reproduce a procfs hang. F2_DIST was disabled at that
+revision; the later isolated inspection measurement is recorded below.
+
+## Isolated F2 Linux measurement (2026-10-16)
+
+Environment: unprivileged same-UID Linux 7.0.0-1013-oracle aarch64, Node
+24.18.0, Python 3.12.3, ptrace_scope 1. No actual Codex process or home was
+used; holders exited on EOF. No privilege, mount, visibility or host-policy
+changes were made. Research dependencies were installed only inside private
+build staging, using a staging-local npm cache.
+
+The product build resolved local commit
+`b483cd587c62329243366e64aaaac477edd36adc`, tree
+`81d82c471a3a67560d48d4c70bce438f0ad96e29`, with no patch. Its manifest
+SHA-256 was `23d5aa1f831ef5cc63e3e1c227955864ff2d3536d61d6a388158103c9f86ec92`;
+48 dist files and 14 native-addon files were verified. The manifest does not
+hash dependency JavaScript/package metadata or prove upstream/native-binary
+identity. The remote/local runner, expectations and isolated-observer hashes
+matched before interpreting results:
+
+| Input | SHA-256 |
+| --- | --- |
+| run.mjs | `52b94e296c801a33fbd74cda21f41ce87789cd2f9e684764e84f16037f7d2c0e` |
+| expectations.mjs | `9c09e8c28a0bc16789ea4de7d86120015d372ffa68ec7abc7472582b9735096c` |
+| isolated-observer.mjs | `2d38c1aad5e96193756baed112e415df4a64b7b3c8e96b6e5b4be457debe3a72` |
+
+| Run | Actual exit / outcome | Private raw result SHA-256 |
+| --- | --- | --- |
+| No fault injection | 1; collection true, expectations false, incomplete 0, refusalCounted false | `924e85a03bfc0aaedf93e5883619fd002470a028c92ae84e0839cced7c5d8b34` |
+| stall:prepare | 1; collection false, both inspectors incomplete at prepare, later exit 4 without signal | `7b0042c45db6690c1fa436f03b1f32a3dd607f47ccef2f6057a1f2b79fd31743` |
+
+The first run observed E2/E3 at dumpable=1 and R1/R2 at dumpable=0, but failed
+V/E1/E4 for the control and V for refusal. `lsof` warned about incomplete
+visibility of inaccessible overlay/nsfs mounts; the Python fixture was not
+accepted as a Codex executable/argument combination. The control failure means
+the refusal is not a passing attribution experiment. This is recorded rather
+than repaired by suppressing warnings, loosening product identity rules or
+changing the expected table. R2 may coexist with unrelated blockers and is not
+proof of the sole cause of refusal.
+
+All four holder exit records were 0 without signals. Both stalled inspectors
+later reported exit 4 without signals. Post-checks found their recorded process
+instances absent. Remote/downloaded raw-result hashes matched. Reports remain
+private because they contain process IDs and local paths. No production
+readiness or F4 liveness claim follows; actual native Codex evidence and the
+unresolved shared-description/guard-liveness decisions remain open.

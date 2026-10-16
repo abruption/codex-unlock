@@ -2,7 +2,8 @@
 """Synthetic Linux holder named `codex` (#126 research, F2).
 
 Acquires the thread flock under `.coordination.lock` like Codex v0.162.1 and
-holds it until stdin EOF (exit 0) or a 20 s lifetime (exit 3). It explicitly sets and verifies
+holds it until stdin EOF (exit 0) or its lifetime (exit 3): 20 s, or
+FIXTURE_LIFETIME_SECONDS (1-120). It explicitly sets and verifies
 both requested dumpable values with prctl, modelling a process
 that hardened itself. A targeted search of pinned v0.162.1 found no direct
 hardening call in the ordinary CLI main; this does not establish a deployed
@@ -27,7 +28,10 @@ lock_path = os.environ["FIXTURE_LOCK_PATH"]
 want = int(os.environ["FIXTURE_DUMPABLE"])
 if want not in (0, 1):
     raise ValueError("FIXTURE_DUMPABLE must be 0 or 1")
-deadline = time.monotonic() + 20
+lifetime = int(os.environ.get("FIXTURE_LIFETIME_SECONDS", "20"))
+if not 1 <= lifetime <= 120:
+    raise ValueError("FIXTURE_LIFETIME_SECONDS must be 1-120")
+deadline = time.monotonic() + lifetime
 libc = ctypes.CDLL(None, use_errno=True)
 libc.prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]
 libc.prctl.restype = ctypes.c_int
@@ -64,7 +68,7 @@ try:
     guard = None
     print(json.dumps({"ready": True, "pid": os.getpid(), "fd": thread,
                       "dumpable": dumpable, "uid": os.getuid(), "euid": os.geteuid(),
-                      "lifetime_seconds": 20}), flush=True)
+                      "lifetime_seconds": lifetime}), flush=True)
     while time.monotonic() < deadline:
         readable, _, _ = select.select([sys.stdin.fileno()], [], [], max(0, deadline - time.monotonic()))
         if readable and not os.read(sys.stdin.fileno(), 4096):
