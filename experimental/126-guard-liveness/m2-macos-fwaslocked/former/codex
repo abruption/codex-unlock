@@ -1,0 +1,30 @@
+#!/usr/bin/env node
+// Former holder named `codex` (#127 research, M2). Acquires the thread flock
+// under coordination (nonblocking; it starts first on an unlocked home),
+// releases it with LOCK_UN but keeps the descriptor open until stdin EOF or
+// FIXTURE_LIFETIME_MS (exit 3). Its open file description keeps the sticky
+// FWASLOCKED bit while another process holds the lock.
+import fs from 'node:fs'
+import { createRequire } from 'node:module'
+import path from 'node:path'
+import process from 'node:process'
+import { setTimeout } from 'node:timers'
+
+const require = createRequire(process.env.FIXTURE_REQUIRE_FROM)
+const { flockSync } = require('fs-ext-extra-prebuilt')
+
+const lockPath = process.env.FIXTURE_LOCK_PATH
+const guard = fs.openSync(path.join(path.dirname(lockPath), '.coordination.lock'), 'r')
+flockSync(guard, 'exnb')
+const thread = fs.openSync(lockPath, 'r+')
+flockSync(thread, 'exnb')
+flockSync(thread, 'un')
+flockSync(guard, 'un')
+fs.closeSync(guard)
+process.stdout.write('ready\n')
+setTimeout(() => { fs.closeSync(thread); process.exit(3) }, Number(process.env.FIXTURE_LIFETIME_MS ?? 60000)).unref()
+process.stdin.resume()
+process.stdin.on('end', () => {
+  fs.closeSync(thread)
+  process.exit(0)
+})
