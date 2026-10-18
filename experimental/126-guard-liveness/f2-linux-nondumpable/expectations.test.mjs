@@ -18,7 +18,7 @@ const positive = () => [...base(),
   stage('prepare', { result: { pid: 42, startTicks: '900', candidates: ['5'], descriptors: ['0', '5'] } }),
   stage('guarded_verify', { result: probe('held', { guard: { status: 'acquired' }, participation: { pid: 42, startTicks: '900', descriptor: '5' } }) }),
   stage('inspect_thread', { result: { classification: 'live_owner', safeToUnlock: true, blockers: [], warnings: [],
-    owner: { pid: 42, startTicks: '900' }, probe: probe('held', { participation: { pid: 42, startTicks: '900', descriptor: '5' } }) } }),
+    owner: { pid: 42, startTicks: '900' }, probe: probe('held', { guard: { status: 'acquired' }, participation: { pid: 42, startTicks: '900', descriptor: '5' } }) } }),
 ]
 const refused = () => [...base(),
   stage('openers', { result: { error: null, processes: [{ pid: 42, startTicks: null, errors: ['linux_process_instance_unverified'], isCodex: true, identityComplete: true }] } }),
@@ -90,6 +90,22 @@ test('holder instance must stay the same live process', () => {
   const exited = run(0, refused(), {}, { ...ticks, holderExitedDuringInspection: true })
   assert.equal(exited.collected, false)
   assert.equal(exited.ok, false)
+})
+
+test('inspection needs its own acquired guard even when direct guarded verification passed', () => {
+  for (const guard of [undefined, { status: 'busy' }, { status: 'unsafe' }]) {
+    const stages = positive()
+    if (guard === undefined) delete stages[5].result.probe.guard
+    else stages[5].result.probe.guard = guard
+    const result = run(1, stages)
+    assert.equal(result.collected, true)
+    assert.equal(result.rows.find((r) => r.id === 'E3_guarded_participation').ok, true)
+    assert.deepEqual(failed(result), ['E4_inspection_participation'])
+    assert.equal(result.ok, false)
+    const report = evaluateReport([result, run(0, refused())])
+    assert.equal(report.ok, false)
+    assert.equal(report.refusalCounted, false)
+  }
 })
 
 test('dumpable=0 counts only a permission refusal with the participation blocker', () => {

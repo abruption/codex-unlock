@@ -33,6 +33,7 @@ import { fgScan, filterDecision, withoutPid } from './fg-scan.mjs'
 import { evaluateFilterMeasurement } from './filter-measurement.mjs'
 import { assertDarwin, options, wrapperText } from './options.mjs'
 import { barrierEventFailed, evaluatePart2Scenario } from './part2-verdict.mjs'
+import { evaluatePart1Scenario } from './part1-verdict.mjs'
 
 // Reject unsupported hosts before product/native imports, scratch or children.
 assertDarwin(process.platform)
@@ -139,8 +140,11 @@ async function part1() {
       const pids = Object.fromEntries(Object.entries(actors).map(([k, h]) => [k, h.pid]))
       const roles = roleView(scan, pids)
       if (Object.values(roles).some((r) => r.decision === 'unknown')) failures.push(`part1 ${rep} ${name}: fixture descriptor evidence unknown`)
+      const scenarioFailures = evaluatePart1Scenario(name, state, scan, roles)
+      for (const reason of scenarioFailures) failures.push(`part1 ${rep} ${name}: expected observation ${reason}`)
       results.push({
         part: 1, rep, case: name, probe: state,
+        scenarioMatched: scenarioFailures.length === 0, scenarioFailures,
         scan: { valid: scan.valid, problems: scan.problems, status: scan.status, signal: scan.signal, raw: scan.raw.replace(/\0/g, '|') },
         roles,
       })

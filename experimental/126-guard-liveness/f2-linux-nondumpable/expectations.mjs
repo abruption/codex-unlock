@@ -70,7 +70,7 @@ export function evaluateRun({ dumpable, holder, ticks, observation, protocol, ex
     row('E3_guarded_participation', verify?.status === 'held' && verify.guard?.status === 'acquired' &&
       verify.participation?.pid === holder.pid && verify.participation.descriptor === fd &&
       sameTicks(verify.participation.startTicks, ticks.ready), verify)
-    row('E4_inspection_participation', inspect && inspect.probe.status === 'held' &&
+    row('E4_inspection_participation', inspect && inspect.probe.status === 'held' && inspect.probe.guard?.status === 'acquired' &&
       inspect.probe.participation?.pid === holder.pid && inspect.probe.participation.descriptor === fd &&
       sameTicks(inspect.probe.participation.startTicks, ticks.ready) && inspect.owner?.pid === holder.pid &&
       sameTicks(inspect.owner.startTicks, ticks.ready) && !inspect.blockers.includes(PARTICIPATION_BLOCKER), inspect)

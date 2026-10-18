@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
 import { test } from 'node:test'
-import { fileURLToPath, URL } from 'node:url'
+import { fileURLToPath, pathToFileURL, URL } from 'node:url'
 import { freshPrivateDir } from '../lib/common.mjs'
 import { MANIFEST_SCHEMA, contentOf, parseBuildArgs, reachableModules, verifyBuild } from './build.mjs'
 
@@ -189,5 +189,45 @@ test('import graph rejects malformed JavaScript instead of accepting a recovered
   try {
     fs.writeFileSync(path.join(dir, 'entry.js'), "const value = import(/* unfinished */ './unlock.js'")
     assert.throws(() => reachableModules(dir, ['entry.js']), /module_parse_failed:entry\.js/)
+  } finally { fs.rmSync(dir, { recursive: true }) }
+})
+
+test('import graph canonicalizes dist aliases, escaped URLs and in-root symlinks to unlock.js', () => {
+  const dir = freshPrivateDir('126-graph-canonical-test')
+  try {
+    const dist = path.join(dir, 'dist')
+    fs.mkdirSync(dist)
+    fs.writeFileSync(path.join(dist, 'unlock.js'), 'export {}\n')
+    fs.symlinkSync('unlock.js', path.join(dist, 'alias.js'))
+    fs.symlinkSync('dist', path.join(dir, 'dist-alias'))
+    for (const source of [
+      "import /* alias */ '../dist/unlock.js'",
+      "const loaded = import(/* alias */ '../dist/unlock.js')",
+      "export * from './%75nlock.js?alias#fragment'",
+      "import './alias.js'",
+    ]) {
+      fs.writeFileSync(path.join(dist, 'entry.js'), source)
+      assert.deepEqual(reachableModules(path.join(dir, 'dist-alias'), ['entry.js']), ['entry.js', 'unlock.js'])
+    }
+    assert.deepEqual(reachableModules(dist, ['../dist/unlock.js']), ['unlock.js'])
+  } finally { fs.rmSync(dir, { recursive: true }) }
+})
+
+test('import graph refuses literal escapes, symlink escapes, absolute paths and URL imports', () => {
+  const dir = freshPrivateDir('126-graph-escape-test')
+  try {
+    const dist = path.join(dir, 'dist')
+    fs.mkdirSync(dist)
+    const outside = path.join(dir, 'outside.js')
+    fs.writeFileSync(outside, 'export {}\n')
+    const unlock = path.join(dist, 'unlock.js')
+    fs.writeFileSync(unlock, 'export {}\n')
+    fs.symlinkSync('../outside.js', path.join(dist, 'escape.js'))
+    for (const specifier of ['../outside.js', './%2e%2e/outside.js', './escape.js',
+      outside, pathToFileURL(outside).href, unlock, pathToFileURL(unlock).href, 'data:text/javascript,export{}']) {
+      fs.writeFileSync(path.join(dist, 'entry.js'), `import /* escape */ ${JSON.stringify(specifier)}`)
+      assert.throws(() => reachableModules(dist, ['entry.js']), /module_outside_dist|module_unsupported_absolute_or_url_import/, specifier)
+    }
+    assert.throws(() => reachableModules(dist, ['../outside.js']), /module_outside_dist/)
   } finally { fs.rmSync(dir, { recursive: true }) }
 })

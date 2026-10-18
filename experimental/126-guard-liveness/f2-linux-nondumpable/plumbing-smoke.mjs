@@ -58,7 +58,8 @@ try {
   const holder = startChild('python3', ['-I', '-c', HOLDER, lockPath], { env: { PATH: '/usr/bin:/bin' } }, live)
   const ready = JSON.parse(await holder.ready)
   const args = [path.join(DIR, 'inspect-child.mjs'), BUILD, String(ready.pid), String(ready.fd), lockPath, home, THREAD_ID, buildCheck.manifestSha256]
-  const env = { PATH: '/usr/sbin:/usr/bin:/bin' }
+  const env = { PATH: '/usr/sbin:/usr/bin:/bin',
+    ...(process.env.RESEARCH_TMP_ROOT !== undefined ? { RESEARCH_TMP_ROOT: process.env.RESEARCH_TMP_ROOT } : {}) }
   const nominal = await runIsolated(process.execPath, args, { startupBudgetMs: 10000, budgetMs: 15000, env })
   const verdict = evaluateNominalPlumbing(nominal)
   const { protocol } = verdict

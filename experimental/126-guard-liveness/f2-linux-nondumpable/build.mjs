@@ -20,7 +20,7 @@ import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL, URL } from 'node:url'
 import { parseArgs } from 'node:util'
 import ts from 'typescript'
 
@@ -117,13 +117,19 @@ export function verifyBuild(buildDir) {
 // This bounded graph does not resolve nonliteral import expressions, require,
 // eval, or package imports; it is not proof of arbitrary runtime reachability.
 export function reachableModules(dist, entries) {
+  const root = fs.realpathSync(dist)
+  if (!fs.statSync(root).isDirectory()) throw new Error('module_root_not_directory')
   const seen = new Set()
-  const pending = [...entries]
+  const pending = entries.map((entry) => path.resolve(root, entry))
   while (pending.length) {
-    const rel = pending.pop()
+    const file = fs.realpathSync(pending.pop())
+    const relative = path.relative(root, file)
+    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error('module_outside_dist')
+    if (!fs.statSync(file).isFile()) throw new Error('module_not_regular_file')
+    const rel = relative.split(path.sep).join('/')
     if (seen.has(rel)) continue
     seen.add(rel)
-    const text = fs.readFileSync(path.join(dist, rel), 'utf8')
+    const text = fs.readFileSync(file, 'utf8')
     const source = ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
     // Do not treat a partially recovered syntax tree as a complete graph.
     if (source.parseDiagnostics.length) throw new Error(`module_parse_failed:${rel}`)
@@ -131,8 +137,16 @@ export function reachableModules(dist, entries) {
       let specifier
       if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) specifier = node.moduleSpecifier
       else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) specifier = node.arguments[0]
-      if (specifier && ts.isStringLiteralLike(specifier) && /^\.{1,2}\//.test(specifier.text)) {
-        pending.push(path.posix.normalize(path.posix.join(path.posix.dirname(rel), specifier.text)))
+      if (specifier && ts.isStringLiteralLike(specifier)) {
+        if (/^\.{1,2}\//.test(specifier.text)) {
+          // Match ESM URL decoding and canonical filesystem identity, including
+          // ../dist aliases, percent escapes, fragments and in-root symlinks.
+          pending.push(fileURLToPath(new URL(specifier.text, pathToFileURL(file))))
+        } else if (!specifier.text.startsWith('node:') && (path.isAbsolute(specifier.text) ||
+          /^[a-z][a-z0-9+.-]*:/i.test(specifier.text) || specifier.text.startsWith('\\\\'))) {
+          // Absolute paths and file:/other URL aliases are not bare packages.
+          throw new Error('module_unsupported_absolute_or_url_import')
+        }
       }
       ts.forEachChild(node, visit)
     }

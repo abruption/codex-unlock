@@ -154,7 +154,9 @@ for (const dumpable of [1, 0]) {
       const inspected = await runIsolated(process.execPath,
         [path.join(DIR, 'inspect-child.mjs'), BUILD, String(ready.pid), String(ready.fd), lockPath, home, THREAD_ID, buildCheck.manifestSha256], {
           startupBudgetMs: INSPECT_STARTUP_MS, budgetMs: INSPECT_STAGES_MS,
-          env: { PATH: '/usr/sbin:/usr/bin:/bin', ...(CHILD_FAULT ? { F2_CHILD_FAULT: CHILD_FAULT } : {}) },
+          env: { PATH: '/usr/sbin:/usr/bin:/bin',
+            ...(process.env.RESEARCH_TMP_ROOT !== undefined ? { RESEARCH_TMP_ROOT: process.env.RESEARCH_TMP_ROOT } : {}),
+            ...(CHILD_FAULT ? { F2_CHILD_FAULT: CHILD_FAULT } : {}) },
         })
       const { lateExit, ...record } = inspected
       run.inspect = record

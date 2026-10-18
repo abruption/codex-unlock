@@ -5,24 +5,27 @@
 //
 // Usage: node inspect-child.mjs BUILD PID FD LOCK_PATH CODEX_HOME THREAD_ID EXPECTED_MANIFEST_SHA256
 //
-// BUILD is a directory made by build.mjs. Its content is re-hashed against
-// its manifest before any product module is imported, and the static import
-// graph of the imported modules is checked to exclude unlock.js. Non-literal
-// dynamic imports are not covered by that check.
+// BUILD is a directory made by build.mjs. The closed runtime/verification tree
+// is copied to private scratch and that copy is re-hashed against the parent's
+// startup manifest before any product module is imported. Only the read-only
+// copy is walked/imported; later source-build changes cannot redirect it.
+// Same-UID tampering with snapshot permissions is not prevented. The canonical
+// static/literal import graph excludes unlock.js, not arbitrary dynamic code.
 //
 // Signals: this child sends no signal to the holder, to any lock owner, or
 // through any unlock path. Product diagnostics it calls (`lsof`, `ps`) run
 // with the product's own timeout, which sends SIGTERM and then SIGKILL to the
-// timed-out diagnostic's own process group. No native file is created or
-// removed. A stage error is recorded as observed; nothing here converts an
+// timed-out diagnostic's own process group. No Codex native lock file is
+// created or removed. A stage error is recorded as observed; nothing converts an
 // error into free or allowed.
 import path from 'node:path'
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 import { StopStages, childStages } from '../lib/isolated-observer.mjs'
-import { reachableModules, verifyBuild } from './build.mjs'
+import { reachableModules } from './build.mjs'
 import { parseChildFault } from './protocol.mjs'
-import { bindVerifiedBuild, manifestBindingFaults } from './build-binding.mjs'
+import { manifestBindingFaults } from './build-binding.mjs'
+import { createBuildSnapshot } from './build-snapshot.mjs'
 
 const [build, pidText, fdText, lockPath, codexHome, threadId, expectedManifestSha256] = process.argv.slice(2)
 const pid = Number(pidText)
@@ -32,7 +35,6 @@ if (!build || !Number.isSafeInteger(pid) || pid <= 0 || !Number.isSafeInteger(fd
   throw new Error('usage: inspect-child.mjs BUILD PID FD LOCK_PATH CODEX_HOME THREAD_ID EXPECTED_MANIFEST_SHA256')
 }
 const fault = parseChildFault(process.env.F2_CHILD_FAULT)
-const dist = path.join(build, 'src', 'dist')
 const ENTRIES = ['linux-attribution.js', 'native-coordination.js', 'lock.js', 'process.js', 'inspection.js']
 const plain = (value) => JSON.parse(JSON.stringify(value, (_key, v) => (typeof v === 'bigint' ? `${v}n` : v)))
 const stall = (name) => {
@@ -42,12 +44,17 @@ const stall = (name) => {
 
 try {
   const c = childStages({ lifetimeMs: 30000 })
+  let snapshot
   const identity = await c.stage('dist_identity', () => {
     stall('dist_identity')
-    const verified = bindVerifiedBuild(verifyBuild(build), expectedManifestSha256)
+    snapshot = createBuildSnapshot(build, expectedManifestSha256)
+    const { verified } = snapshot
     return plain({ ok: verified.ok, faults: verified.faults, manifestSha256: verified.manifestSha256,
       source: verified.source, patch: verified.patch, distFiles: verified.distFiles, nativeFiles: verified.nativeFiles,
-      verifiedBy: 'inspect-child re-hash against manifest.json before import' })
+      verifiedBy: 'inspect-child re-hash of independent private copy against startup manifest before import',
+      snapshot: { directory: snapshot.directory, copiedContentSha256: snapshot.copiedContentSha256,
+        fileCount: snapshot.fileCount, omittedBinDirectories: snapshot.omittedBinDirectories,
+        limits: 'read-only copy isolates input mutation; same-UID chmod/tampering is not prevented; dependency JS is copied, not startup-manifest authenticated' } })
   })
   // Never import a build whose content or manifest differs from the parent's
   // startup snapshot, even if its replacement manifest is internally valid.
@@ -55,9 +62,9 @@ try {
   let product
   const loaded = await c.stage('module_load', async () => {
     stall('module_load')
-    const modules = reachableModules(dist, ENTRIES)
+    const modules = reachableModules(snapshot.dist, ENTRIES)
     if (modules.includes('unlock.js')) throw new Error('unlock_reachable')
-    const load = (name) => import(pathToFileURL(path.join(dist, name)).href)
+    const load = (name) => import(pathToFileURL(path.join(snapshot.dist, name)).href)
     const [attribution, coordination, lock, proc, inspection] = await Promise.all(ENTRIES.map(load))
     product = { ...attribution, ...coordination, ...lock, ...proc, ...inspection }
     return { modules, unlockReachable: false }

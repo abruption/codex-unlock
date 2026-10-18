@@ -28,8 +28,11 @@ test('missing or malformed startup/child digest and verification faults fail clo
 
 test('the child refuses an unbound identity before its product module-load stage', () => {
   const source = readFileSync(new URL('./inspect-child.mjs', import.meta.url), 'utf8')
-  const verification = source.indexOf('bindVerifiedBuild(verifyBuild(build), expectedManifestSha256)')
+  const verification = source.indexOf('snapshot = createBuildSnapshot(build, expectedManifestSha256)')
   const refusal = source.indexOf("if (identity.result?.ok !== true) throw new StopStages('build_unverified')")
   const loading = source.indexOf("c.stage('module_load'")
   assert.ok(verification >= 0 && refusal > verification && loading > refusal)
+  assert.ok(source.includes('reachableModules(snapshot.dist, ENTRIES)'))
+  assert.ok(source.includes('path.join(snapshot.dist, name)'))
+  assert.equal(source.includes("path.join(build, 'src', 'dist')"), false)
 })

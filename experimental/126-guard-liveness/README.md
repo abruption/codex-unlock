@@ -268,6 +268,10 @@ Nonliteral dynamic imports, `require` and `eval` are outside this targeted
 walk, not proof of a complete execution graph. Historical measurements used
 their recorded earlier parser and source hashes.
 
+Resolved relative modules use canonical identities under the snapshot's dist
+root. Aliases such as `../dist/unlock.js` cannot hide that module, and paths
+escaping the root are rejected.
+
 **Build identity.** `build.mjs --repo R --commit C [--patch P] --out O`
 resolves the commit and tree with `git rev-parse` in the named local
 repository and builds from that repository's `git archive`. It records the
@@ -276,7 +280,15 @@ It also records a sorted manifest of `dist/` files and of the native addons
 (`*.node`) under `node_modules`. `run.mjs` and `inspect-child.mjs` each re-hash
 that content against the manifest before use. Each child must also match the
 runner's startup manifest SHA-256; a different internally consistent build
-cannot be attributed to the original input. This verifies only the recorded
+cannot be attributed to the original input. The child copies only the
+manifest/archive/optional patch, package metadata, dist and dependency tree
+into a fresh private snapshot, verifies that copy, and walks/imports only the
+copy. Runtime input symlinks are refused; unused `node_modules/.bin` links are
+omitted. Snapshot files/directories are made read-only and retained as private
+evidence, isolating imports from subsequent changes to the supplied build.
+These permissions do not prevent a malicious same-UID actor from changing
+permissions or bytes; no OS-enforced immutable execution claim is made.
+This verifies only the recorded
 `dist/` and native-addon bytes; dependency JavaScript and package metadata are
 not covered. It does not prove that the local
 repository matches upstream. A commit string supplied by anyone else is
@@ -503,6 +515,15 @@ contracts are documented separately above. All 71 focused tests passed on
 macOS without skips; the five repository checks passed (266 passing tests,
 three Linux-only skips). These checks alone do not reproduce the nominal
 experiments or establish native Codex safety.
+
+The next review round adds fixed expectations for all seven M2 Part 1 cases,
+requires inspection's own acquired coordination guard for E4, and refuses a
+missing status-UID observation. Product imports now use the private verified
+runtime snapshot described above; canonical module identities close relative
+path aliases and refuse escapes/absolute URL imports. The five repository
+checks passed again (266 passing tests, three Linux-only skips), along with
+84 focused research tests without skips. These remain research validation,
+not approval of the #137 product prototype or a complete ownership proof.
 
 Original measurement files and validation files remain private because they
 contain local paths and process identifiers. Their SHA-256 values and sanitized

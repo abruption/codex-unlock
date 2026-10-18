@@ -20,7 +20,7 @@ const ROWS = Object.freeze({
   exe_readlink: text,
   cmdline: (value) => Array.isArray(value) && value.length > 0 && value.every((v) => typeof v === 'string'),
   stat_start_ticks: decimal,
-  status_uid_line: (value) => Array.isArray(value) && value.length <= 1 &&
+  status_uid_line: (value) => Array.isArray(value) && value.length === 1 &&
     value.every((v) => typeof v === 'string' && /^Uid:\s+\d+\s+\d+\s+\d+\s+\d+\s*$/.test(v)),
 })
 

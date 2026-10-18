@@ -21,7 +21,6 @@ test('complete access attempts are collected without asserting permission outcom
   observed.fd_stat_matches_lock.ok = [false, false]
   observed.fdinfo_lock_rows.ok = []
   observed.fd_listdir.ok = []
-  observed.status_uid_line.ok = []
   assert.equal(validateAccessObservation(observed, expected).collected, true)
   for (const name of Object.keys(observed).filter((key) => !['pid', 'fd', 'observer_uid', 'kernel'].includes(key))) {
     observed[name] = { errno: 'EACCES' }
@@ -50,6 +49,24 @@ test('PID, FD, observer UID, kernel and successful start ticks bind to runner ev
   for (const bad of [null, {}, { ...expected, startTicks: null }, { ...expected, pid: 0 }]) {
     assert.equal(validateAccessObservation(complete(), bad).collected, false)
   }
+})
+
+test('successful status reads require one complete UID line; errno is a collected attempt', () => {
+  const line = 'Uid:\t1001\t1001\t1001\t1001'
+  for (const ok of [[], [line, line], ['Uid: 1001'], ['Uid: one two three four'], [null]]) {
+    const result = validateAccessObservation({ ...complete(), status_uid_line: { ok } }, expected)
+    assert.equal(result.collected, false)
+    assert.ok(result.faults.includes('status_uid_line:value_invalid'))
+  }
+  const missing = complete()
+  delete missing.status_uid_line
+  assert.equal(validateAccessObservation(missing, expected).collected, false)
+  for (const errno of ['EACCES', 'EPERM', 'ENOENT']) {
+    assert.equal(validateAccessObservation({ ...complete(), status_uid_line: { errno } }, expected).collected, true)
+  }
+  // Collection checks shape, not whether permission or user-match hypotheses
+  // passed: a different but fully recorded UID tuple remains evidence.
+  assert.equal(validateAccessObservation({ ...complete(), status_uid_line: { ok: ['Uid: 2002 2002 2002 2002'] } }, expected).collected, true)
 })
 
 test('each access row has one outcome with its actual Python output type', () => {
