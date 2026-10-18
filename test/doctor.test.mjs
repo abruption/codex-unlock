@@ -27,6 +27,7 @@ import {
   unlockThread,
 } from "../dist/doctor.js";
 import { LEASE_DIRECTORY_NAME, acquireUnlockLease } from "../dist/coordination.js";
+import { formatInspectionEvidence } from "./helpers/inspection-evidence.mjs";
 import {
   DIAGNOSTIC_OVERRIDE,
   OWNER_FIXTURE,
@@ -96,10 +97,14 @@ test("terminates a completed idle owner and verifies transcript invariance", asy
   const value = await fixture();
   t.after(async () => await stopChild(value.child));
   const inspection = await inspectThread(THREAD_ID, value.options);
-  assert.equal(inspection.classification, "live_owner");
-  assert.equal(inspection.safeToUnlock, true);
-  assert.equal(inspection.owner?.pid, value.child.pid);
-  assert.deepEqual(inspection.ownerLockFiles, [value.lockPath]);
+  // Preserve the first observation if a synthetic owner is refused. Do not
+  // inspect again: another sample could hide the failure's original evidence.
+  // Deliberately omit argv, transcript contents and the environment.
+  const evidence = formatInspectionEvidence(inspection, value.child);
+  assert.equal(inspection.classification, "live_owner", evidence);
+  assert.equal(inspection.safeToUnlock, true, evidence);
+  assert.equal(inspection.owner?.pid, value.child.pid, evidence);
+  assert.deepEqual(inspection.ownerLockFiles, [value.lockPath], evidence);
 
   const result = await unlockThread(THREAD_ID, value.options);
   assert.equal(result.outcome, "unlocked");
