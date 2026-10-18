@@ -1,3 +1,7 @@
+export function assertDarwin(platform) {
+  if (platform !== 'darwin') throw new Error('M2 requires Darwin; no measurement was started')
+}
+
 export function options(env) {
   const value = env.M2_REPEATS ?? '3'
   if (!/^[1-9]\d*$/.test(value) || Number(value) > 10) throw new Error('M2_REPEATS must be an integer from 1 to 10')

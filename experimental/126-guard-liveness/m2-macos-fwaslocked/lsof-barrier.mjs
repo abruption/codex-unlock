@@ -12,6 +12,7 @@ import net from 'node:net'
 import process from 'node:process'
 import { clearTimeout, setTimeout } from 'node:timers'
 import { fgScan } from './fg-scan.mjs'
+import { diagnosticEvidence } from './part2-verdict.mjs'
 
 const args = process.argv.slice(2)
 const config = JSON.parse(fs.readFileSync(process.env.FIXTURE_CONFIG, 'utf8'))
@@ -76,7 +77,7 @@ async function main() {
   }
   let stdout = result.stdout?.toString() ?? ''
   if (typeof config.hidePid === 'number') stdout = removePidSets(stdout, config.hidePid)
-  log({ event: 'done', isPathScan, exitCode: result.status, signal: result.signal, error: result.error?.message ?? null, stdoutHead: stdout.slice(0, 200).replace(/\0/g, '|') })
+  log({ event: 'done', isPathScan, ...diagnosticEvidence(result), stdoutHead: stdout.slice(0, 200).replace(/\0/g, '|') })
   process.stdout.write(stdout)
   process.stderr.write(result.stderr?.toString() ?? '')
   process.exitCode = result.status ?? 1

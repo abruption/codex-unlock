@@ -5,6 +5,8 @@ import { parseChildFault, validateF2 } from './protocol.mjs'
 
 const holder = { pid: 42, fd: 5 }
 const ticks = { ready: '900', afterInspect: '900', holderExitedDuringInspection: false }
+const startupManifest = 'a'.repeat(64)
+const probe = (status, extra = {}) => ({ status, method: 'flock_exclusive_nonblocking', ...extra })
 const clone = (v) => JSON.parse(JSON.stringify(v))
 const stage = (name, outcome) => ({ stage: name, ...outcome })
 const base = () => [
@@ -14,21 +16,21 @@ const base = () => [
 const positive = () => [...base(),
   stage('openers', { result: { error: null, processes: [{ pid: 42, startTicks: '900', errors: [], isCodex: true, identityComplete: true }] } }),
   stage('prepare', { result: { pid: 42, startTicks: '900', candidates: ['5'], descriptors: ['0', '5'] } }),
-  stage('guarded_verify', { result: { status: 'held', guard: { status: 'acquired' }, participation: { pid: 42, startTicks: '900', descriptor: '5' } } }),
+  stage('guarded_verify', { result: probe('held', { guard: { status: 'acquired' }, participation: { pid: 42, startTicks: '900', descriptor: '5' } }) }),
   stage('inspect_thread', { result: { classification: 'live_owner', safeToUnlock: true, blockers: [], warnings: [],
-    owner: { pid: 42, startTicks: '900' }, probe: { status: 'held', participation: { pid: 42, startTicks: '900', descriptor: '5' } } } }),
+    owner: { pid: 42, startTicks: '900' }, probe: probe('held', { participation: { pid: 42, startTicks: '900', descriptor: '5' } }) } }),
 ]
 const refused = () => [...base(),
   stage('openers', { result: { error: null, processes: [{ pid: 42, startTicks: null, errors: ['linux_process_instance_unverified'], isCodex: true, identityComplete: true }] } }),
   stage('prepare', { error: { code: 'EACCES', name: 'Error', message: 'denied' } }),
   stage('guarded_verify', { result: { skipped: 'prepare_failed' } }),
   stage('inspect_thread', { result: { classification: 'live_owner', safeToUnlock: false, blockers: ['linux_participation_unproven'],
-    warnings: [], owner: { pid: 42, startTicks: null }, probe: { status: 'unknown' } } }),
+    warnings: [], owner: { pid: 42, startTicks: null }, probe: probe('unknown') } }),
 ]
 const observe = (stages, extra = {}) => ({ incomplete: false, faults: [], stages, begun: stages.map((s) => s.stage), ...extra })
 const run = (dumpable, stages, extra = {}, t = ticks) => {
   const observation = observe(stages, extra)
-  return evaluateRun({ dumpable, holder, ticks: t, observation, protocol: validateF2(observation) })
+  return evaluateRun({ dumpable, holder, ticks: t, observation, protocol: validateF2(observation), expectedManifestSha256: startupManifest })
 }
 const failed = (r) => r.rows.filter((x) => !x.ok).map((x) => x.id)
 
@@ -146,4 +148,42 @@ test('a refusal counts only with a passing control in the same report', () => {
   assert.equal(r.refusalCounted, false)
   assert.deepEqual(r.failures, ['control_dumpable1_not_passed'])
   assert.equal(evaluateReport([run(0, refused())]).ok, false)
+})
+
+test('refusal cannot pass with an absent, malformed or invalid nested lock probe', () => {
+  const malformed = [undefined, null, {}, { status: 'unknown' }, probe('invalid'),
+    { ...probe('unknown'), method: 'unverified' }, probe('unknown', { guard: { status: 'invalid' } }),
+    probe('unknown', { guard: { status: 'busy', attempts: 0 } }), probe('unknown', { participation: null }),
+    probe('unknown', { participation: {} }), probe('held', { participation: { pid: '42', startTicks: '900', descriptor: '5' } }),
+    probe('held', { participation: { pid: 42, startTicks: 900, descriptor: '5' } }),
+    probe('held', { participation: { pid: 42, startTicks: '900', descriptor: '' } })]
+  for (const value of malformed) {
+    const stages = refused()
+    stages[5].result.probe = value
+    const result = run(0, stages)
+    assert.equal(result.collected, false)
+    assert.equal(result.ok, false)
+    assert.deepEqual(result.rows, [])
+    assert.ok(result.collectedFaults.includes('stage_result_malformed:inspect_thread'))
+    assert.equal(evaluateReport([run(1, positive()), result]).refusalCounted, false)
+  }
+})
+
+test('each dumpability run must match the same startup build manifest', () => {
+  for (const dumpable of [1, 0]) {
+    const stages = dumpable ? positive() : refused()
+    stages[0].result.manifestSha256 = 'b'.repeat(64)
+    // A replacement build can be internally coherent and pass the stage
+    // protocol, but cannot be attributed to the parent's startup identity.
+    assert.equal(validateF2(observe(stages)).ok, true)
+    const result = run(dumpable, stages)
+    assert.equal(result.collected, false)
+    assert.equal(result.ok, false)
+    assert.deepEqual(result.rows, [])
+    assert.ok(result.collectedFaults.includes('startup_manifest_sha256_changed'))
+  }
+  const observation = observe(positive())
+  const result = evaluateRun({ dumpable: 1, holder, ticks, observation, protocol: validateF2(observation) })
+  assert.equal(result.ok, false)
+  assert.ok(result.collectedFaults.includes('startup_manifest_sha256_invalid'))
 })

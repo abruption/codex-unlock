@@ -152,7 +152,7 @@ for (const dumpable of [1, 0]) {
     if (BUILD) {
       if (performance.now() - startedAt + NEEDED_MS > HOLDER_LIFETIME_S * 1000) throw new Error('holder lifetime insufficient for inspection')
       const inspected = await runIsolated(process.execPath,
-        [path.join(DIR, 'inspect-child.mjs'), BUILD, String(ready.pid), String(ready.fd), lockPath, home, THREAD_ID], {
+        [path.join(DIR, 'inspect-child.mjs'), BUILD, String(ready.pid), String(ready.fd), lockPath, home, THREAD_ID, buildCheck.manifestSha256], {
           startupBudgetMs: INSPECT_STARTUP_MS, budgetMs: INSPECT_STAGES_MS,
           env: { PATH: '/usr/sbin:/usr/bin:/bin', ...(CHILD_FAULT ? { F2_CHILD_FAULT: CHILD_FAULT } : {}) },
         })
@@ -165,7 +165,7 @@ for (const dumpable of [1, 0]) {
       }
       run.protocol = validateF2(inspected)
       run.evaluation = evaluateRun({
-        dumpable, holder: ready, observation: inspected, protocol: run.protocol,
+        dumpable, holder: ready, observation: inspected, protocol: run.protocol, expectedManifestSha256: buildCheck.manifestSha256,
         ticks: { ready: run.holderInstanceAtReady.startTicks, afterInspect: run.holderInstanceAfterInspect.startTicks,
           holderExitedDuringInspection: holderExited },
       })

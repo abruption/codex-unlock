@@ -22,6 +22,7 @@ import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
+import ts from 'typescript'
 
 export const MANIFEST_SCHEMA = 'codex-unlock-research-build/1'
 
@@ -111,19 +112,31 @@ export function verifyBuild(buildDir) {
     distFiles: actual.dist.length, nativeFiles: actual.native.length }
 }
 
-// Relative static and literal dynamic imports reachable from `entries`.
+// Relative static imports/re-exports and literal dynamic imports reachable
+// from `entries`, parsed as JavaScript using the existing dev dependency.
+// This bounded graph does not resolve nonliteral import expressions, require,
+// eval, or package imports; it is not proof of arbitrary runtime reachability.
 export function reachableModules(dist, entries) {
   const seen = new Set()
   const pending = [...entries]
-  const pattern = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)["'](\.{1,2}\/[^"']+)["']/g
   while (pending.length) {
     const rel = pending.pop()
     if (seen.has(rel)) continue
     seen.add(rel)
     const text = fs.readFileSync(path.join(dist, rel), 'utf8')
-    for (const match of text.matchAll(pattern)) {
-      pending.push(path.posix.normalize(path.posix.join(path.posix.dirname(rel), match[1])))
+    const source = ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
+    // Do not treat a partially recovered syntax tree as a complete graph.
+    if (source.parseDiagnostics.length) throw new Error(`module_parse_failed:${rel}`)
+    const visit = (node) => {
+      let specifier
+      if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) specifier = node.moduleSpecifier
+      else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) specifier = node.arguments[0]
+      if (specifier && ts.isStringLiteralLike(specifier) && /^\.{1,2}\//.test(specifier.text)) {
+        pending.push(path.posix.normalize(path.posix.join(path.posix.dirname(rel), specifier.text)))
+      }
+      ts.forEachChild(node, visit)
     }
+    visit(source)
   }
   return [...seen].sort()
 }

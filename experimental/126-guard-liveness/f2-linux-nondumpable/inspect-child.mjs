@@ -3,7 +3,7 @@
 // plumbing-smoke.mjs through lib/isolated-observer.mjs, never in the runner's
 // own process.
 //
-// Usage: node inspect-child.mjs BUILD PID FD LOCK_PATH CODEX_HOME THREAD_ID
+// Usage: node inspect-child.mjs BUILD PID FD LOCK_PATH CODEX_HOME THREAD_ID EXPECTED_MANIFEST_SHA256
 //
 // BUILD is a directory made by build.mjs. Its content is re-hashed against
 // its manifest before any product module is imported, and the static import
@@ -22,12 +22,14 @@ import { pathToFileURL } from 'node:url'
 import { StopStages, childStages } from '../lib/isolated-observer.mjs'
 import { reachableModules, verifyBuild } from './build.mjs'
 import { parseChildFault } from './protocol.mjs'
+import { bindVerifiedBuild, manifestBindingFaults } from './build-binding.mjs'
 
-const [build, pidText, fdText, lockPath, codexHome, threadId] = process.argv.slice(2)
+const [build, pidText, fdText, lockPath, codexHome, threadId, expectedManifestSha256] = process.argv.slice(2)
 const pid = Number(pidText)
 const fd = Number(fdText)
-if (!build || !Number.isSafeInteger(pid) || pid <= 0 || !Number.isSafeInteger(fd) || fd < 0 || !lockPath || !codexHome || !threadId) {
-  throw new Error('usage: inspect-child.mjs BUILD PID FD LOCK_PATH CODEX_HOME THREAD_ID')
+if (!build || !Number.isSafeInteger(pid) || pid <= 0 || !Number.isSafeInteger(fd) || fd < 0 || !lockPath || !codexHome || !threadId ||
+  manifestBindingFaults(expectedManifestSha256, expectedManifestSha256).length > 0) {
+  throw new Error('usage: inspect-child.mjs BUILD PID FD LOCK_PATH CODEX_HOME THREAD_ID EXPECTED_MANIFEST_SHA256')
 }
 const fault = parseChildFault(process.env.F2_CHILD_FAULT)
 const dist = path.join(build, 'src', 'dist')
@@ -42,12 +44,13 @@ try {
   const c = childStages({ lifetimeMs: 30000 })
   const identity = await c.stage('dist_identity', () => {
     stall('dist_identity')
-    const verified = verifyBuild(build)
+    const verified = bindVerifiedBuild(verifyBuild(build), expectedManifestSha256)
     return plain({ ok: verified.ok, faults: verified.faults, manifestSha256: verified.manifestSha256,
       source: verified.source, patch: verified.patch, distFiles: verified.distFiles, nativeFiles: verified.nativeFiles,
       verifiedBy: 'inspect-child re-hash against manifest.json before import' })
   })
-  // Never import a build whose content does not match its manifest.
+  // Never import a build whose content or manifest differs from the parent's
+  // startup snapshot, even if its replacement manifest is internally valid.
   if (identity.result?.ok !== true) throw new StopStages('build_unverified')
   let product
   const loaded = await c.stage('module_load', async () => {

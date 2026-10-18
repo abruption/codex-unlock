@@ -164,7 +164,7 @@ the `prctl` ABI (`int` option and result, `unsigned long` arguments), sets the
 requested dumpable value (0 or 1), and verifies it with `PR_GET_DUMPABLE`. It
 then takes both locks with bounded nonblocking polling. It reports a ready
 record with pid, fd, dumpable value and UIDs, and holds the lock until stdin
-EOF (exit 0) or 20 s (exit 3).
+EOF (exit 0) or its lifetime limit (exit 3; the runner requests 60 s).
 
 `observe.py` records the same-user access matrix for the reads #137 performs.
 It has no self-alarm, because a handled signal cannot wake a killable kernel
@@ -175,14 +175,17 @@ records mount-namespace readlinks). `F2_BUILD` runs a separate-process
 inspection, described below. The earlier
 in-process inspection was removed because synchronous inspection can block
 the event loop, its timeout and holder EOF cleanup. The holder's own lifetime
-does not bound the parent. Outcomes are recorded rather than asserted against
-the expected table.
+does not bound the parent. Access-matrix-only mode records observed permission
+outcomes without asserting that they match the source-derived expected table.
 
 Build inspection requires separate-process observation and a validated
 dumpable=1 candidate-recognition control.
 Results after holder exit cannot establish access policy.
-`ok` currently describes collection completion, not satisfaction of the
-expected table or a proven fail-closed decision. These are open execution gates.
+Without `F2_BUILD`, `ok` describes collection completion, not satisfaction of
+the permission table or a proven fail-closed decision. With `F2_BUILD`, `ok`
+requires both collection completion and `report.expectations.ok`: an expected
+table mismatch makes the runner exit 1 even when collection succeeded. A
+successful synthetic build-mode run would still not prove native Codex safety.
 
 The unchanged `cfa2eba` fixtures ran once on a Linux test host on 2026-10-14:
 Linux `7.0.0-1013-oracle`, aarch64, Node 24.18.0, Python 3.12.3, UID/EUID
@@ -256,13 +259,24 @@ with both or neither of `result`/`error` is a collection fault.
 `guarded_verify` returns `{ skipped: 'prepare_failed' }` after a failed
 `prepare`. That is harness bookkeeping, not a product refusal.
 
+The relative import walk parses JavaScript with the checkout's existing
+TypeScript development dependency, so comments between import tokens and
+escaped string literals do not hide an edge. Parse errors fail the walk. Run
+`npm ci` in the research checkout before using the builder or inspector;
+copying only the research scripts is not sufficient for this revision.
+Nonliteral dynamic imports, `require` and `eval` are outside this targeted
+walk, not proof of a complete execution graph. Historical measurements used
+their recorded earlier parser and source hashes.
+
 **Build identity.** `build.mjs --repo R --commit C [--patch P] --out O`
 resolves the commit and tree with `git rev-parse` in the named local
 repository and builds from that repository's `git archive`. It records the
 archive, lockfile and patch SHA-256, then runs `npm ci` and `npm run build`.
 It also records a sorted manifest of `dist/` files and of the native addons
 (`*.node`) under `node_modules`. `run.mjs` and `inspect-child.mjs` each re-hash
-that content against the manifest before use. This verifies only the recorded
+that content against the manifest before use. Each child must also match the
+runner's startup manifest SHA-256; a different internally consistent build
+cannot be attributed to the original input. This verifies only the recorded
 `dist/` and native-addon bytes; dependency JavaScript and package metadata are
 not covered. It does not prove that the local
 repository matches upstream. A commit string supplied by anyone else is
@@ -479,6 +493,16 @@ passed 56 focused tests on macOS without skips and the same five repository
 checks (263 passing tests, three Linux-only skips). Only deterministic verdict
 tests were added; F1/M2 nominal measurements, Linux runs and native Codex were
 not rerun for these corrections.
+
+A further review round replaced the literal-import regex with a comment-aware
+JavaScript parser, validated nested inspection probes, and bound every child
+build digest to the parent's startup manifest. M2 now refuses non-macOS hosts,
+rejects failed/noisy wrapped diagnostics, and compares every Part 2 scenario
+against the fixed recorded expectations. F2 access-only and build-mode exit
+contracts are documented separately above. All 71 focused tests passed on
+macOS without skips; the five repository checks passed (266 passing tests,
+three Linux-only skips). These checks alone do not reproduce the nominal
+experiments or establish native Codex safety.
 
 Original measurement files and validation files remain private because they
 contain local paths and process identifiers. Their SHA-256 values and sanitized

@@ -20,11 +20,15 @@ import { fileURLToPath } from 'node:url'
 import { freshPrivateDir, startChild, stopAll, writeNew } from '../lib/common.mjs'
 import { lateExitStatus, runIsolated } from '../lib/isolated-observer.mjs'
 import { evaluateNominalPlumbing } from './plumbing-verdict.mjs'
+import { verifyBuild } from './build.mjs'
+import { manifestBindingFaults } from './build-binding.mjs'
 
 const DIR = path.dirname(fileURLToPath(import.meta.url))
 const THREAD_ID = '01a089e8-3731-7202-ba68-0f4b0a3b2711'
 if (!process.env.F2_BUILD) throw new Error('F2_BUILD is required')
 const BUILD = fs.realpathSync(process.env.F2_BUILD)
+const buildCheck = verifyBuild(BUILD)
+if (!buildCheck.ok) throw new Error(`unverified startup build: ${buildCheck.faults.join(',')}`)
 const HOLDER = `
 import fcntl, json, os, select, sys, time
 fd = os.open(sys.argv[1], os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW)
@@ -53,11 +57,12 @@ const report = { build: BUILD, cases: [] }
 try {
   const holder = startChild('python3', ['-I', '-c', HOLDER, lockPath], { env: { PATH: '/usr/bin:/bin' } }, live)
   const ready = JSON.parse(await holder.ready)
-  const args = [path.join(DIR, 'inspect-child.mjs'), BUILD, String(ready.pid), String(ready.fd), lockPath, home, THREAD_ID]
+  const args = [path.join(DIR, 'inspect-child.mjs'), BUILD, String(ready.pid), String(ready.fd), lockPath, home, THREAD_ID, buildCheck.manifestSha256]
   const env = { PATH: '/usr/sbin:/usr/bin:/bin' }
   const nominal = await runIsolated(process.execPath, args, { startupBudgetMs: 10000, budgetMs: 15000, env })
   const verdict = evaluateNominalPlumbing(nominal)
   const { protocol } = verdict
+  failures.push(...manifestBindingFaults(protocol.byStage.dist_identity?.result?.manifestSha256, buildCheck.manifestSha256))
   report.cases.push({ case: 'nominal', faults: nominal.faults, protocolFaults: protocol.faults, begun: nominal.begun,
     outcomes: nominal.stages.map((s) => [s.stage, s.error ? `error:${s.error.code ?? s.error.name}:${s.error.message}` : 'result']) })
   failures.push(...verdict.failures)

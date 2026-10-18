@@ -31,8 +31,11 @@ import { fileURLToPath } from 'node:url'
 import { assertSocketPath, freshPrivateDir, startChild, stopAll, stopChild, writeNew } from '../lib/common.mjs'
 import { fgScan, filterDecision, withoutPid } from './fg-scan.mjs'
 import { evaluateFilterMeasurement } from './filter-measurement.mjs'
-import { options, wrapperText } from './options.mjs'
+import { assertDarwin, options, wrapperText } from './options.mjs'
+import { barrierEventFailed, evaluatePart2Scenario } from './part2-verdict.mjs'
 
+// Reject unsupported hosts before product/native imports, scratch or children.
+assertDarwin(process.platform)
 const DIR = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(DIR, '../../..')
 const DIST = path.join(ROOT, 'dist')
@@ -200,9 +203,7 @@ async function part2() {
       const allEvents = eventsSince(offset)
       const events = allEvents.filter((e) => e.event === 'fg_scan')
       for (const event of allEvents) {
-        if (['barrier_failed', 'barrier_release_failed', 'fatal'].includes(event.event) ||
-          (event.event === 'barrier_entered' && event.reply !== 'inside') ||
-          (event.event === 'done' && (event.signal || event.error))) {
+        if (barrierEventFailed(event)) {
           failures.push(`part2 ${rep} ${scenario}: barrier evidence ${JSON.stringify(event)}`)
         }
       }
@@ -221,12 +222,16 @@ async function part2() {
           actualHolderUnfiltered: roleView(e.scan, { holder: holder.pid }).holder,
         }
       })
-      const { ownerDecisions, filterMeasurementValid, filterWouldRefuse, failure } = evaluateFilterMeasurement(scans)
+      const measurement = evaluateFilterMeasurement(scans)
+      const { ownerDecisions, filterMeasurementValid, filterWouldRefuse, failure } = measurement
       // A completed scenario without a usable filter observation is still a
       // failed measurement; it cannot leave the final run's failures empty.
       if (failure) failures.push(`part2 ${rep} ${scenario}: ${failure}`)
+      const scenarioFailures = evaluatePart2Scenario(scenario, inspection, holder.pid, visible.pid, measurement)
+      for (const reason of scenarioFailures) failures.push(`part2 ${rep} ${scenario}: expected observation ${reason}`)
       results.push({
         part: 2, rep, scenario,
+        scenarioMatched: scenarioFailures.length === 0, scenarioFailures,
         classification: inspection.classification, safeToUnlock: inspection.safeToUnlock,
         blockers: inspection.blockers, openers: inspection.openers.length,
         ownerPid: inspection.owner?.pid ?? null, actualHolderPid: holder.pid, visiblePid: visible.pid,

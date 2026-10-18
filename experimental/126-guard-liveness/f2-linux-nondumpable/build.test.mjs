@@ -132,3 +132,62 @@ test('import graph follows static and literal dynamic relative imports', () => {
     assert.deepEqual(reachableModules(dir, ['a.js']), ['a.js'])
   } finally { fs.rmSync(dir, { recursive: true }) }
 })
+
+test('import graph follows commented static imports, dynamic imports and re-exports', () => {
+  const dir = freshPrivateDir('126-graph-comment-test')
+  try {
+    fs.writeFileSync(path.join(dir, 'unlock.js'), 'export const x = 1\n')
+    for (const source of [
+      "import /* comment */ './unlock.js'",
+      "import /* comment */ { x } from /* comment */ './unlock.js'",
+      "const loaded = import(/* comment */ './unlock.js')",
+      "export /* comment */ { x } from /* comment */ './unlock.js'",
+      "export /* comment */ * from /* comment */ './unlock.js'",
+    ]) {
+      fs.writeFileSync(path.join(dir, 'entry.js'), source)
+      assert.deepEqual(reachableModules(dir, ['entry.js']), ['entry.js', 'unlock.js'], source)
+    }
+  } finally { fs.rmSync(dir, { recursive: true }) }
+})
+
+test('import graph parses multiline expressions, escaped specifiers and template literals', () => {
+  const dir = freshPrivateDir('126-graph-literal-test')
+  try {
+    fs.writeFileSync(path.join(dir, 'entry.js'), [
+      String.raw`import /* before specifier */ './quo\'ted.js'`,
+      String.raw`const loaded = import(
+        /* a multiline gap */
+        './un\u006cock.js'
+      )`,
+      'const template = import(`./template.js`)',
+    ].join('\n'))
+    fs.writeFileSync(path.join(dir, "quo'ted.js"), 'export {}\n')
+    fs.writeFileSync(path.join(dir, 'unlock.js'), 'export {}\n')
+    fs.writeFileSync(path.join(dir, 'template.js'), 'export {}\n')
+    assert.deepEqual(reachableModules(dir, ['entry.js']), ['entry.js', "quo'ted.js", 'template.js', 'unlock.js'])
+  } finally { fs.rmSync(dir, { recursive: true }) }
+})
+
+test('import graph ignores import-shaped comments, strings, regular expressions and property calls', () => {
+  const dir = freshPrivateDir('126-graph-nonedge-test')
+  try {
+    fs.writeFileSync(path.join(dir, 'entry.js'), [
+      "// import './missing-comment.js'",
+      "/* export * from './missing-block.js' */",
+      'const text = "import(\'./missing-string.js\')"',
+      "const template = `import './missing-template.js'`",
+      'const regex = /import(\'missing-regex.js\')/',
+      "const obj = { import() {} }; obj.import('./missing-property.js')",
+      "import 'node:fs'",
+    ].join('\n'))
+    assert.deepEqual(reachableModules(dir, ['entry.js']), ['entry.js'])
+  } finally { fs.rmSync(dir, { recursive: true }) }
+})
+
+test('import graph rejects malformed JavaScript instead of accepting a recovered partial graph', () => {
+  const dir = freshPrivateDir('126-graph-invalid-test')
+  try {
+    fs.writeFileSync(path.join(dir, 'entry.js'), "const value = import(/* unfinished */ './unlock.js'")
+    assert.throws(() => reachableModules(dir, ['entry.js']), /module_parse_failed:entry\.js/)
+  } finally { fs.rmSync(dir, { recursive: true }) }
+})

@@ -9,8 +9,8 @@ function nominal() {
     module_load: { modules: ['inspection.js'], unlockReachable: false },
     openers: { error: null, processes: [] },
     prepare: { pid: 123, startTicks: '456', candidates: ['4'], descriptors: ['4'] },
-    guarded_verify: { status: 'held' },
-    inspect_thread: { safeToUnlock: false, blockers: ['unproven'], warnings: [], probe: {}, classification: 'unknown' },
+    guarded_verify: { status: 'held', method: 'flock_exclusive_nonblocking' },
+    inspect_thread: { safeToUnlock: false, blockers: ['unproven'], warnings: [], probe: { status: 'unknown', method: 'flock_exclusive_nonblocking' }, classification: 'unknown' },
   }
   return { begun: [...F2_STAGES], stages: F2_STAGES.map((stage) => ({ stage, result: results[stage] })), incomplete: false, faults: [] }
 }

@@ -14,6 +14,17 @@ const isTicks = (v) => typeof v === 'string' && /^\d+$/.test(v)
 const isStrings = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string')
 const isPid = (v) => Number.isSafeInteger(v) && v > 0
 
+// Pinned #137 b483cd5 src/types.ts LockProbe contract. Validate the nested
+// probe even in refusal cases; {} is not an observed unknown lock state.
+const isParticipation = (p) => isObject(p) && isPid(p.pid) && isTicks(p.startTicks) &&
+  typeof p.descriptor === 'string' && /^\d+$/.test(p.descriptor)
+export const isLockProbe = (p) => isObject(p) && ['held', 'free', 'unknown'].includes(p.status) &&
+  p.method === 'flock_exclusive_nonblocking' &&
+  (p.error === undefined || typeof p.error === 'string') &&
+  (p.guard === undefined || (isObject(p.guard) && ['acquired', 'busy', 'absent', 'unsafe', 'changed'].includes(p.guard.status) &&
+    (p.guard.attempts === undefined || (Number.isSafeInteger(p.guard.attempts) && p.guard.attempts > 0)))) &&
+  (p.participation === undefined || isParticipation(p.participation))
+
 const RESULT_SHAPES = {
   module_load: (r) => isObject(r) && isStrings(r.modules) && r.unlockReachable === false,
   dist_identity: (r) => isObject(r) && r.ok === true && /^[0-9a-f]{64}$/.test(r.manifestSha256 ?? '') &&
@@ -22,12 +33,9 @@ const RESULT_SHAPES = {
     r.processes.every((p) => isObject(p) && isPid(p.pid) && typeof p.isCodex === 'boolean' &&
       typeof p.identityComplete === 'boolean' && isStrings(p.errors) && (p.startTicks === null || isTicks(p.startTicks))),
   prepare: (r) => isObject(r) && isPid(r.pid) && isTicks(r.startTicks) && isStrings(r.candidates) && isStrings(r.descriptors),
-  guarded_verify: (r) => isObject(r) && (r.skipped === 'prepare_failed' ||
-    (['held', 'free', 'unknown'].includes(r.status) && (r.participation === undefined ||
-      (isObject(r.participation) && isPid(r.participation.pid) && isTicks(r.participation.startTicks) &&
-        typeof r.participation.descriptor === 'string')))),
+  guarded_verify: (r) => isObject(r) && (r.skipped === 'prepare_failed' || isLockProbe(r)),
   inspect_thread: (r) => isObject(r) && typeof r.safeToUnlock === 'boolean' && isStrings(r.blockers) &&
-    isStrings(r.warnings) && isObject(r.probe) && typeof r.classification === 'string',
+    isStrings(r.warnings) && isLockProbe(r.probe) && typeof r.classification === 'string',
 }
 const ERROR_SHAPE = (e) => isObject(e) && (e.code === null || typeof e.code === 'string') && typeof e.message === 'string'
 

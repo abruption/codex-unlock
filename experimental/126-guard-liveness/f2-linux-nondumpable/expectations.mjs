@@ -9,6 +9,8 @@
 // None of this is a fail-closed proof, a native Codex result or a signal
 // decision. A dumpable=0 refusal counts only when the dumpable=0 run's own
 // rows pass and the same report's dumpable=1 control passed.
+import { manifestBindingFaults } from './build-binding.mjs'
+
 const isTicks = (v) => typeof v === 'string' && /^\d+$/.test(v)
 export const sameTicks = (a, b) => isTicks(a) && isTicks(b) && BigInt(a) === BigInt(b)
 
@@ -32,11 +34,13 @@ function firstObservedError(byStage) {
   return null
 }
 
-export function evaluateRun({ dumpable, holder, ticks, observation, protocol }) {
+export function evaluateRun({ dumpable, holder, ticks, observation, protocol, expectedManifestSha256 }) {
   const rows = []
   const row = (id, ok, detail) => { rows.push({ id, ok: Boolean(ok), ...(ok ? {} : { detail }) }) }
   const collectedFaults = [...(observation.incomplete ? [`incomplete:${observation.incompletePhase}`] : []),
     ...observation.faults, ...protocol.faults]
+  const bindingFaults = manifestBindingFaults(protocol.byStage.dist_identity?.result?.manifestSha256, expectedManifestSha256)
+  collectedFaults.push(...bindingFaults)
   // The holder must be one live instance from ready to after inspection.
   if (!isTicks(ticks.ready)) collectedFaults.push('holder_ticks_unavailable')
   if (!sameTicks(ticks.ready, ticks.afterInspect)) collectedFaults.push('holder_instance_changed_or_gone')
@@ -45,7 +49,7 @@ export function evaluateRun({ dumpable, holder, ticks, observation, protocol }) 
   // Stage shapes are trusted only after protocol validation. A malformed
   // result must remain a structured collection failure, not throw while
   // reading payload fields (or accidentally satisfy an expectation).
-  if (protocol.faults.length > 0) return {
+  if (protocol.faults.length > 0 || bindingFaults.length > 0) return {
     dumpable, collected: false, collectedFaults, rows, ok: false,
     recorded: { firstObservedError: null, guardedAttempted: null, participation: null,
       fixtureIsCodex: null, eligibility: null, owner: null, probe: null },
