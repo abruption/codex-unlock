@@ -32,6 +32,7 @@ import { pathToFileURL } from 'node:url'
 import { StopStages, childStages } from '../../126-guard-liveness/lib/isolated-observer.mjs'
 import { reachableModules, verifyBuild } from '../../126-guard-liveness/f2-linux-nondumpable/build.mjs'
 import { parseChildFault } from './protocol.mjs'
+import { assertPinnedBuildSource } from './variants.mjs'
 
 const [build, expectedManifest, pidText, fdText, lockPath, codexHome, threadId, controlPath] = process.argv.slice(2)
 const pid = Number(pidText)
@@ -59,6 +60,7 @@ try {
   const identity = await c.stage('dist_identity', () => {
     stall('dist_identity')
     const verified = verifyBuild(build)
+    assertPinnedBuildSource(verified.source)
     return plain({ ok: verified.ok, faults: verified.faults, manifestSha256: verified.manifestSha256,
       expectedManifestSha256: expectedManifest, manifestMatchesExpected: verified.manifestSha256 === expectedManifest,
       source: verified.source, patch: verified.patch, distFiles: verified.distFiles, nativeFiles: verified.nativeFiles })

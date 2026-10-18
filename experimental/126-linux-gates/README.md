@@ -155,7 +155,9 @@ result; the printed summary carries classes and codes only.
 A matched prediction of a failure is **not** a passing control. A `blocked`,
 `fail`, missing or `not_executed` row never counts as success. At dumpable=0,
 R1–R3 are `blocked` unless H0 observed `held`/`acquired`. R2 requires the
-inspection probe to be `held` without participation. R3 requires the
+inspection probe to be `held`, or the typed acquired-guard `unknown` with
+`linux_participation_unproven`, in both cases without participation. H0 still
+independently requires `held`/`acquired`. R3 requires the
 product's typed `unknown`/`linux_participation_unproven` probe with an
 acquired guard for a listed owner.
 
@@ -166,8 +168,8 @@ everywhere.
 
 | Variant | d | V1 | V2 | I1 | I2 | E2 | E3 | E4 | E5 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| script | 1 | pass | fail (lsof) | fail (argv) | fail (argv) | pass | pass | blocked (lsof) | fail (argv + lsof) |
-| argv0, native, node | 1 | pass | fail (lsof) | pass | pass | pass | pass | blocked (lsof) | fail (lsof) |
+| script | 1 | pass | fail (lsof) | fail (argv) | fail (argv) | pass | pass | blocked (lsof) | fail (argv + lsof + owner-set) |
+| argv0, native, node | 1 | pass | fail (lsof) | pass | pass | pass | pass | blocked (lsof) | fail (lsof + owner-set) |
 
 | Variant | d | V1 | V2 | I1 | R1 | R2 | R3 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -175,7 +177,8 @@ everywhere.
 | argv0, native | 0 | fail (hidden, source_only) | fail (lsof) | fail (instance) | pass | pass | blocked (lsof + hidden, source_only) |
 
 `lsof` = `lsof_mount_warning`, `argv` = `argv_identity`, `instance` =
-`instance_unverified`, `hidden` = `owner_hidden`.
+`instance_unverified`, `hidden` = `owner_hidden`, `owner-set` =
+`owner_lockset_unavailable` (a failed lookup and an observed empty lock set).
 
 On a clean host, V2 passes, E4 passes for every dumpable=1 variant, and E5
 passes for `argv0`, `native` and `node`. At dumpable=0, R3 stays blocked
@@ -320,6 +323,8 @@ freed. `/proc` parts are absent on macOS.
 ```sh
 npm ci && npm run build
 export RESEARCH_TMP_ROOT="<existing approved temporary root>"
+g1_build_root="$(mktemp -d "$RESEARCH_TMP_ROOT/codex-126g-build-XXXXXX")"
+BUILD="$g1_build_root/product"
 node --test experimental/126-linux-gates/*/*.test.mjs
 node experimental/126-guard-liveness/f2-linux-nondumpable/build.mjs \
   --repo <local codex-unlock clone> --commit b483cd587c62329243366e64aaaac477edd36adc --out "$BUILD"
@@ -345,7 +350,7 @@ tar -xf g1-input.tar -C "$R/src" && cd "$R/src"
 node experimental/126-guard-liveness/f2-linux-nondumpable/build.mjs \
   --repo <local codex-unlock clone> --commit b483cd587c62329243366e64aaaac477edd36adc --out "$R/build"; echo "build=$?"
 G1_BUILD="$R/build" node experimental/126-linux-gates/g1-identity-visibility/argv-check.mjs > "$R/argv-check.json"; echo "argv=$?"   # expect 0
-RESEARCH_TMP_ROOT="$R" node --test experimental/126-linux-gates/*/*.test.mjs > "$R/tests.tap" 2>&1; echo "tests=$?"  # expect 0, 37 tests, 0 skipped on Linux
+RESEARCH_TMP_ROOT="$R" node --test experimental/126-linux-gates/*/*.test.mjs > "$R/tests.tap" 2>&1; echo "tests=$?"  # expect 0, 38 tests, 0 skipped on Linux
 RESEARCH_TMP_ROOT="$R" G1_BUILD="$R/build" node experimental/126-linux-gates/g1-identity-visibility/run.mjs > "$R/g1-nominal.json"; echo "g1=$?"  # expect 0 (compiler) or 2 (no compiler)
 RESEARCH_TMP_ROOT="$R" G1_BUILD="$R/build" G1_VARIANTS=argv0 G1_CHILD_FAULT=stall:identity_direct \
   node experimental/126-linux-gates/g1-identity-visibility/run.mjs > "$R/g1-stall.json"; echo "stall=$?"  # expect 1, incompleteCount >= 1
@@ -386,6 +391,14 @@ incomplete inspections; it did not promote any control or refusal. Raw SHA-256:
 Both runs recorded research-input SHA-256
 `2453ef543248d01d05bb2a9113c8b8df4627b2528b5071246036cefa6715d60b`.
 Every holder was synthetic; native Codex dumpability and argv remain unmeasured.
+
+After those measurements, a review follow-up added an explicit source-commit
+gate before product imports in the runner, inspection child and argv checker.
+Self-consistency with a build's own manifest is insufficient: its resolved
+source must be exactly `b483cd587c62329243366e64aaaac477edd36adc`.
+The added negative test raises the current research test count to 38. The US
+measurement hashes above refer to the earlier 37-test revision; they do not
+claim to exercise the added wrong-source rejection.
 
 ## Open decisions (no-go for readiness)
 

@@ -47,7 +47,7 @@ import { verifyBuild } from '../../126-guard-liveness/f2-linux-nondumpable/build
 import { evaluateReport, evaluateRun } from './expectations.mjs'
 import { createSupervisor, stopFaults, superviseOnce } from './lifecycle.mjs'
 import { parseChildFault, validateG1 } from './protocol.mjs'
-import { expectedArgv, parseVariantSelection, VARIANT_ORDER, VARIANTS } from './variants.mjs'
+import { assertPinnedBuildSource, expectedArgv, parseVariantSelection, VARIANT_ORDER, VARIANTS } from './variants.mjs'
 
 if (process.platform !== 'linux') throw new Error('G1 runs on Linux only')
 if (process.getuid() === 0 || process.getuid() !== process.geteuid()) throw new Error('G1 requires an unprivileged same-UID runner')
@@ -70,6 +70,7 @@ const CHILD_FAULT = parseChildFault(process.env.G1_CHILD_FAULT)
 const SELECTED = parseVariantSelection(process.env.G1_VARIANTS)
 const buildCheck = verifyBuild(BUILD)
 if (!buildCheck.ok) throw new Error(`G1_BUILD does not match its manifest: ${buildCheck.faults.join(',')}`)
+assertPinnedBuildSource(buildCheck.source)
 const EXPECTED_MANIFEST = buildCheck.manifestSha256
 
 const sha256 = (data) => createHash('sha256').update(data).digest('hex')

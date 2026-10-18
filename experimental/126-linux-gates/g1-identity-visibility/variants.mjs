@@ -36,6 +36,12 @@
 //   `classification_unknown` (classify requires no opener error).
 // - `lockFilesOpenedByProcess`: any lsof stderr is `owner_lock_file_lookup_failed`.
 
+export const PINNED_SOURCE_COMMIT = 'b483cd587c62329243366e64aaaac477edd36adc'
+
+export function assertPinnedBuildSource(source) {
+  if (source?.commit !== PINNED_SOURCE_COMMIT) throw new Error(`G1 build source must be ${PINNED_SOURCE_COMMIT}`)
+}
+
 export const VARIANTS = Object.freeze({
   // The 2026-10-16 fixture: `#!/usr/bin/env python3` script named codex.
   // env execs python3 as argv[0], so the kernel argv is [python3, <path>].
