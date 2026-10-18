@@ -64,7 +64,10 @@ system temporary root.
 
 - **The native modes are refused.** `preflight` and `observe` exit 3 before
   anything is compiled, created or observed. `check.ps1` fails if that refusal
-  is removed, moved after `Add-Type`, or made conditional on a flag.
+  is removed, moved after `Add-Type`, or made conditional on a flag. It also
+  constrains the actual `Refuse` and `Stop-Unknown` definitions and their
+  literal exit 3/2 effects, with AST-only negative mutations, never by running
+  a potentially weakened observer.
 - **No user Codex home.** The user's `%USERPROFILE%\.codex` and any
   pre-set `CODEX_HOME` are compared with every path this harness touches
   **lexically only**. They are never opened, listed or statted. The disposable
@@ -83,13 +86,23 @@ system temporary root.
   spelling** and disjoint from the actual, default and environment Codex homes.
   UNC (`\\server\share`), device (`\\?\`, `\\.\`), rooted-without-drive,
   drive-relative, `.`/`..`, double-separator, trailing-space and trailing-dot
-  spellings are **refused, not normalized**. `-OutFile` is additionally refused
+  spellings are **refused, not normalized**. Every component containing `~`
+  is also refused, including ordinary literal tilde names. This deliberately
+  excludes 8.3 aliases that `GetFullPath` does not expand and that lexical
+  comparisons cannot equate with a long name. If the host's TEMP uses a short
+  spelling, use an independently known safe long-path compiler scratch; do not
+  weaken the gate. CI creates such a private scratch under `RUNNER_TEMP` and
+  overrides TEMP/TMP for that step only. `-OutFile` is additionally refused
   inside any `codex-win-obs-<12 hex>` directory on any volume, matched literally
-  per path component and independently of the current `%TEMP%`.
+  and case-insensitively per path component, independently of the current
+  `%TEMP%`. These checks are not physical canonicalization or a proof against
+  junction/ancestor replacement; native modes remain refused.
 - **The compiler is a side effect, and it is honest.** `Add-Type` starts the
   .NET compiler as a child process and writes compiler temporaries into
   `%TEMP%`. Both `observer.ps1` and `check.ps1` run the path and `%TEMP%` gate
-  **before** `Add-Type`, so the compiler never writes inside a real Codex home.
+  **before** `Add-Type`, rejecting the declared real-home spellings. This is
+  not a guarantee against all physical aliases; use a known safe staging
+  directory for the static gate and preserve the ancestry limitations below.
   A static gate means no observation and no native method call, not no compiler
   process and no compiler files. The compiler inherits this shell's
   environment, which is why no credential may be exported into the shell that
@@ -254,8 +267,8 @@ before the run; the harness compares it exactly.
 > **Steps 1 and 4 currently refuse.** `-Mode preflight` and `-Mode observe`
 > exit 3 with the refusal reason while remaining decision 10 is open. The
 > commands are documented so the intended procedure can be reviewed, not so it
-> can be run. Step 0 (static gate), step 6 (`fixture-meta`) and step 7
-> (evaluator) do run.
+> can be run. Step 0 (static gate) and step 7 (offline evaluator) can run.
+> Step 6 remains deferred even though the `fixture-meta` command exists.
 
 Run from `experimental\windows-native-observer` in the checkout. Choose an
 output directory outside `%TEMP%\codex-win-obs-*`, for example
@@ -271,6 +284,7 @@ the High session), from the same commit.
 
    Expected: `parse ok: observer.ps1`, `parse ok: check.ps1`,
    `syntax-tree checks ok …`, `ordering ok: …`, `refusal ok: …`,
+   `AST-only mutation checks ok: …`,
    `harness file-name set ok`, `pure helpers loaded …`, one
    `pure helper checks ok: <group>` line for each of the nine assertion groups,
    `path gate ok: …`, `compile ok: WinObserver.cs (no method called)`, exit 0.
@@ -398,6 +412,14 @@ Exit 1 means a measured mismatch and nothing else. Setup problems that cannot
 establish anything either way are exit 2 with an `unknown:` line, never an
 accidental uncaught exit 1.
 
+The offline evaluator also maps unexpected internal exceptions to structured
+`unknown`/2 with a fixed `evaluator_internal_error` reason, without exception
+messages or stack traces. In the observer an incomplete/error row takes
+priority over mismatch; in a usable offline file a measured mismatch takes
+priority over an unknown row, while file-global errors take priority over both.
+`pair` exit 0 means W6 comparison completion only, not W7 success: W7-only
+failures remain visible in each side's `w7` result and do not become W6 rows.
+
 ### Expected evaluator outcome
 
 With the current table and a correct baseline, a perfect run still yields
@@ -513,7 +535,8 @@ record against `expectations.mjs` and reports two separate facts for every row:
 - **`measured`**: that record holds a complete, in-schema, internally
   consistent native observation. That means `observed` is present, `ok` is
   `true`, `complete` is not `false`, the state is not `unknown`, there is no
-  exception, no Win32 `5` (access denied) anywhere, the typed per-step schema
+  exception, no detected Win32 `5` (access denied) in the recursive `win32` or
+  `tokenWin32` fields, the typed per-step schema
   passes (required fields present and correctly formatted — SHA-256, commit,
   file ID, SID, absolute local drive path, integer, decimal FILETIME string),
   every schema **invariant** holds, and every hypothesis field is present and
@@ -681,14 +704,21 @@ The existing `RemoteSigned` policy was unchanged. A new private staging
 directory outside every real Codex home held the checked inputs and compiler
 temporaries. Source hashes were checked before execution.
 
-The final static run exited **0**: both parses, automatic-variable and
-forbidden-call checks, exact hard-refusal AST contract and seven negative
-mutations, nine pure-helper groups, and C# compilation passed. Tested inputs:
+The post-review static run exited **0**: both parses, automatic-variable and
+forbidden-call checks, the exact hard-refusal AST contract, seven switch/guard
+mutations plus twelve definition/termination mutations for each of `Refuse`
+and `Stop-Unknown`, nine pure-helper groups (including short-name/tilde
+refusal and case-insensitive disposable matching), and C# compilation passed.
+Tested inputs:
 
-- `check.ps1`: `ddec2d14899ae70ab18fd8f0081c4f03b3e996db0aa9e04d10d066ac68ba01d4`
-- `observer.ps1`: `e39fbd2497f69c97b9769698fa525545316ab98d430e57e3a6f3104590a1f40e`
-- `WinObserver.cs`: `de0356fedee35ca2cb239b2c0f237021ea60f27b59f61f960c62db52768e3d3e`
-- Static output SHA-256: `3ea3e85a2b6f31ba4bb7a41b9273460832bd9d8667ad0ff12e1edf74ff111736`
+- `check.ps1`: `a5e0499990c9700e743429b794e69366469def8f465e40a15b3c4aedbafb17b2`
+- `observer.ps1`: `15e5ea87bd4766de1fe3537d49fec201837abbfda1a378f4cced3f3fe99a06de`
+- `WinObserver.cs`: `9b44dc7403368857fd7c55cdf4a596310b7b501c1343755f3adc08758f3eb83c`
+- Static output SHA-256: `5e8951d7b56c31012aadc8980b8f9694f2cfbe859fd742fc6937ce9619702fc8`
+
+The earlier static baseline (output digest
+`3ea3e85a2b6f31ba4bb7a41b9273460832bd9d8667ad0ff12e1edf74ff111736`)
+is retained separately and is not counted as verification of these later edits.
 
 Earlier failures were retained rather than counted as passes: the original
 checker used an unavailable `VariablePath.UnqualifiedPath` property; after

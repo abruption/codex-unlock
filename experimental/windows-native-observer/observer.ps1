@@ -156,7 +156,11 @@ function Get-PathRelation([string]$a, [string]$b) {
 # device (\\?\, \\.\), rooted-without-drive (\x), drive-relative (C:x) and
 # relative spellings are REFUSED rather than normalized, as are `.`/`..`
 # components, empty components, components ending in a space or a dot, and
-# characters Windows does not allow in a name. This mirrors
+# characters Windows does not allow in a name. Tilde components are also
+# refused conservatively: GetFullPath does not expand 8.3 aliases, so textual
+# disjointness cannot safely compare a short spelling with a long one. This
+# rejects literal tilde names too; it is not physical-path canonicalization.
+# This mirrors
 # normalizeLocalPath in expectations.mjs. An ambiguous spelling is refused; it
 # is never rewritten into something that looks safe.
 function Test-LocalPathSpelling([string]$p) {
@@ -174,6 +178,7 @@ function Test-LocalPathSpelling([string]$p) {
     if ($rest.Count -eq 1 -and $rest[0] -eq '') { return $true }
     foreach ($part in $rest) {
         if ($part -eq '' -or $part -eq '.' -or $part -eq '..') { return $false }
+        if ($part.Contains('~')) { return $false }
         if ($part.Contains(':')) { return $false }
         if ($part.EndsWith(' ') -or $part.EndsWith('.') -or $part.StartsWith(' ')) { return $false }
     }
@@ -187,7 +192,7 @@ function Test-LocalPathSpelling([string]$p) {
 function Test-InsideDisposableDir([string]$p) {
     if (-not (Test-LocalPathSpelling $p)) { return $false }
     foreach ($part in $p.Split('\')) {
-        if ($part -cmatch '^codex-win-obs-[0-9a-f]{12}$') { return $true }
+        if ($part -imatch '^codex-win-obs-[0-9a-f]{12}$') { return $true }
     }
     $false
 }

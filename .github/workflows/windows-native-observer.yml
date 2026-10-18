@@ -29,6 +29,22 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ($PSVersionTable.PSVersion.Major -ne 5) { throw 'This gate requires Windows PowerShell 5.1' }
+          # Do not inherit a short-name TEMP (e.g. RUNNER~1). The checker now
+          # refuses tilde spellings instead of guessing their physical target.
+          if ([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) { throw 'RUNNER_TEMP is required' }
+          $compilerRoot = [IO.Path]::GetFullPath($env:RUNNER_TEMP)
+          if ($compilerRoot -notmatch '^[A-Za-z]:\\' -or $compilerRoot.Contains('~')) { throw 'RUNNER_TEMP must use a long absolute drive spelling' }
+          $compilerTemp = Join-Path $compilerRoot ('codex-observer-static-' + [Guid]::NewGuid().ToString('N'))
+          if (Test-Path -LiteralPath $compilerTemp) { throw 'Compiler scratch already exists' }
+          $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+          $acl = New-Object Security.AccessControl.DirectorySecurity
+          $acl.SetOwner($sid)
+          $acl.SetAccessRuleProtection($true, $false)
+          $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+          [IO.Directory]::CreateDirectory($compilerTemp, $acl) | Out-Null
+          # Process-local compiler environment only; no host policy/settings change.
+          $env:TEMP = $compilerTemp
+          $env:TMP = $compilerTemp
           $dir = Join-Path $env:GITHUB_WORKSPACE 'experimental/windows-native-observer'
           & powershell -NoProfile -NonInteractive -File (Join-Path $dir 'check.ps1')
           if ($LASTEXITCODE -ne 0) { throw "check.ps1 exited $LASTEXITCODE" }

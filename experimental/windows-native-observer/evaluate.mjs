@@ -133,9 +133,10 @@ function main() {
 
 try { main() }
 catch (error) {
-  if (!(error instanceof EvidenceInputError)) throw error
   // Do not expose paths, parser excerpts or host exception messages in a
-  // shareable diagnostic. A failed input is unknown, not a measured mismatch.
-  console.log(JSON.stringify({ status: 'unknown', problems: [error.reason], safeToUnlock: false }))
+  // shareable diagnostic. Input and unexpected evaluator failures are unknown,
+  // not measured mismatches. Never inspect an unexpected exception's message.
+  const reason = error instanceof EvidenceInputError ? error.reason : 'evaluator_internal_error'
+  console.log(JSON.stringify({ status: 'unknown', problems: [reason], safeToUnlock: false }))
   process.exitCode = 2
 }

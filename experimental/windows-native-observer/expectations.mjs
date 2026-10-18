@@ -56,7 +56,10 @@ const CONTROL_CHARS = /[\u0000-\u001f\u007f]/
 // (`\\?\`, `\\.\`), relative, rooted-without-drive (`\x`) and drive-relative
 // (`C:x`) spellings are rejected rather than normalized, as are `.`/`..`
 // components, empty components, components ending in a space or dot, and
-// characters Windows does not allow in a name. An ambiguous spelling is
+// characters Windows does not allow in a name. Every tilde component is also
+// refused (including literal tilde names), conservatively excluding 8.3 aliases
+// that lexical comparisons cannot equate with long paths. This does not prove
+// physical disjointness or close ancestor/creation races. An ambiguous spelling is
 // refused; it is never rewritten into something that looks safe.
 export function normalizeLocalPath(p) {
   if (typeof p !== 'string' || p.length === 0 || p.length > 32767) return null
@@ -71,6 +74,7 @@ export function normalizeLocalPath(p) {
   if (parts.length === 1 && parts[0] === '') return drive.toLowerCase() + '\\'
   for (const part of parts) {
     if (part.length === 0 || part === '.' || part === '..') return null
+    if (part.includes('~')) return null
     if (part.includes(':')) return null
     if (part.endsWith(' ') || part.endsWith('.')) return null
     if (part.startsWith(' ')) return null

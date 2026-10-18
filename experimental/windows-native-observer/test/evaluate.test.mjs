@@ -205,7 +205,8 @@ test('only absolute local drive spellings are accepted; ambiguous ones are rejec
   assert.equal(normalizeLocalPath('C:\\'), 'c:\\')
   for (const bad of ['\\\\?\\C:\\Temp', '\\\\.\\C:\\Temp', '\\\\server\\share\\x', '\\rooted\\x', 'C:relative',
     'relative\\x', 'C:/Temp/x', 'C:\\Temp\\\\x', 'C:\\Temp\\..\\Users', 'C:\\Temp\\.', 'C:\\Temp\\x ',
-    'C:\\Temp\\x.', 'C:\\Temp\\ x', 'C:\\Temp\\a:b', 'C:\\Temp\\a*b', 'C:\\Temp\\a?b', 'C:\\Temp\\a|b', '', null]) {
+    'C:\\Temp\\x.', 'C:\\Temp\\ x', 'C:\\Temp\\a:b', 'C:\\Temp\\a*b', 'C:\\Temp\\a?b', 'C:\\Temp\\a|b',
+    'C:\\Users\\OPERAT~1\\.codex\\out.jsonl', 'C:\\Users\\RUNNER~1\\Temp', 'C:\\Temp\\literal~name', '', null]) {
     assert.equal(normalizeLocalPath(bad), null, String(bad))
   }
 })
@@ -231,6 +232,11 @@ test('the output/input path gate refuses real homes and disposable directories',
   assert.equal(pathGateSafe(`${PARENT}\\home`, USER_HOME, null, { allowDisposable: true }), null)
   assert.equal(insideDisposableDir('C:\\Temp\\codex-win-obs-0123456789abc'), false)
   assert.equal(insideDisposableDir('C:\\Temp\\codex-win-obs-0123456789ab\\home'), true)
+  assert.equal(insideDisposableDir('C:\\Temp\\CODEX-WIN-OBS-0123456789AB\\home'), true)
+  assert.equal(pathGateSafe('C:\\Temp\\CODEX-WIN-OBS-0123456789AB\\out.jsonl', USER_HOME, null), 'inside_disposable_dir')
+  assert.equal(pathGateSafe('C:\\Users\\OPERAT~1\\.codex\\out.jsonl', USER_HOME, null), 'path_spelling')
+  assert.equal(pathGateSafe('C:\\Temp\\out.jsonl', 'C:\\Users\\OPERAT~1\\.codex', null), 'user_home_spelling')
+  assert.equal(tempRootSafeForCreation('C:\\Users\\RUNNER~1\\Temp', USER_HOME, null), false)
 })
 
 test('access denial is found at any depth', () => {
@@ -1114,6 +1120,36 @@ test('share probe evidence fixes its exact requested access and sharing mode', (
       assert.equal(row(evaluate(run), id2).verdict, 'unknown')
     }
   }
+})
+
+test('Markdown expectation cells escape existing backslashes before pipes', () => {
+  for (const [value, escaped] of [
+    ['a|b', String.raw`a\|b`],
+    [String.raw`a\b|c`, String.raw`a\\b\|c`],
+    [String.raw`a\|b|c`, String.raw`a\\\|b\|c`],
+  ]) {
+    const table = renderExpectationTable([{ id: value, mode: 'preflight', step: value, perSample: false, hypothesis: null, gates: [] }])
+    assert.ok(table.endsWith(`| ${escaped} | preflight | \`${escaped}\` | no | recorded only (typed schema) |  |\n`))
+  }
+})
+
+test('W6 comparison completion does not turn W7-only failures into success', () => {
+  const sides = ['medium', 'high'].map((label) => {
+    const run = idealRun(label)
+    for (const r of run.observe.records.filter((r) => r.step === 'range.probe')) {
+      r.observed.ranges.beyond_fsext = { win32: 0, acquired: true, released: true }
+    }
+    const summary = evaluate(run, { expectedLabel: label })
+    assert.equal(summary.w7, 'fail')
+    assert.equal(row(summary, 'OB-range-beyond-fsext').verdict, 'mismatch')
+    assert.equal(summary.provenance.state, 'validated')
+    assert.equal(summary.safeToUnlock, false)
+    return summary
+  })
+  const paired = pairSummaries(...sides)
+  assert.equal(paired.status, 'compared')
+  assert.equal(paired.safeToUnlock, false)
+  assert.ok(!paired.rows.some((r) => r.id === 'OB-range-beyond-fsext'))
 })
 
 test('missing whole steps, late process re-query and interleaved samples are unknown', () => {

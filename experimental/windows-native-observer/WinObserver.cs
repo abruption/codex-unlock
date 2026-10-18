@@ -14,8 +14,9 @@
 // observation of it. Every lock is released before the call returns (the guard
 // in a finally), and a failed release makes the result `unknown`.
 //
-// Unverified: this file has never been compiled. The static CI gate
-// (ci-proposal.patch) is the first place that would compile it.
+// Compiled by the Windows static gate without invoking these native methods.
+// The checked-in windows-native-observer workflow checks compilation only;
+// native runtime behavior and real Codex interoperability remain unverified.
 using System;
 using System.ComponentModel;
 using System.IO;

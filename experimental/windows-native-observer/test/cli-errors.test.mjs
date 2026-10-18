@@ -48,3 +48,28 @@ test('usage and table retain their documented exit codes', () => {
   assert.equal(invoke([]).status, 64)
   assert.equal(invoke(['table']).status, 0)
 })
+
+test('unexpected evaluator exceptions are structured unknown without paths or stack traces', () => {
+  const dir = mkdtempSync(join(root, 'codex-observer-cli-'))
+  try {
+    const preflight = join(dir, `${secret}-preflight.jsonl`)
+    const observe = join(dir, 'observe.jsonl')
+    // Valid JSON passes parseJsonl. String interpolation of this step in the
+    // record validator throws TypeError rather than EvidenceInputError.
+    const bytes = JSON.stringify({ step: { toString: 0 }, observed: { private: secret } }) + '\n'
+    writeFileSync(preflight, bytes, { mode: 0o600 })
+    writeFileSync(observe, '{}\n', { mode: 0o600 })
+    const result = invoke(['run', '--label', 'medium', '--preflight', preflight, '--observe', observe])
+    assert.equal(result.status, 2, result.stderr)
+    assert.equal(result.signal, null)
+    assert.equal(result.stderr, '')
+    assert.deepEqual(JSON.parse(result.stdout), {
+      status: 'unknown', problems: ['evaluator_internal_error'], safeToUnlock: false,
+    })
+    for (const value of [secret, dir, cli, 'TypeError', ' at ']) {
+      assert.ok(!result.stdout.includes(value), `diagnostic exposed ${value}`)
+    }
+    assert.equal(readFileSync(preflight, 'utf8'), bytes)
+    assert.equal(readFileSync(observe, 'utf8'), '{}\n')
+  } finally { rmSync(dir, { recursive: true }) }
+})

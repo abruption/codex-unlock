@@ -1075,7 +1075,9 @@ export function pairSummaries(medium, high, explanations = {}) {
 }
 
 function cell(v) {
-  return String(v).replace(/\|/g, '\\|')
+  // Escape existing backslashes first; otherwise an input backslash can
+  // cancel the escape added for a Markdown table delimiter.
+  return String(v).replaceAll('\\', '\\\\').replaceAll('|', '\\|')
 }
 
 export function renderExpectationTable(expectations = EXPECTATIONS) {

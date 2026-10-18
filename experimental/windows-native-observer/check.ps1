@@ -108,6 +108,44 @@ function Get-AutomaticWriteProblems($tree) {
     }
 }
 
+# The called helper must itself terminate. Its complete AST is constrained to
+# the three current statements: emit the diagnostic, record the literal setup
+# code, then exit with that same literal code. No conditional, early return,
+# additional block or second/scoped definition may hide a nonterminating path.
+function Test-TerminationDefinition($tree, [string]$functionName, [int]$exitCode, [string]$prefix, [int]$beforeOffset) {
+    $definitions = @($tree.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            (($node.Name -replace '^(global|local|script|private):', '') -ieq $functionName)
+        }, $true))
+    if ($definitions.Count -ne 1) { return $false }
+    $definition = $definitions[0]
+    if ($definition.Name -cne $functionName -or $definition.IsFilter -or $definition.IsWorkflow) { return $false }
+    if (-not [object]::ReferenceEquals($definition.Parent, $tree.EndBlock) -or
+        $definition.Extent.EndOffset -ge $beforeOffset) { return $false }
+    if ($definition.Parameters.Count -ne 1 -or $definition.Parameters[0].Extent.Text -cne '[string]$why') { return $false }
+    $scriptBody = $definition.Body
+    if ($null -ne $scriptBody.ParamBlock -or $null -ne $scriptBody.DynamicParamBlock -or
+        $null -ne $scriptBody.BeginBlock -or $null -ne $scriptBody.ProcessBlock -or $null -eq $scriptBody.EndBlock) { return $false }
+    if (@($scriptBody.FindAll({ param($node) $node -is [System.Management.Automation.Language.TrapStatementAst] }, $true)).Count -ne 0) { return $false }
+    $statements = @($scriptBody.EndBlock.Statements)
+    if ($statements.Count -ne 3) { return $false }
+    $diagnostic = $statements[0]
+    $expectedDiagnostic = 'Write-Output "' + $prefix + ': $why"'
+    if ($diagnostic -isnot [System.Management.Automation.Language.PipelineAst] -or
+        $diagnostic.PipelineElements.Count -ne 1 -or
+        $diagnostic.PipelineElements[0] -isnot [System.Management.Automation.Language.CommandAst] -or
+        ($diagnostic.Extent.Text -replace '\s+', ' ').Trim() -cne $expectedDiagnostic) { return $false }
+    $setCode = $statements[1]
+    if ($setCode -isnot [System.Management.Automation.Language.AssignmentStatementAst] -or
+        $setCode.Operator.ToString() -ne 'Equals' -or $setCode.Left.Extent.Text -cne '$script:SetupExit' -or
+        $setCode.Right.Extent.Text.Trim() -cne [string]$exitCode) { return $false }
+    $exitStatement = $statements[2]
+    if ($exitStatement -isnot [System.Management.Automation.Language.ExitStatementAst] -or
+        $null -eq $exitStatement.Pipeline -or $exitStatement.Pipeline.Extent.Text.Trim() -cne [string]$exitCode) { return $false }
+    $true
+}
+
 # This is deliberately an exact contract, not a general control-flow proof.
 # The one true assignment must be top-level, and the exact refusal statement
 # must immediately precede the sole Add-Type command in the same top-level
@@ -143,6 +181,8 @@ function Test-NativeRefusalAst($tree) {
         -not [object]::ReferenceEquals($setupTry.Body, $block) -or
         -not [object]::ReferenceEquals($setupTry.Parent, $tree.EndBlock)) { return $false }
     if ($assignment.Extent.EndOffset -ge $setupTry.Extent.StartOffset) { return $false }
+    if (-not (Test-TerminationDefinition $tree 'Refuse' 3 'refused' $setupTry.Extent.StartOffset) -or
+        -not (Test-TerminationDefinition $tree 'Stop-Unknown' 2 'unknown' $setupTry.Extent.StartOffset)) { return $false }
     $statements = @($block.Statements)
     $index = -1
     for ($i = 0; $i -lt $statements.Count; $i++) {
@@ -244,13 +284,44 @@ if ($null -ne $observerAst) {
         foreach ($variant in $variants.Keys) {
             if (Test-NativeRefusalAst (Parse-Only $variants[$variant])) { throw "native refusal mutation accepted: $variant" }
         }
+        # Mutate only source text and parse it. None of these altered helper
+        # definitions, including their exit statements, is ever executed.
+        foreach ($spec in @(@('Refuse', 'refused', 3), @('Stop-Unknown', 'unknown', 2))) {
+            $functionName = $spec[0]
+            $prefix = $spec[1]
+            $exitCode = [string]$spec[2]
+            $diagnostic = 'Write-Output "' + $prefix + ': $why"'
+            $setCode = '$script:SetupExit = ' + $exitCode
+            $exitText = 'exit ' + $exitCode
+            $header = 'function ' + $functionName + '([string]$why) { '
+            $definitionText = $header + $diagnostic + '; ' + $setCode + '; ' + $exitText + ' }'
+            if (-not $source.Contains($definitionText)) { throw "termination definition mutation anchor missing: $functionName" }
+            $definitionVariants = @{
+                removed_definition = ''
+                removed_exit = $header + $diagnostic + '; ' + $setCode + ' }'
+                changed_exit = $header + $diagnostic + '; ' + $setCode + '; exit 0 }'
+                changed_setup_code = $header + $diagnostic + '; $script:SetupExit = 0; ' + $exitText + ' }'
+                conditional_exit = $header + $diagnostic + '; ' + $setCode + '; if ($false) { ' + $exitText + ' } }'
+                early_return = $header + 'return; ' + $diagnostic + '; ' + $setCode + '; ' + $exitText + ' }'
+                added_trap = $header + 'trap { continue }; ' + $diagnostic + '; ' + $setCode + '; ' + $exitText + ' }'
+                return_instead_of_exit = $header + $diagnostic + '; ' + $setCode + '; return ' + $exitCode + ' }'
+                duplicate_definition = $definitionText + "`n" + $definitionText
+                conditional_definition = 'if ($false) { ' + $definitionText + ' }'
+                nested_definition = 'function UncalledFixture { ' + $definitionText + ' }'
+                scoped_duplicate = $definitionText + "`nfunction script:" + $functionName + '([string]$why) { return }'
+            }
+            foreach ($variant in $definitionVariants.Keys) {
+                $mutated = Replace-SourceText $source $definitionText $definitionVariants[$variant]
+                if (Test-NativeRefusalAst (Parse-Only $mutated)) { throw "termination mutation accepted: $functionName/$variant" }
+            }
+        }
         foreach ($text in '$HOME = 1', '$script:home = 1', '$local:PID, $ordinary = 1, 2', '++$global:host', '$private:HOME--') {
             if (@(Get-AutomaticWriteProblems (Parse-Only $text)).Count -eq 0) { throw "automatic variable mutation missed: $text" }
         }
         foreach ($text in '$ordinary = 1', '$ordinary++', '$object.home++', '$object[$HOME] = 1', '$env:HOME = ''example''') {
             if (@(Get-AutomaticWriteProblems (Parse-Only $text)).Count -ne 0) { throw "ordinary target falsely rejected: $text" }
         }
-        Report 'AST-only mutation checks ok: refusal variants and scoped/array/unary variable writes'
+        Report 'AST-only mutation checks ok: refusal variants, terminating helper definitions and scoped/array/unary variable writes'
     } catch { Fail ('AST-only mutation check error: ' + $_.Exception.Message) }
     # The harness digest list must be exactly the evaluator's file-name set.
     $harness = $observerAst.Find({
@@ -326,7 +397,8 @@ if ($helpersLoaded) {
         }
         foreach ($bad in '\\?\C:\Temp', '\\.\C:\Temp', '\\server\share\x', '\rooted\x', 'C:relative', 'relative\x',
             'C:/Temp/x', 'C:\Temp\\x', 'C:\Temp\..\Users', 'C:\Temp\.', 'C:\Temp\x ', 'C:\Temp\x.', 'C:\Temp\ x',
-            'C:\Temp\a:b', 'C:\Temp\a*b', 'C:\Temp\a?b', 'C:\Temp\a|b', '') {
+            'C:\Temp\a:b', 'C:\Temp\a*b', 'C:\Temp\a?b', 'C:\Temp\a|b',
+            'C:\Users\OP~1\.codex', 'C:\Temp\CODEX-~1\home', 'C:\Temp\ordinary~name', 'C:\Temp\~', '') {
             if (Test-LocalPathSpelling $bad) { throw "ambiguous spelling accepted: $bad" }
         }
     }
@@ -336,7 +408,8 @@ if ($helpersLoaded) {
         if (-not (Test-InsideDisposableDir 'C:\Temp\codex-win-obs-0123456789ab\home')) { throw 'disposable directory not detected' }
         if (-not (Test-InsideDisposableDir 'D:\scratch\codex-win-obs-0123456789ab')) { throw 'disposable directory on another volume not detected' }
         if (Test-InsideDisposableDir 'C:\Temp\codex-win-obs-0123456789abc') { throw 'a longer suffix must not match' }
-        if (Test-InsideDisposableDir 'C:\Temp\codex-win-obs-0123456789AB') { throw 'the hex suffix is lowercase only' }
+        if (-not (Test-InsideDisposableDir 'C:\Temp\codex-win-obs-0123456789AB')) { throw 'an uppercase hex suffix must be detected' }
+        if (-not (Test-InsideDisposableDir 'C:\Temp\CODEX-WIN-OBS-0123456789AB\HOME')) { throw 'uppercase disposable components must be detected' }
         if (Test-InsideDisposableDir 'C:\Temp\codex-win-obs-[0-9a-f]') { throw 'the component match must be literal, not a wildcard' }
     }
 
@@ -347,6 +420,9 @@ if ($helpersLoaded) {
         if ((Test-PathGateSafe 'C:\Temp\codex-win-obs-0123456789ab\o.jsonl' 'C:\Users\op\.codex' $null $false) -ne 'inside_disposable_dir') { throw 'an output inside a disposable directory must be refused' }
         if ($null -ne (Test-PathGateSafe 'C:\Temp\codex-win-obs-0123456789ab\home' 'C:\Users\op\.codex' $null $true)) { throw 'the disposable home itself must be allowed' }
         if ((Test-PathGateSafe '\\server\share\o.jsonl' 'C:\Users\op\.codex' $null $false) -ne 'path_spelling') { throw 'a UNC output must be refused' }
+        if ((Test-PathGateSafe 'C:\Users\OP~1\out.jsonl' 'C:\Users\operator\.codex' $null $false) -ne 'path_spelling') { throw 'an 8.3-shaped path must be refused' }
+        if ((Test-PathGateSafe 'C:\Temp\ordinary~name\out.jsonl' 'C:\Users\op\.codex' $null $false) -ne 'path_spelling') { throw 'a general tilde component must be conservatively refused' }
+        if ((Test-PathGateSafe 'C:\Temp\CODEX-WIN-OBS-0123456789AB\out.jsonl' 'C:\Users\op\.codex' $null $false) -ne 'inside_disposable_dir') { throw 'an uppercase disposable output must be refused' }
     }
 
     Invoke-CheckGroup 'creation seam' {
