@@ -93,7 +93,12 @@ are recorded `not_selected`.
 The runner takes the build manifest SHA-256 once, before any holder starts.
 It passes that value to each inspector, and the inspector refuses to import
 product code unless its own re-hash of a private copied build matches it and
-the copied source retains the exact pinned commit. The protocol then checks
+the copied source retains the exact pinned commit with an explicitly
+unapplied patch record (`patch.applied === false`). Patched builds, including
+no-op patches, and missing/malformed patch records are refused before any
+product import: the predictions describe only the unpatched baseline. This
+restriction applies to the runner, inspector and argv checker; the generic
+shared F2 builder still supports separate patch experiments. The protocol then checks
 the inspector's reported hash against the runner's value. The runner
 re-verifies the build after every run, and drift fails that run. The report
 records the SHA-256 of every research input file (runner, inspector,
@@ -139,6 +144,12 @@ their predictions against unpatched source
 `b483cd587c62329243366e64aaaac477edd36adc`, manifest SHA-256
 `15ffaada53a40b8dc77dc81bed4f7f0433bc05bfc5730e103269b32b996138a0`.
 This pure-function check is not a new Linux G1 run or native Codex evidence.
+
+The subsequent unpatched-build gate correction passed the five repository
+checks again (266 passing tests, three Linux-only skips), 61 focused tests
+(three Linux-only skips), and all five pure argv cases against that same
+unpatched manifest. A valid patched manifest from the correct commit is now
+an explicit negative test; generic F2 patch support is unchanged.
 
 ### Stages and typed evidence
 
@@ -397,7 +408,7 @@ node --test experimental/126-linux-gates/*/*.test.mjs \
   experimental/126-guard-liveness/f2-linux-nondumpable/build.test.mjs \
   experimental/126-guard-liveness/f2-linux-nondumpable/build-binding.test.mjs \
   experimental/126-guard-liveness/f2-linux-nondumpable/build-snapshot.test.mjs \
-  > "$R/tests.tap" 2>&1; echo "tests=$?"  # expect 0, 62 tests, 0 skipped on Linux
+  > "$R/tests.tap" 2>&1; echo "tests=$?"  # expect 0, 64 tests, 0 skipped on Linux
 RESEARCH_TMP_ROOT="$R" G1_BUILD="$R/build" node experimental/126-linux-gates/g1-identity-visibility/run.mjs > "$R/g1-nominal.json"; echo "g1=$?"  # expect 0 (compiler) or 2 (no compiler)
 RESEARCH_TMP_ROOT="$R" G1_BUILD="$R/build" G1_VARIANTS=argv0 G1_CHILD_FAULT=stall:identity_direct \
   node experimental/126-linux-gates/g1-identity-visibility/run.mjs > "$R/g1-stall.json"; echo "stall=$?"  # expect 1, incompleteCount >= 1

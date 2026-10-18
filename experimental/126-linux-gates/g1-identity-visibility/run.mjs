@@ -47,7 +47,7 @@ import { verifyBuild } from '../../126-guard-liveness/f2-linux-nondumpable/build
 import { evaluateReport, evaluateRun } from './expectations.mjs'
 import { createSupervisor, stopFaults, superviseOnce } from './lifecycle.mjs'
 import { parseChildFault, validateG1 } from './protocol.mjs'
-import { assertPinnedBuildSource, expectedArgv, parseVariantSelection, VARIANT_ORDER, VARIANTS } from './variants.mjs'
+import { assertPinnedUnpatchedBuild, expectedArgv, parseVariantSelection, VARIANT_ORDER, VARIANTS } from './variants.mjs'
 import { createPinnedBuildSnapshot } from './build-input.mjs'
 
 if (process.platform !== 'linux') throw new Error('G1 runs on Linux only')
@@ -71,7 +71,7 @@ const CHILD_FAULT = parseChildFault(process.env.G1_CHILD_FAULT)
 const SELECTED = parseVariantSelection(process.env.G1_VARIANTS)
 const buildCheck = verifyBuild(BUILD)
 if (!buildCheck.ok) throw new Error(`G1_BUILD does not match its manifest: ${buildCheck.faults.join(',')}`)
-assertPinnedBuildSource(buildCheck.source)
+assertPinnedUnpatchedBuild(buildCheck)
 const EXPECTED_MANIFEST = buildCheck.manifestSha256
 // Node holders and inspectors receive copied runtime bytes. Keep BUILD only
 // for the original input's conservative post-run drift check.

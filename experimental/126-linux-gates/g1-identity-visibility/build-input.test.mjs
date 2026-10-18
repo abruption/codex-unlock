@@ -14,12 +14,12 @@ import { PINNED_SOURCE_COMMIT } from './variants.mjs'
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 
-function manifest(build, commit = PINNED_SOURCE_COMMIT) {
+function manifest(build, commit = PINNED_SOURCE_COMMIT, patch = { applied: false }) {
   const content = contentOf(build)
   fs.writeFileSync(path.join(build, 'manifest.json'), JSON.stringify({
     schema: MANIFEST_SCHEMA,
     source: { commit, tree: 'b'.repeat(40), archiveSha256: sha256('archive') },
-    patch: { applied: false }, lockfileSha256: sha256('{}'), dist: content.dist, native: content.native,
+    patch, lockfileSha256: sha256('{}'), dist: content.dist, native: content.native,
   }))
 }
 
@@ -89,6 +89,27 @@ test('G1 copied-build binding refuses a valid manifest from the wrong source pin
     assert.equal(startup.ok, true)
     assert.throws(() => createPinnedBuildSnapshot(build, startup.manifestSha256), /G1 build source must be/)
     assert.throws(() => createPinnedBuildSnapshot(build, '0'.repeat(64)), /startup_manifest_sha256_changed/)
+  } finally {
+    if (previous === undefined) delete process.env.RESEARCH_TMP_ROOT
+    else process.env.RESEARCH_TMP_ROOT = previous
+    dispose(root)
+    dispose(build)
+  }
+})
+
+test('G1 consumer wrapper refuses a coherent correctly pinned patched build before returning an importable snapshot', () => {
+  const root = freshPrivateDir('126-g1-patched-build-test')
+  const build = fakeBuild()
+  const previous = process.env.RESEARCH_TMP_ROOT
+  try {
+    process.env.RESEARCH_TMP_ROOT = root
+    fs.writeFileSync(path.join(build, 'source.patch'), 'synthetic patch')
+    manifest(build, PINNED_SOURCE_COMMIT, { applied: true, sha256: sha256('synthetic patch') })
+    const startup = verifyBuild(build)
+    assert.equal(startup.ok, true)
+    assert.equal(startup.source.commit, PINNED_SOURCE_COMMIT)
+    assert.equal(startup.patch.applied, true)
+    assert.throws(() => createPinnedBuildSnapshot(build, startup.manifestSha256), /explicitly record an unpatched build/)
   } finally {
     if (previous === undefined) delete process.env.RESEARCH_TMP_ROOT
     else process.env.RESEARCH_TMP_ROOT = previous

@@ -8,13 +8,24 @@ import {
   blockerCauses, checkCoverage, classifyLsofError, compareRun, evaluateReport, evaluateRun, hostClassOf, identityCauses, lsofCauseOf,
 } from './expectations.mjs'
 import { G1_STAGES, isProbe, parseChildFault, validateG1 } from './protocol.mjs'
-import { assertPinnedBuildSource, parseVariantSelection, PINNED_SOURCE_COMMIT, predict, PRODUCT_ARGV_ERROR, VARIANT_ORDER } from './variants.mjs'
+import { assertPinnedBuildSource, assertPinnedUnpatchedBuild, parseVariantSelection, PINNED_SOURCE_COMMIT, predict, PRODUCT_ARGV_ERROR, VARIANT_ORDER } from './variants.mjs'
 
 const MANIFEST = 'a'.repeat(64)
 test('build source identity must equal the pinned full commit', () => {
   assert.doesNotThrow(() => assertPinnedBuildSource({ commit: PINNED_SOURCE_COMMIT }))
   for (const source of [null, {}, { commit: 'b483cd5' }, { commit: 'f'.repeat(40) }]) {
     assert.throws(() => assertPinnedBuildSource(source), /G1 build source must be/)
+  }
+})
+test('G1 build gate requires verified pinned source and an explicit valid unpatched record', () => {
+  const verified = { ok: true, source: { commit: PINNED_SOURCE_COMMIT }, patch: { applied: false } }
+  assert.doesNotThrow(() => assertPinnedUnpatchedBuild(verified))
+  for (const patch of [undefined, null, true, false, 'false', [], {}, { applied: true }, { applied: 'false' }, { applied: 0 }]) {
+    assert.throws(() => assertPinnedUnpatchedBuild({ ...verified, patch }), /explicitly record an unpatched build/)
+  }
+  assert.throws(() => assertPinnedUnpatchedBuild({ ...verified, source: { commit: 'f'.repeat(40) } }), /G1 build source must be/)
+  for (const invalid of [undefined, null, {}, { ...verified, ok: false }]) {
+    assert.throws(() => assertPinnedUnpatchedBuild(invalid), /G1 build must be verified/)
   }
 })
 const holder = { pid: 42, fd: 5 }

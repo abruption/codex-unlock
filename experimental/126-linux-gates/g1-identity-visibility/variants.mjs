@@ -42,6 +42,18 @@ export function assertPinnedBuildSource(source) {
   if (source?.commit !== PINNED_SOURCE_COMMIT) throw new Error(`G1 build source must be ${PINNED_SOURCE_COMMIT}`)
 }
 
+// Predictions describe the unpatched pinned source. A matching source commit
+// alone does not authorize a build whose manifest records an applied patch.
+export function assertPinnedUnpatchedBuild(verified) {
+  if (verified?.ok !== true) throw new Error('G1 build must be verified')
+  assertPinnedBuildSource(verified.source)
+  const patch = verified.patch
+  if (patch === null || typeof patch !== 'object' || Array.isArray(patch) ||
+    !Object.hasOwn(patch, 'applied') || patch.applied !== false) {
+    throw new Error('G1 build must explicitly record an unpatched build (patch.applied === false)')
+  }
+}
+
 export const VARIANTS = Object.freeze({
   // The 2026-10-16 fixture: `#!/usr/bin/env python3` script named codex.
   // env execs python3 as argv[0], so the kernel argv is [python3, <path>].
