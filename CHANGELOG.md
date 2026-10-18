@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.7](https://github.com/abruption/codex-unlock/compare/v0.4.6...v0.4.7) (2026-10-18)
+
+
+### Tests
+
+* separate Linux attribution causes and guard-gap models ([#157](https://github.com/abruption/codex-unlock/issues/157)) ([acb1edb](https://github.com/abruption/codex-unlock/commit/acb1edb4ca49a1ed28de5b83a8b9ce2302d6bcfe))
+
 ## [0.4.6](https://github.com/abruption/codex-unlock/compare/v0.4.5...v0.4.6) (2026-10-14)
 
 
