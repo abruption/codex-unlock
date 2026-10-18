@@ -129,6 +129,17 @@ The historical US measurements below predate this snapshot wiring and the
 new shared-helper input hashes. They are not execution evidence for this
 integration revision. None of these changes closes G4 or #137's NO-GO gates.
 
+Root validation at runner source
+`25d1d8384ec65c54fdfaeee2702b49917e7dc4b6` passed all five repository checks
+(266 passing tests, three Linux-only skips) and the combined focused suite
+(59 passed, three Linux-only skips). The post-rebase tree was byte-identical
+to the checked tree. The snapshot-based cross-platform argv check also exited
+0: all four fixture variants and the renamed-Node negative control matched
+their predictions against unpatched source
+`b483cd587c62329243366e64aaaac477edd36adc`, manifest SHA-256
+`15ffaada53a40b8dc77dc81bed4f7f0433bc05bfc5730e103269b32b996138a0`.
+This pure-function check is not a new Linux G1 run or native Codex evidence.
+
 ### Stages and typed evidence
 
 `dist_identity`, `module_load`, `lsof_control`, `openers`, `identity_direct`,
