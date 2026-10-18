@@ -16,13 +16,16 @@ import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 import { reachableModules, verifyBuild } from '../../126-guard-liveness/f2-linux-nondumpable/build.mjs'
 import { assertPinnedBuildSource, expectedArgv, PRODUCT_ARGV_ERROR, VARIANT_ORDER, VARIANTS } from './variants.mjs'
+import { createPinnedBuildSnapshot } from './build-input.mjs'
 
 if (!process.env.G1_BUILD) throw new Error('G1_BUILD is required')
 const build = fs.realpathSync(process.env.G1_BUILD)
-const verified = verifyBuild(build)
-if (!verified.ok) throw new Error(`build does not match its manifest: ${verified.faults.join(',')}`)
+const startup = verifyBuild(build)
+if (!startup.ok) throw new Error(`build does not match its manifest: ${startup.faults.join(',')}`)
+const snapshot = createPinnedBuildSnapshot(build, startup.manifestSha256)
+const { verified } = snapshot
 assertPinnedBuildSource(verified.source)
-const dist = path.join(build, 'src', 'dist')
+const dist = snapshot.dist
 if (reachableModules(dist, ['process.js']).includes('unlock.js')) throw new Error('unlock.js reachable')
 const { reconcileArguments } = await import(pathToFileURL(path.join(dist, 'process.js')).href)
 

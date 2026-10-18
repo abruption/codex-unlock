@@ -48,6 +48,7 @@ import { evaluateReport, evaluateRun } from './expectations.mjs'
 import { createSupervisor, stopFaults, superviseOnce } from './lifecycle.mjs'
 import { parseChildFault, validateG1 } from './protocol.mjs'
 import { assertPinnedBuildSource, expectedArgv, parseVariantSelection, VARIANT_ORDER, VARIANTS } from './variants.mjs'
+import { createPinnedBuildSnapshot } from './build-input.mjs'
 
 if (process.platform !== 'linux') throw new Error('G1 runs on Linux only')
 if (process.getuid() === 0 || process.getuid() !== process.geteuid()) throw new Error('G1 requires an unprivileged same-UID runner')
@@ -72,6 +73,9 @@ const buildCheck = verifyBuild(BUILD)
 if (!buildCheck.ok) throw new Error(`G1_BUILD does not match its manifest: ${buildCheck.faults.join(',')}`)
 assertPinnedBuildSource(buildCheck.source)
 const EXPECTED_MANIFEST = buildCheck.manifestSha256
+// Node holders and inspectors receive copied runtime bytes. Keep BUILD only
+// for the original input's conservative post-run drift check.
+const runtimeSnapshot = createPinnedBuildSnapshot(BUILD, EXPECTED_MANIFEST)
 
 const sha256 = (data) => createHash('sha256').update(data).digest('hex')
 const fileSha = (file) => { try { return sha256(fs.readFileSync(file)) } catch (error) { return `unreadable:${error.code}` } }
@@ -82,11 +86,13 @@ const bounded = (command, args, timeout) => {
 }
 // Research inputs, relative to the experimental/ directory, plus interpreters.
 const INPUTS = [
-  ...['run.mjs', 'inspect-child.mjs', 'protocol.mjs', 'expectations.mjs', 'variants.mjs', 'lifecycle.mjs']
+  ...['run.mjs', 'inspect-child.mjs', 'protocol.mjs', 'expectations.mjs', 'variants.mjs', 'lifecycle.mjs', 'build-input.mjs']
     .map((f) => path.join(DIR, f)),
   NODE_FIXTURE, C_SOURCE, SCRIPT_FIXTURE,
   path.join(SHARED, 'lib', 'common.mjs'), path.join(SHARED, 'lib', 'isolated-observer.mjs'),
   path.join(SHARED, 'f2-linux-nondumpable', 'build.mjs'),
+  path.join(SHARED, 'f2-linux-nondumpable', 'build-binding.mjs'),
+  path.join(SHARED, 'f2-linux-nondumpable', 'build-snapshot.mjs'),
   path.resolve(ROOT, '..', '..', 'package.json'),
 ]
 function inputIdentity() {
@@ -113,7 +119,9 @@ const report = {
     lsofVersion: (lsofVersion.stderr.match(/revision:\s*(\S+)/) ?? [])[1] ?? null,
     lsofVersionCall: { status: lsofVersion.status, signal: lsofVersion.signal, error: lsofVersion.error },
     build: { manifestSha256: EXPECTED_MANIFEST, source: buildCheck.source, patch: buildCheck.patch,
-      coverage: 'dist/ and native addons re-hashed; dependency JavaScript and package metadata are not covered' },
+      coverage: 'dist/ and native addons re-hashed; dependency JavaScript and package metadata are not covered',
+      snapshot: { directory: runtimeSnapshot.directory, copiedContentSha256: runtimeSnapshot.copiedContentSha256,
+        fileCount: runtimeSnapshot.fileCount, omittedBinDirectories: runtimeSnapshot.omittedBinDirectories } },
     inputs: identityAtStart, childFault: CHILD_FAULT, selected: SELECTED,
   },
   native: null,
@@ -151,7 +159,7 @@ function holderCommand(variant, env) {
   if (variant === 'script') return [SCRIPT_FIXTURE, [], { env }]
   if (variant === 'argv0') return [PYTHON, [SCRIPT_FIXTURE], { env, argv0: 'codex' }]
   if (variant === 'native') return [nativeBin, [], { env }]
-  if (variant === 'node') return [process.execPath, [NODE_FIXTURE], { env: { ...env, FIXTURE_REQUIRE_FROM: path.join(BUILD, 'src', 'package.json') } }]
+  if (variant === 'node') return [process.execPath, [NODE_FIXTURE], { env: { ...env, FIXTURE_REQUIRE_FROM: path.join(runtimeSnapshot.build, 'src', 'package.json') } }]
   throw new Error(variant)
 }
 
@@ -212,9 +220,11 @@ for (const variant of SELECTED) {
         if (JSON.stringify(run.kernelArgv) !== JSON.stringify(run.expectedArgv)) throw new Error('kernel argv differs from the variant definition')
         if (performance.now() - startedAt + NEEDED_MS > HOLDER_LIFETIME_S * 1000) throw new Error('holder lifetime insufficient for inspection')
         const inspected = await runIsolated(process.execPath,
-          [path.join(DIR, 'inspect-child.mjs'), BUILD, EXPECTED_MANIFEST, String(ready.pid), String(ready.fd), lockPath, home, THREAD_ID, controlPath], {
+          [path.join(DIR, 'inspect-child.mjs'), runtimeSnapshot.build, EXPECTED_MANIFEST, String(ready.pid), String(ready.fd), lockPath, home, THREAD_ID, controlPath], {
             startupBudgetMs: INSPECT_STARTUP_MS, budgetMs: INSPECT_STAGES_MS,
-            env: { PATH: '/usr/sbin:/usr/bin:/bin', ...(CHILD_FAULT ? { G1_CHILD_FAULT: CHILD_FAULT } : {}) },
+            env: { PATH: '/usr/sbin:/usr/bin:/bin',
+              ...(process.env.RESEARCH_TMP_ROOT !== undefined ? { RESEARCH_TMP_ROOT: process.env.RESEARCH_TMP_ROOT } : {}),
+              ...(CHILD_FAULT ? { G1_CHILD_FAULT: CHILD_FAULT } : {}) },
           })
         const { lateExit, ...record } = inspected
         run.inspect = record

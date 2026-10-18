@@ -5,11 +5,13 @@
 // Usage: node inspect-child.mjs BUILD MANIFEST_SHA256 PID FD LOCK_PATH CODEX_HOME THREAD_ID CONTROL_PATH
 //
 // BUILD is a directory made by ../../126-guard-liveness/f2-linux-nondumpable/build.mjs.
-// It is re-hashed against its manifest before import, the manifest's own
+// A private independent runtime copy is re-hashed before import; its manifest
 // SHA-256 must equal MANIFEST_SHA256 (the runner's value, taken before any
 // holder starts), and the static import graph of the imported modules must
 // not reach unlock.js. Hashing covers dist/ and native addons only, not
-// dependency JavaScript or package metadata.
+// dependency JavaScript or package metadata. Only the read-only copy is
+// walked/imported. It isolates later input mutation, not malicious same-UID
+// chmod/replacement of the snapshot; private snapshots are retained.
 //
 // Stages beyond F2:
 // - `lsof_control`: product `findLockOpeners` on CONTROL_PATH, a regular file
@@ -24,15 +26,15 @@
 //
 // Signals: none from this child to the holder, any lock owner or any unlock
 // path. Product diagnostics (`lsof`, `ps`) keep the product's own timeout,
-// which signals only the timed-out diagnostic's own process group. No native
-// file is created or removed. Errors are recorded, never converted.
+// which signals only the timed-out diagnostic's own process group. No Codex
+// native lock file is created or removed. Errors are recorded, never converted.
 import path from 'node:path'
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 import { StopStages, childStages } from '../../126-guard-liveness/lib/isolated-observer.mjs'
-import { reachableModules, verifyBuild } from '../../126-guard-liveness/f2-linux-nondumpable/build.mjs'
+import { reachableModules } from '../../126-guard-liveness/f2-linux-nondumpable/build.mjs'
 import { parseChildFault } from './protocol.mjs'
-import { assertPinnedBuildSource } from './variants.mjs'
+import { createPinnedBuildSnapshot } from './build-input.mjs'
 
 const [build, expectedManifest, pidText, fdText, lockPath, codexHome, threadId, controlPath] = process.argv.slice(2)
 const pid = Number(pidText)
@@ -42,7 +44,6 @@ if (!build || !/^[0-9a-f]{64}$/.test(expectedManifest ?? '') || !Number.isSafeIn
   throw new Error('usage: inspect-child.mjs BUILD MANIFEST_SHA256 PID FD LOCK_PATH CODEX_HOME THREAD_ID CONTROL_PATH')
 }
 const fault = parseChildFault(process.env.G1_CHILD_FAULT)
-const dist = path.join(build, 'src', 'dist')
 const ENTRIES = ['linux-attribution.js', 'native-coordination.js', 'lock.js', 'process.js', 'inspection.js']
 const plain = (value) => JSON.parse(JSON.stringify(value, (_key, v) => (typeof v === 'bigint' ? `${v}n` : v)))
 const stall = (name) => {
@@ -57,21 +58,24 @@ const identityRecord = (p) => ({
 
 try {
   const c = childStages({ lifetimeMs: 30000 })
+  let snapshot
   const identity = await c.stage('dist_identity', () => {
     stall('dist_identity')
-    const verified = verifyBuild(build)
-    assertPinnedBuildSource(verified.source)
+    snapshot = createPinnedBuildSnapshot(build, expectedManifest)
+    const { verified } = snapshot
     return plain({ ok: verified.ok, faults: verified.faults, manifestSha256: verified.manifestSha256,
       expectedManifestSha256: expectedManifest, manifestMatchesExpected: verified.manifestSha256 === expectedManifest,
-      source: verified.source, patch: verified.patch, distFiles: verified.distFiles, nativeFiles: verified.nativeFiles })
+      source: verified.source, patch: verified.patch, distFiles: verified.distFiles, nativeFiles: verified.nativeFiles,
+      snapshot: { directory: snapshot.directory, copiedContentSha256: snapshot.copiedContentSha256,
+        fileCount: snapshot.fileCount, omittedBinDirectories: snapshot.omittedBinDirectories } })
   })
   if (identity.result?.ok !== true || identity.result.manifestMatchesExpected !== true) throw new StopStages('build_unverified')
   let product
   const loaded = await c.stage('module_load', async () => {
     stall('module_load')
-    const modules = reachableModules(dist, ENTRIES)
+    const modules = reachableModules(snapshot.dist, ENTRIES)
     if (modules.includes('unlock.js')) throw new Error('unlock_reachable')
-    const load = (name) => import(pathToFileURL(path.join(dist, name)).href)
+    const load = (name) => import(pathToFileURL(path.join(snapshot.dist, name)).href)
     const [attribution, coordination, lock, proc, inspection] = await Promise.all(ENTRIES.map(load))
     product = { ...attribution, ...coordination, ...lock, ...proc, ...inspection }
     return { modules, unlockReachable: false }

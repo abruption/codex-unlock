@@ -92,7 +92,8 @@ are recorded `not_selected`.
 
 The runner takes the build manifest SHA-256 once, before any holder starts.
 It passes that value to each inspector, and the inspector refuses to import
-product code unless its own re-hash matches it. The protocol then checks
+product code unless its own re-hash of a private copied build matches it and
+the copied source retains the exact pinned commit. The protocol then checks
 the inspector's reported hash against the runner's value. The runner
 re-verifies the build after every run, and drift fails that run. The report
 records the SHA-256 of every research input file (runner, inspector,
@@ -102,6 +103,31 @@ with a combined input hash. **Coverage limits:** build hashing covers `dist/`
 and native addons only. It does not cover dependency JavaScript, package
 metadata, shared libraries or the Python standard library, and it does not
 prove upstream identity.
+
+Before starting any holder, the runner creates a private independent runtime
+snapshot using the shared F2 helper. The Node holder resolves its JS/native
+dependency from this copy, and inspectors receive that copy as their input;
+each inspector makes its own verified private copy before walking/importing.
+The cross-platform `argv-check` also imports only its verified private copy.
+The original input remains subject to the post-run drift check.
+
+The closed copy includes `manifest.json`, `source.tar`, optional `source.patch`,
+`src/package.json`, `src/package-lock.json`, `src/dist/` and the full
+`src/node_modules/` tree, omitting unused npm `.bin` shims. Other links and
+special files are refused, and copied files do not share input inodes. The
+private wrapper stays 0700, copied directories become 0500, and files 0400.
+Snapshots, including partial failed copies, are retained under the approved
+`RESEARCH_TMP_ROOT` (forwarded to inspection children). This isolates later
+input mutation; a malicious same-UID process can chmod/replace its snapshot.
+Copying dependency JS does not authenticate it against the startup manifest.
+The canonical import graph rejects external paths and absolute/URL aliases,
+but nonliteral imports, require/eval and bare-package resolution remain outside
+its bounded analysis. Existing TypeScript dev dependencies must be installed
+for the shared parser (`npm ci`; research CI uses `--ignore-scripts`).
+
+The historical US measurements below predate this snapshot wiring and the
+new shared-helper input hashes. They are not execution evidence for this
+integration revision. None of these changes closes G4 or #137's NO-GO gates.
 
 ### Stages and typed evidence
 
@@ -334,12 +360,16 @@ G1_BUILD="$BUILD" node experimental/126-linux-gates/g1-identity-visibility/run.m
 
 ### Linux test host procedure (for the reviewer)
 
-Use an unprivileged same-UID user. Make no privilege, mount, package or
-host-policy change, and use no real Codex process or home. Send no holder,
+Use an unprivileged same-UID user. Make no privilege, mount, host/global package
+or host-policy change, and use no real Codex process or home. The dependency
+installation below is confined to the private archive workspace; stop if that
+installation is not authorized. Send no holder,
 owner or unlock signal. Diagnostic timeouts behave as described under
-"Signals and bounds". Run from a frozen archive containing `package.json`,
+"Signals and bounds". Run from a frozen archive containing `package.json`, `package-lock.json`,
 `experimental/126-guard-liveness/` and `experimental/126-linux-gates/`.
-`package.json` makes the extensionless Node fixture ESM. Compare its
+`package.json` makes the extensionless Node fixture ESM, and the lockfile is
+required to install the existing TypeScript parser without lifecycle scripts.
+Compare the archive's
 SHA-256 with the integrating host's value before extraction.
 
 ```sh
@@ -347,10 +377,16 @@ umask 077
 R="$(mktemp -d /tmp/codex-126g-run-XXXXXX)"; mkdir "$R/src"
 sha256sum g1-input.tar                       # must equal the integrating host's value
 tar -xf g1-input.tar -C "$R/src" && cd "$R/src"
+export RESEARCH_TMP_ROOT="$R"
+npm ci --ignore-scripts --no-audit --no-fund  # private research dependencies only
 node experimental/126-guard-liveness/f2-linux-nondumpable/build.mjs \
   --repo <local codex-unlock clone> --commit b483cd587c62329243366e64aaaac477edd36adc --out "$R/build"; echo "build=$?"
 G1_BUILD="$R/build" node experimental/126-linux-gates/g1-identity-visibility/argv-check.mjs > "$R/argv-check.json"; echo "argv=$?"   # expect 0
-RESEARCH_TMP_ROOT="$R" node --test experimental/126-linux-gates/*/*.test.mjs > "$R/tests.tap" 2>&1; echo "tests=$?"  # expect 0, 38 tests, 0 skipped on Linux
+node --test experimental/126-linux-gates/*/*.test.mjs \
+  experimental/126-guard-liveness/f2-linux-nondumpable/build.test.mjs \
+  experimental/126-guard-liveness/f2-linux-nondumpable/build-binding.test.mjs \
+  experimental/126-guard-liveness/f2-linux-nondumpable/build-snapshot.test.mjs \
+  > "$R/tests.tap" 2>&1; echo "tests=$?"  # expect 0, 62 tests, 0 skipped on Linux
 RESEARCH_TMP_ROOT="$R" G1_BUILD="$R/build" node experimental/126-linux-gates/g1-identity-visibility/run.mjs > "$R/g1-nominal.json"; echo "g1=$?"  # expect 0 (compiler) or 2 (no compiler)
 RESEARCH_TMP_ROOT="$R" G1_BUILD="$R/build" G1_VARIANTS=argv0 G1_CHILD_FAULT=stall:identity_direct \
   node experimental/126-linux-gates/g1-identity-visibility/run.mjs > "$R/g1-stall.json"; echo "stall=$?"  # expect 1, incompleteCount >= 1

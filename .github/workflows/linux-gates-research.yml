@@ -23,6 +23,12 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
-      # Only built-in Node modules and Python stdlib. These tests do not load
-      # a Codex binary or the product, and do not establish unlock eligibility.
-      - run: node --test experimental/126-linux-gates/*/*.test.mjs
+      # The import-graph parser uses the existing TypeScript dev dependency.
+      # Skip lifecycle scripts: synthetic snapshot tests do not load the
+      # product or a Codex binary and establish no unlock eligibility.
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: >-
+          node --test experimental/126-linux-gates/*/*.test.mjs
+          experimental/126-guard-liveness/f2-linux-nondumpable/build.test.mjs
+          experimental/126-guard-liveness/f2-linux-nondumpable/build-binding.test.mjs
+          experimental/126-guard-liveness/f2-linux-nondumpable/build-snapshot.test.mjs
