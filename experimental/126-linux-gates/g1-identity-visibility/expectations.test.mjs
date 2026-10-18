@@ -92,6 +92,66 @@ const allRuns = (host, skip = []) => VARIANT_ORDER.filter((v) => !skip.includes(
   .flatMap((v) => (v === 'node' ? [1] : [1, 0]).map((d) => run(v, d, { host })))
 const report = (runs, options = {}) => evaluateReport(runs, { expectedManifestSha256: MANIFEST, ...options })
 
+test('eligible inspection must agree with its exposed policy evidence', () => {
+  const mutations = [
+    (r) => { r.classification = 'unknown' },
+    (r) => { r.openers = 0 },
+    (r) => { r.ownerLockFiles = [] },
+    (r) => { r.transcript = 'missing' },
+    (r) => { r.owner.isCodex = false },
+    (r) => { r.owner.identityComplete = false },
+    (r) => { r.ownerLockFiles = null },
+    (r) => { r.ownerLockFiles = ['/first.lock', '/second.lock'] },
+    (r) => { r.owner = null },
+    (r) => { r.blockers = ['classification_unknown'] },
+    (r) => { r.probe = { status: 'free', method: M } },
+    (r) => { delete r.probe.participation },
+    (r) => { r.probe = { ...r.probe, participation: { ...PART, pid: 99 } } },
+  ]
+  for (const mutate of mutations) {
+    const list = stages({})
+    mutate(list[8].result)
+    const protocol = validateG1(observe(list), context)
+    assert.ok(protocol.faults.includes('stage_result_malformed:inspect_thread'))
+    const measured = evaluate('native', 1, list)
+    assert.equal(measured.collected, false)
+    const runs = allRuns('clean')
+    runs[runs.findIndex((r) => r.variant === 'native' && r.dumpable === 1)] = measured
+    assert.equal(report(runs).controlPassed.native, false)
+    assert.equal(report(runs).refusalCounted.native, false)
+  }
+})
+
+test('inspection fields are typed even when the product refused', () => {
+  const mutations = [
+    (r) => { r.classification = 'not-a-classification' },
+    (r) => { r.openers = -1 },
+    (r) => { r.openers = '1' },
+    (r) => { delete r.openers },
+    (r) => { delete r.transcript },
+    (r) => { r.transcript = 'invalid' },
+    (r) => { delete r.owner.isCodex },
+    (r) => { delete r.owner.identityComplete },
+    (r) => { r.owner.identityComplete = 'false' },
+  ]
+  for (const mutate of mutations) {
+    const list = stages({ host: 'mount_warning', dumpable: 1 })
+    mutate(list[8].result)
+    assert.ok(validateG1(observe(list), context).faults.includes('stage_result_malformed:inspect_thread'))
+  }
+  // Typed refusal evidence remains collectible: missing transcript or
+  // incomplete owner identity is a product outcome, not a broken protocol.
+  for (const host of ['clean', 'mount_warning']) {
+    for (const dumpable of [1, 0]) {
+      const list = stages({ host, dumpable, argv: false })
+      assert.equal(validateG1(observe(list), context).ok, true)
+      list[8].result.transcript = 'missing'
+      list[8].result.blockers.push('transcript_missing')
+      assert.equal(validateG1(observe(list), context).ok, true)
+    }
+  }
+})
+
 test('protocol: exact order, typed probes, manifest and PID binding, prepare/skip consistency', () => {
   assert.equal(G1_STAGES.length, 9)
   assert.equal(validateG1(observe(stages({})), context).ok, true)

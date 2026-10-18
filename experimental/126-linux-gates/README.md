@@ -104,7 +104,14 @@ re-verifies the build after every run, and drift fails that run. The report
 records the SHA-256 of every research input file (runner, inspector,
 protocol, expectations, variants, lifecycle, fixtures, the shared helpers it
 imports) and of the node and python interpreter binaries, at start and end,
-with a combined input hash. **Coverage limits:** build hashing covers `dist/`
+with a combined input hash. Schema `codex-unlock-g1-input-identity/2` hashes
+canonical JSON containing both file and interpreter hash records, using
+separate domains. Raw `inputs.schema` and public `inputsSchema` identify this
+format. Missing/malformed hash values and unreadable/error markers cannot
+produce a trusted fingerprint. Historical unversioned combined hashes covered
+research files only; their separate interpreter records must not be mistaken
+for inclusion in that older digest. No historical hash is reinterpreted as v2.
+**Coverage limits:** build hashing covers `dist/`
 and native addons only. It does not cover dependency JavaScript, package
 metadata, shared libraries or the Python standard library, and it does not
 prove upstream identity.
@@ -151,7 +158,19 @@ checks again (266 passing tests, three Linux-only skips), 61 focused tests
 unpatched manifest. A valid patched manifest from the correct commit is now
 an explicit negative test; generic F2 patch support is unchanged.
 
+The versioned interpreter-inclusive digest and inspection self-consistency
+corrections passed all five repository checks again (266 passing tests,
+three Linux-only skips) and 68 focused tests (three Linux-only skips). These
+checks do not add a Linux G1 or native Codex measurement for this revision.
+
 ### Stages and typed evidence
+
+Claimed successful inspection payloads must be self-consistent with the fields
+actually exposed by the pinned product: a live Codex owner, one opener and
+owner lock file, found transcript, held guarded probe and matching participant
+instance. Contradictory success is a collection fault. This is not a duplicate
+implementation of the complete product policy or a native safety proof;
+well-typed refusals, including mount-warning outcomes, remain observations.
 
 `dist_identity`, `module_load`, `lsof_control`, `openers`, `identity_direct`,
 `prepare`, `guarded_verify`, `held_probe`, `inspect_thread`: once each, in
@@ -408,12 +427,12 @@ node --test experimental/126-linux-gates/*/*.test.mjs \
   experimental/126-guard-liveness/f2-linux-nondumpable/build.test.mjs \
   experimental/126-guard-liveness/f2-linux-nondumpable/build-binding.test.mjs \
   experimental/126-guard-liveness/f2-linux-nondumpable/build-snapshot.test.mjs \
-  > "$R/tests.tap" 2>&1; echo "tests=$?"  # expect 0, 64 tests, 0 skipped on Linux
+  > "$R/tests.tap" 2>&1; echo "tests=$?"  # expect 0, 71 tests, 0 skipped on Linux
 RESEARCH_TMP_ROOT="$R" G1_BUILD="$R/build" node experimental/126-linux-gates/g1-identity-visibility/run.mjs > "$R/g1-nominal.json"; echo "g1=$?"  # expect 0 (compiler) or 2 (no compiler)
 RESEARCH_TMP_ROOT="$R" G1_BUILD="$R/build" G1_VARIANTS=argv0 G1_CHILD_FAULT=stall:identity_direct \
   node experimental/126-linux-gates/g1-identity-visibility/run.mjs > "$R/g1-stall.json"; echo "stall=$?"  # expect 1, incompleteCount >= 1
 sha256sum "$R"/*.json "$R/tests.tap" "$R"/codex-126-g1-*/g1-results.json
-jq '{exitCode, collected, inputsSha256, manifestSha256, hostClass, coverageValid, predictionsMatched, complete, notExecuted, controlPassed, refusalCounted, rows}' "$R/g1-nominal.json"
+jq '{exitCode, collected, inputsSchema, inputsSha256, manifestSha256, hostClass, coverageValid, predictionsMatched, complete, notExecuted, controlPassed, refusalCounted, rows}' "$R/g1-nominal.json"
 nominal_dir="$(jq -r '.resultDirectory' "$R/g1-nominal.json")"
 jq '[.expectations.comparisons[] | select(.matched | not) | {variant, dumpable, reason, rows: [.rows[] | select(.matched | not)]}]' "$R/$nominal_dir/g1-results.json"
 ```

@@ -11,6 +11,8 @@ export const G1_STAGES = ['dist_identity', 'module_load', 'lsof_control', 'opene
 const ERROR_ALLOWED = new Set(['prepare'])
 const PROBE_STATUS = new Set(['held', 'free', 'unknown'])
 const GUARD_STATUS = new Set(['acquired', 'busy', 'absent', 'unsafe', 'changed'])
+const CLASSIFICATIONS = new Set(['absent', 'stale_residue', 'live_owner', 'unknown'])
+const TRANSCRIPT_STATUS = new Set(['found', 'missing', 'ambiguous', 'unreadable'])
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 export const isTicks = (v) => typeof v === 'string' && /^\d{1,20}$/.test(v)
@@ -36,6 +38,27 @@ export function isProbe(p) {
   return true
 }
 
+// Pinned #137 exposes only this subset of InspectionResult. Validate its
+// types for every outcome, and reject a claimed eligibility that contradicts
+// those same fields. This does not recreate unexported policy inputs or prove
+// native Codex safety. Refusal outcomes may carry incomplete owner evidence.
+function isInspection(r) {
+  if (!isObject(r) || typeof r.safeToUnlock !== 'boolean' || !isStrings(r.blockers) ||
+    !isStrings(r.warnings) || !isProbe(r.probe) || !CLASSIFICATIONS.has(r.classification) ||
+    !Number.isSafeInteger(r.openers) || r.openers < 0 || !TRANSCRIPT_STATUS.has(r.transcript) ||
+    !(r.ownerLockFiles === null || isStrings(r.ownerLockFiles))) return false
+  if (r.owner !== null && !(isObject(r.owner) && isPid(r.owner.pid) && isStrings(r.owner.errors) &&
+    typeof r.owner.isCodex === 'boolean' && typeof r.owner.identityComplete === 'boolean' &&
+    (r.owner.startTicks === null || isTicks(r.owner.startTicks)))) return false
+  if (!r.safeToUnlock) return true
+  return r.blockers.length === 0 && r.classification === 'live_owner' && r.openers === 1 &&
+    r.owner?.isCodex === true && r.owner.identityComplete === true &&
+    Array.isArray(r.ownerLockFiles) && r.ownerLockFiles.length === 1 && r.ownerLockFiles[0].length > 0 &&
+    r.transcript === 'found' && r.probe.status === 'held' &&
+    r.probe.participation?.pid === r.owner.pid &&
+    r.probe.participation.startTicks === r.owner.startTicks
+}
+
 const RESULT_SHAPES = {
   dist_identity: (r) => isObject(r) && r.ok === true && isHash(r.manifestSha256) && r.manifestMatchesExpected === true &&
     r.expectedManifestSha256 === r.manifestSha256 && Array.isArray(r.faults) && r.faults.length === 0,
@@ -46,11 +69,7 @@ const RESULT_SHAPES = {
   prepare: (r) => isObject(r) && isPid(r.pid) && isTicks(r.startTicks) && isFdNames(r.candidates) && isFdNames(r.descriptors),
   guarded_verify: (r) => isObject(r) && (r.skipped === 'prepare_failed' || isProbe(r)),
   held_probe: (r) => isProbe(r) && r.participation === undefined,
-  inspect_thread: (r) => isObject(r) && typeof r.safeToUnlock === 'boolean' && isStrings(r.blockers) &&
-    (r.ownerLockFiles === null || isStrings(r.ownerLockFiles)) &&
-    isStrings(r.warnings) && isProbe(r.probe) && typeof r.classification === 'string' && Number.isSafeInteger(r.openers) &&
-    (r.owner === null || (isObject(r.owner) && isPid(r.owner.pid) && isStrings(r.owner.errors) &&
-      (r.owner.startTicks === null || isTicks(r.owner.startTicks)))),
+  inspect_thread: isInspection,
 }
 const ERROR_SHAPE = (e) => isObject(e) && (e.code === null || typeof e.code === 'string') && typeof e.message === 'string'
 

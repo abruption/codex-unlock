@@ -49,6 +49,7 @@ import { createSupervisor, stopFaults, superviseOnce } from './lifecycle.mjs'
 import { parseChildFault, validateG1 } from './protocol.mjs'
 import { assertPinnedUnpatchedBuild, expectedArgv, parseVariantSelection, VARIANT_ORDER, VARIANTS } from './variants.mjs'
 import { createPinnedBuildSnapshot } from './build-input.mjs'
+import { combinedInputDigest, INPUT_IDENTITY_SCHEMA } from './input-identity.mjs'
 
 if (process.platform !== 'linux') throw new Error('G1 runs on Linux only')
 if (process.getuid() === 0 || process.getuid() !== process.geteuid()) throw new Error('G1 requires an unprivileged same-UID runner')
@@ -86,7 +87,7 @@ const bounded = (command, args, timeout) => {
 }
 // Research inputs, relative to the experimental/ directory, plus interpreters.
 const INPUTS = [
-  ...['run.mjs', 'inspect-child.mjs', 'protocol.mjs', 'expectations.mjs', 'variants.mjs', 'lifecycle.mjs', 'build-input.mjs']
+  ...['run.mjs', 'inspect-child.mjs', 'protocol.mjs', 'expectations.mjs', 'variants.mjs', 'lifecycle.mjs', 'build-input.mjs', 'input-identity.mjs']
     .map((f) => path.join(DIR, f)),
   NODE_FIXTURE, C_SOURCE, SCRIPT_FIXTURE,
   path.join(SHARED, 'lib', 'common.mjs'), path.join(SHARED, 'lib', 'isolated-observer.mjs'),
@@ -100,7 +101,7 @@ function inputIdentity() {
   const files = INPUTS.map((f) => ({ path: path.relative(base, f), sha256: fileSha(f) })).sort((a, b) => (a.path < b.path ? -1 : 1))
   const interpreters = [process.execPath, ...(fs.existsSync(PYTHON) ? [fs.realpathSync(PYTHON)] : [])]
     .map((f) => ({ basename: path.basename(f), sha256: fileSha(f) }))
-  return { files, interpreters, combinedSha256: sha256(files.map((f) => `${f.path}\t${f.sha256}\n`).join('')),
+  return { schema: INPUT_IDENTITY_SCHEMA, files, interpreters, combinedSha256: combinedInputDigest(files, interpreters),
     limits: 'covers these research files and interpreter binaries only; not shared libraries, Python stdlib or dependency JavaScript' }
 }
 
@@ -302,7 +303,8 @@ writeNew(resultPath, body)
 // Sanitized summary: classes, statuses and fault codes; no raw errors, paths or PIDs.
 const publicCauses = new Set(['argv_identity', 'instance_unverified', 'owner_hidden', 'lsof_mount_warning',
   'lsof_infrastructure_error', 'held_observation_missing', 'owner_lockset_unavailable'])
-log(JSON.stringify({ resultDirectory: path.basename(out), resultSha256: sha256(body), inputsSha256: identityAtStart.combinedSha256, manifestSha256: EXPECTED_MANIFEST,
+log(JSON.stringify({ resultDirectory: path.basename(out), resultSha256: sha256(body), inputsSchema: identityAtStart.schema,
+  inputsSha256: identityAtStart.combinedSha256, manifestSha256: EXPECTED_MANIFEST,
   exitCode, collected, failureCount: failures.length, incompleteCount: incomplete.length,
   hostClass: report.expectations.hostClass, coverageValid: report.expectations.coverageValid,
   predictionsMatched: report.expectations.predictionsMatched, complete: report.expectations.complete, notExecuted,
