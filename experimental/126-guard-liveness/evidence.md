@@ -1,8 +1,43 @@
 # Sanitized research evidence
 
-Same-user macOS/APFS synthetic fixtures only. No actual Codex session or
-Windows recovery was exercised. Raw result files were hash-checked and retained
+Original F1/M2 measurements and local validation use same-user macOS/APFS
+synthetic fixtures. Linux measurements are identified separately below. No
+actual Codex session or Windows recovery was exercised. Raw result files were hash-checked and retained
 privately; hashes identify the original files, not this sanitized summary.
+
+## Pre-merge validation at 28925a5
+
+Runner source: `28925a50c1df118a09d950237bf3db0012751b4c`, after the
+comment-aware import walk, nested probe validation, startup-build binding and
+fixed M2 scenario verdict corrections. The final follow-up commit changes
+only this evidence record.
+
+- Five repository checks passed: 269 tests total, 266 passed, three Linux-only
+  skips, zero failures. All 71 focused research tests passed without skips.
+  The first lint attempt found a missing test-only `URL` import; it was fixed
+  before the successful rerun and before this source commit.
+- M2 nominal, `M2_REPEATS=1`: actual exit 0, seven Part 1 and four Part 2
+  scenarios matched, failures/incomplete zero. The all-scan failed acquirer was
+  an eligible wrong target and the filter rejected it; the retained-descriptor
+  former holder remained an eligible wrong target and was not excluded. The
+  visible-holder control matched. Recorded diagnostic signals were zero;
+  product diagnostic timeout signals were not independently instrumented.
+- F2 plumbing, same-user APFS synthetic holder: actual exit 0. All six nominal
+  stages were valid, with the expected macOS `prepare` ENOENT because `/proc`
+  is absent. Injected `stall:prepare` was incomplete at the stage bound and
+  the child later exited 4 without a signal. This is a wiring/fault check, not
+  Linux access-policy or native Codex evidence.
+- The unpatched research build was reverified: source
+  `b483cd587c62329243366e64aaaac477edd36adc`, startup manifest SHA-256
+  `15ffaada53a40b8dc77dc81bed4f7f0433bc05bfc5730e103269b32b996138a0`.
+  No new Linux-host measurement, F1 measurement, M2 fault-mode run or real
+  Codex observation was performed for this revision.
+
+| Private raw file | SHA-256 |
+| --- | --- |
+| M2 nominal result | def54ec1fe49f6d140cd849edcd765350a3e8e5af445ebd89fc524302e623f8b |
+| M2 nominal events | c1ab2c9e63dbd4d1dc291d520c288d0dca3ef7f44ee9bef711ec137d46b1d008 |
+| F2 plumbing result | a05553fb60c4b3279a8c0b48741328fe13ecd71a7e38c48a23560d4de8f9d1ac |
 
 ## Original measurements
 
