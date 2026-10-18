@@ -109,8 +109,9 @@ Start/end source hashes agreed: `visibility.py`
 `9dd55023765c0f873b25d1baacd609b0862f3105f597f82049f05f06be676b2d`,
 `fileport_actor.c`
 `ab295109045e6ac349b069f27b7b182945b7eb715a2ed9469ee49f856c613972`.
-This validates the revised harness on the same local macOS environment, not
-the pending hosted runners or native Codex behavior.
+This validates the revised harness on the same local macOS environment.
+Hosted-runner results are separate CI evidence; native Codex behavior remains
+unverified.
 
 ### History: runs 1–4 (earlier revision)
 

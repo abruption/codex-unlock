@@ -1,6 +1,7 @@
 # Handoff: proposed follow-ups outside this directory
 
-This directory owns no other file. The changes below are proposals only.
+Sections 1 and 2 propose follow-ups outside this directory. The research CI
+in section 3 is integrated; product policy changes remain proposals only.
 `docs/macos-owner-contract.md`, `experimental/127-macos-contract/` and
 `experimental/127-macos-prerequisites/` were read and left unchanged. Nothing
 here reproduces a real Codex process or a wrong signal to a real PID.
@@ -56,7 +57,8 @@ remain user decisions.
 ## 3. CI integration
 
 The integrating reviewer added `.github/workflows/macos-visibility-research.yml`
-from the handoff proposal. Its first hosted runs remain pending.
+from the handoff proposal. Hosted macOS 15 ARM/Intel jobs have passed; consult
+the PR checks for the result at each revision.
 
 - Runners: `macos-15` and `macos-15-intel`, with read-only `contents`
   permission and checkout pinned to the same SHA as the existing macOS
@@ -79,7 +81,7 @@ hosted runner cannot run something, the public summary names the
 `not_executed` kind or the failure kind, and the unmeasured scope must be
 reported from that.
 
-Risks to check on the first CI run:
+Hosted-runner limits to preserve:
 
 - `bootstrap_check_in` with a dynamic name worked in an interactive user
   session here. A hosted runner's launchd domain may refuse it. The receiver
@@ -98,5 +100,6 @@ Risks to check on the first CI run:
   acceptable residuals for (b), or move macOS toward (c).
 - Whether (b) should adopt the canary and the held-without-opener rule as
   candidates, knowing they do not detect selective omission.
-- Whether to adopt the CI proposal. `not_executed` must stay a failure either
-  way.
+
+The research CI is already included. `not_executed` remains a failure; any
+future change to that requirement needs a separate review.
