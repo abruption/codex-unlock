@@ -193,12 +193,12 @@ their own lifetime, zero signals, and asserts zero SIGTERM for refused cases.
 | Area | Item | Status | Narrow fixture or test plan | Needed before |
 | --- | --- | --- | --- | --- |
 | Inherited FD | fork without exec, both alive | Measured (section 5) | — | — |
-| Inherited FD | exec of inheritable FD; `O_CLOEXEC` across exec | Measured with Python's launcher (section 5) | Repeat with a Rust `std::process::Command` child to cover the launcher Codex uses | (b) |
+| Inherited FD | exec of inheritable FD; `O_CLOEXEC` across exec | Measured with Python's launcher (section 5); [Rust fixture](../experimental/127-macos-prerequisites/rust-launcher/README.md) tracks Rust 1.90/1.95 through a dedicated CI matrix | Check the workflow/PR evidence for the exact revision; fixture execution does not audit all actual Codex launch paths | (b) |
 | Inherited FD | `SCM_RIGHTS` passing to a sibling process | Measured (section 5) | — | — |
 | Inherited FD | Mach fileport passing | Not covered | C fixture: `fileport_makeport` → `fileport_makefd` in a separately started same-user actor; record bit and probe | (b) |
 | Inherited FD | Shared description with a visible Codex-looking sharer and a second sharer hidden | Not covered | Combine `scm_rights` with the M2 modelled omission; product must not report `safeToUnlock: true` with only one sharer killed. Expected today: possible wrong target (document, do not "fix" in the test) | (b) |
 | Inherited FD | Real Codex inheritance / fork paths | Not covered (source-only) | Out of scope without a real Codex binary; requires a separately approved, isolated, synthetic-home run | Holder-positive mode |
-| Process identity | Holder execs in place (same PID, new image) while keeping the FD | Not covered on macOS | Actor `execve`s itself with an inheritable lock FD between two observations; assert refusal via changed command/arguments | (b) |
+| Process identity | Holder execs in place (same PID, new image) while keeping the FD | [Synthetic OS observation](../experimental/127-macos-prerequisites/exec-identity/README.md) measured on macOS 27 arm64: PID/start unchanged, path/argv changed, lock retained | Production revalidation/refusal still unverified; the fixture measures OS fields and does not call the product's signal path | (b) |
 | Process identity | PID reuse, start-time resolution of `ps lstart` | Covered by deterministic revalidation tests ([safety-race-matrix.md](safety-race-matrix.md)); real PID reuse not forced | Unit test with an injected process table where PID and second-resolution start time match but PPID/arguments differ | — |
 | Process identity | Credential change of a holder after locking (setuid helper) | Not covered. The existing `--privileged-fixtures` CI job (`scripts/research-lock-attribution.py`) measures a hidden holder that runs under a different UID from the start (#100); it does not change a holder's credentials after it locks | A post-lock credential-change fixture needs a privileged helper; it could be added to that existing job | (c) decision input |
 | Permission | Same-user process whose libproc FD info is denied (sandboxed or hardened target) | Not covered | Holder launched under `sandbox-exec` with a deny-default profile; record lsof status, stderr, and whether the record is omitted cleanly | (b) |
@@ -207,7 +207,7 @@ their own lifetime, zero signals, and asserts zero SIGTERM for refused cases.
 | Filesystem | APFS | Measured | — | — |
 | Filesystem | HFS+, ExFAT, MS-DOS local volumes | Not covered | `hdiutil create -fs <fs>` image in the scratch root, attached with `-nobrowse -mountpoint` under the scratch; needs approval because it changes the mount table | (b) |
 | Filesystem | SMB/NFS/AFP and FUSE (macFUSE, rclone) | Not covered | Network/FUSE flock may be local-only or emulated. Plan: report these as unsupported for unlock unless measured; detect by `statfs` type | (c) decision input |
-| OS version | macOS 15 CI (kernel 24.x) sticky-bit behavior | Not covered (only foreign-UID visibility measured there) | Run `experimental/127-macos-contract/inherit.py` and #139 M2 in a research-only CI job on `macos-15` and `macos-15-intel` | (b) |
+| OS version | macOS 15 CI (kernel 24.x) sticky-bit behavior | Not covered (only foreign-UID visibility measured there); the new launcher/exec workflow does not test sticky former-holder behavior | Run `experimental/127-macos-contract/inherit.py` and #139 M2 in a research-only CI job on `macos-15` and `macos-15-intel` | (b) |
 
 ## 5. Synthetic validation (#127 fixtures)
 

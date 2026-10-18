@@ -1,0 +1,106 @@
+name: macOS recovery prerequisites
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/macos-recovery-prerequisites.yml'
+      - 'experimental/127-macos-contract/**'
+      - 'experimental/127-macos-prerequisites/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/macos-recovery-prerequisites.yml'
+      - 'experimental/127-macos-contract/**'
+      - 'experimental/127-macos-prerequisites/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-evidence:
+    name: macOS prerequisite fixtures (${{ matrix.runner }}, Rust ${{ matrix.toolchain }})
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+        toolchain: ['1.90.0', '1.95.0']
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check malformed-input and expectation regressions
+        env:
+          RESEARCH_TMP_ROOT: ${{ runner.temp }}
+        run: |
+          python3 -B -m unittest discover -s experimental/127-macos-prerequisites/rust-launcher -p 'test_*.py'
+          python3 -B -m unittest discover -s experimental/127-macos-prerequisites/exec-identity -p 'test_*.py'
+      - name: Install pinned research toolchain
+        env:
+          RESEARCH_TOOLCHAIN: ${{ matrix.toolchain }}
+        run: |
+          rustup toolchain install "$RESEARCH_TOOLCHAIN" --profile minimal --component clippy
+          rustc "+$RESEARCH_TOOLCHAIN" --version --verbose
+      - name: Build unpublished Rust launcher fixture
+        working-directory: experimental/127-macos-prerequisites/rust-launcher
+        env:
+          RESEARCH_TOOLCHAIN: ${{ matrix.toolchain }}
+        run: |
+          cargo "+$RESEARCH_TOOLCHAIN" clippy --locked --offline --all-targets -- -D warnings
+          cargo "+$RESEARCH_TOOLCHAIN" build --locked --offline
+      - name: Measure Rust Command descriptor inheritance
+        run: |
+          python3 -B experimental/127-macos-prerequisites/rust-launcher/run.py \
+            --binary "$GITHUB_WORKSPACE/experimental/127-macos-prerequisites/rust-launcher/target/debug/macos-command-inheritance-lab" \
+            --scratch-root "$RUNNER_TEMP" --result "$RUNNER_TEMP/rust-inheritance.json"
+      - name: Measure same-PID exec identity
+        if: ${{ !cancelled() && matrix.toolchain == '1.95.0' }}
+        run: |
+          python3 -B experimental/127-macos-prerequisites/exec-identity/run.py \
+            --tmp-root "$RUNNER_TEMP" --result "$RUNNER_TEMP/exec-identity.json"
+      - name: Record bounded evidence summary
+        if: ${{ !cancelled() }}
+        env:
+          EVIDENCE_ROOT: ${{ runner.temp }}
+          RESEARCH_TOOLCHAIN: ${{ matrix.toolchain }}
+        run: |
+          python3 -B - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          for name in ('rust-inheritance.json', 'exec-identity.json'):
+              if name == 'exec-identity.json' and os.environ['RESEARCH_TOOLCHAIN'] != '1.95.0':
+                  continue
+              p = Path(os.environ['EVIDENCE_ROOT']) / name
+              if not p.is_file():
+                  print(json.dumps({'result': name, 'present': False}))
+                  continue
+              try:
+                  raw = p.read_bytes()
+                  r = json.loads(raw)
+              except (OSError, ValueError) as error:
+                  print(json.dumps({'result': name, 'parseError': type(error).__name__}))
+                  continue
+              print(json.dumps({'result': name, 'sha256': hashlib.sha256(raw).hexdigest(),
+                  'ok': r.get('ok'), 'checks': r.get('checks'),
+                  'sourceHashes': {k: r[k] for k in ('script_sha256', 'shared_sha256', 'binary_sha256',
+                      'sourceSha256', 'runnerSha256') if k in r},
+                  'platform': r.get('environment', r.get('platform')),
+                  'exitCode': r.get('exitCode'), 'childExitCodes': r.get('childExitCodes'),
+                  'measurements': [{'mode': m.get('mode'), 'stage': m.get('stage'),
+                      'probe': m.get('probe'), 'roles': m.get('roles'),
+                      'matches': m.get('matches')} for m in r.get('measurements', [])],
+                  'releaseProbes': [c.get('after_exit_probe') for c in r.get('children', [])],
+                  'startup': [{'mode': h.get('mode'), 'event': h.get('record', {}).get('event'),
+                      'has_fd': h.get('record', {}).get('has_fd'),
+                      'initial_fd_flags': h.get('record', {}).get('initial_fd_flags'),
+                      'pre_spawn_fd_flags': h.get('record', {}).get('pre_spawn_fd_flags')}
+                      for h in r.get('startup_events', [])],
+                  'errorCount': len(r.get('errors', [])),
+                  'errorKinds': [(':'.join(str(e).split(':')[:2]) if str(e).split(':')[0]
+                      in ('default', 'inheritable') else str(e).split(':')[0])[:100]
+                      for e in r.get('errors', [])[:10]],
+                  'incompleteCount': len(r.get('incomplete', r.get('pendingPids', [])))}))
+          PY

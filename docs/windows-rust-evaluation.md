@@ -28,7 +28,7 @@ product-support result, and none establishes owner attribution or safe unlock.
 
 | Item | Value |
 | --- | --- |
-| Release | `rust-v0.163.0` (GitHub "Latest", not a pre-release, published 2026-10-15T21:30:38Z) |
+| Release | `rust-v0.163.0` (GitHub "Latest" as checked on 2026-10-16, not a pre-release, published 2026-10-15T21:30:38Z) |
 | Annotated tag object | `129b8ec7ee6f4511557a4856279f529025c25af4` |
 | Commit | `83086188ae0614bd882818ff1aa23f3194962012` |
 | Upstream toolchain | Rust 1.95.0 (`codex-rs/rust-toolchain.toml`) |
@@ -201,7 +201,7 @@ issue with the gates below.
 
 ## 5. Follow-up units
 
-Each unit should become a separate issue. None authorizes Windows unlock. Every
+Each unit is tracked in a separate issue. None authorizes Windows unlock. Every
 experimental record keeps `safeToUnlock=false` until every applicable W1-W7
 gate for the chosen design and supported environment is resolved and a separate
 production design is accepted. These are future work units; this document
@@ -215,6 +215,8 @@ Re-evaluating a helper for a specific read-only primitive is not approval to
 skip W4/W5 or promote it to a recovery tool.
 
 ### W1. File identity on NTFS and ReFS
+
+Tracking: [#146](https://github.com/abruption/codex-unlock/issues/146).
 
 - **Scope:** stable identity for the Codex home, `thread-writer-locks`,
   `.coordination.lock`, thread lock files and transcripts: volume serial plus
@@ -235,6 +237,8 @@ skip W4/W5 or promote it to a recovery tool.
 
 ### W2. SID and owner checks
 
+Tracking: [#147](https://github.com/abruption/codex-unlock/issues/147).
+
 - **Scope:** owner SID and DACL of the Codex home, the lock directory and lock
   and transcript files, compared with the current token user SID. Covers
   inherited versus explicit ACEs, and the fact that Administrators and
@@ -252,6 +256,8 @@ skip W4/W5 or promote it to a recovery tool.
   processes. No check exists for lock-file owners in a Codex-shaped home.
 
 ### W3. Process identity and start time
+
+Tracking: [#148](https://github.com/abruption/codex-unlock/issues/148).
 
 - **Scope:** one process handle per candidate. Identity is the handle plus
   `GetProcessTimes` creation time plus token SID, and liveness is
@@ -272,6 +278,8 @@ skip W4/W5 or promote it to a recovery tool.
 
 ### W4. Holder attribution (Windows counterpart of #100)
 
+Tracking: [#149](https://github.com/abruption/codex-unlock/issues/149).
+
 - **Scope:** decide whether a positive holder for a `LockFileEx` lock can be
   established at all. Candidate sources are Restart Manager, handle
   enumeration (which may require privileges that are out of scope) and
@@ -287,6 +295,8 @@ skip W4/W5 or promote it to a recovery tool.
 - **Existing coverage:** E3 `opener_candidates_only` records.
 
 ### W5. Cooperative termination and release path
+
+Tracking: [#150](https://github.com/abruption/codex-unlock/issues/150).
 
 - **Scope:** find a Windows route that lets the owner release one thread
   without force. Options are an upstream owner-side release (see
@@ -312,6 +322,8 @@ skip W4/W5 or promote it to a recovery tool.
 
 ### W6. Medium versus High integrity tokens
 
+Tracking: [#151](https://github.com/abruption/codex-unlock/issues/151).
+
 - **Scope:** rerun the E1, E3 and identity cases from a Medium-integrity
   interactive desktop session and compare with the High-integrity SSH results.
   Covers cross-integrity `OpenProcess` access (`PROCESS_QUERY_LIMITED_INFORMATION`
@@ -324,6 +336,8 @@ skip W4/W5 or promote it to a recovery tool.
 - **Existing coverage:** High-integrity SSH runs only.
 
 ### W7. Real Codex interoperability on Windows (prerequisite for W3 and W5)
+
+Tracking: [#152](https://github.com/abruption/codex-unlock/issues/152).
 
 - **Scope:** the pinned upstream release (section 2) runs in a disposable
   `CODEX_HOME`. A read-only observer checks the coordination and thread lock
@@ -340,15 +354,17 @@ skip W4/W5 or promote it to a recovery tool.
 
 The proposed recommendation is **A go, B conditional no-go, C no-go**;
 no migration or product-support decision is adopted by this record.
-The remaining gates are W1-W7 above. #122 can be closed once these units exist
-as separate issues; that is a maintainer action not taken here. No release,
+The remaining gates are W1-W7 above, tracked in #146–#152 as of 2026-10-18.
+#122 is closed as the initial evaluation; its outstanding safety evidence
+continues in those follow-up issues. No release,
 publication or support claim follows from this document.
 
 ## 7. Not done here
 
-No Windows host was used, and no real Codex binary, Codex home or process was
+For this evaluation record, no Windows host was used, and no real Codex binary, Codex home or process was
 run, opened or signaled. No Medium-integrity, ReFS or Defender run took place.
-No upstream code was executed. No follow-up issues were filed.
+No upstream code was executed. The later tracking update created #146–#152;
+it did not execute their experiments.
 
 ## 8. Reproducing the citations
 
