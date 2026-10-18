@@ -486,8 +486,13 @@ function evaluateCase(record, item, env, spec) {
     return { verdict: 'skipped' }
   }
   if (alternative.kind === 'recorded') {
-    if (record.observed !== false || !Number.isInteger(record.attempts) || record.attempts < 0) {
+    if (record.observed !== false || !Number.isSafeInteger(record.attempts) || record.attempts < 0 ||
+      !Number.isSafeInteger(record.elapsedMs) || record.elapsedMs < 0) {
       return { verdict: 'error', reason: 'recorded_fields_missing' }
+    }
+    if (!isObject(env.budgets) || record.attempts > env.budgets.reuseAttempts ||
+      (record.attempts !== env.budgets.reuseAttempts && record.elapsedMs < env.budgets.reuseMs)) {
+      return { verdict: 'error', reason: 'reuse_budget_not_exhausted' }
     }
     return { verdict: 'unobserved', coverage: alternative.coverage }
   }
@@ -644,7 +649,8 @@ export function evaluateJsonl(text, options = {}) {
     body = body.filter((entry) => entry !== suiteErrors[0])
     const message = suiteErrors[0].record
     if (!spec?.suiteError) errors.push('suite_error')
-    else if (message.fault !== fault || typeof message.message !== 'string' ||
+    else if (message.case !== 'suite_error' || message.track !== 'setup' ||
+      message.fault !== fault || typeof message.message !== 'string' ||
       !message.message.includes(`fault injected: ${fault}`) || message.safeToUnlock !== false) {
       errors.push('suite_error_fault_mismatch')
     }

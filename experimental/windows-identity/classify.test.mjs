@@ -554,6 +554,30 @@ test('environment, filesystem and shifted-identity control evidence agree', () =
   assert.ok(evaluateJsonl(timeChanged.map(JSON.stringify).join('\n')).collection.errors.includes('observation_contradiction:proc:child_start_mismatch'))
 })
 
+test('unobserved PID reuse requires one recorded budget to be exhausted', () => {
+  for (const [attempts, elapsedMs, expectedExit] of [[1, 0, 2], [255, 59999, 2], [256, 0, 4], [1, 60000, 4], [257, 60000, 2]]) {
+    const summary = evaluateJsonl(mockRun({ edit: replace('proc:pid_reuse', {
+      kind: 'recorded', observed: false, attempts, elapsedMs, obs: undefined, recorded: undefined, expect: undefined,
+    }) }))
+    assert.equal(summary.exitCode, expectedExit, `${attempts}/${elapsedMs}`)
+  }
+  for (const elapsedMs of [undefined, -1, '60000', Number.MAX_SAFE_INTEGER + 1]) {
+    const summary = evaluateJsonl(mockRun({ edit: replace('proc:pid_reuse', {
+      kind: 'recorded', observed: false, attempts: 256, elapsedMs, obs: undefined, recorded: undefined, expect: undefined,
+    }) }))
+    assert.equal(summary.exitCode, 2, String(elapsedMs))
+  }
+})
+
+test('fault records must retain their suite_error case and setup track', () => {
+  for (const fields of [{ case: 'other' }, { track: 'W3' }]) {
+    const summary = evaluateJsonl(mockRun({ fault: 'during_file_cases', edit: (body) => body.map((r) =>
+      r.kind === 'suite_error' ? { ...r, ...fields } : r) }), { fault: 'during_file_cases' })
+    assert.equal(summary.exitCode, 2)
+    assert.ok(summary.collection.errors.includes('suite_error_fault_mismatch'))
+  }
+})
+
 test('process cases require their own held or fresh handle evidence', () => {
   for (const name of ['proc:self', 'proc:child_live', 'proc:child_after_exit',
     'proc:child_fresh_open_while_held', 'proc:pid_reuse']) {
