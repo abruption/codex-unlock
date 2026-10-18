@@ -371,6 +371,7 @@ Not covered by injection: `query` and `short_read`. They need a fileport
 that disappears between the list and the query, or a kernel record size
 change.
 
-`ci-proposal.patch` proposes a research-only workflow for `macos-15` and
-`macos-15-intel`. It is not applied. It prints only the public summary. See
+The checked-in [research workflow](../../.github/workflows/macos-visibility-research.yml)
+runs on `macos-15` and `macos-15-intel`. It prints the public measurement
+summary and fixed test status; raw diagnostics remain private. See
 [HANDOFF.md](HANDOFF.md).
