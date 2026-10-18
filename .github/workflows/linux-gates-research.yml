@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - '.github/workflows/linux-gates-research.yml'
+      - 'package.json'
+      - 'package-lock.json'
       - 'experimental/126-linux-gates/**'
       - 'experimental/126-guard-liveness/**'
   workflow_dispatch:
