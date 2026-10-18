@@ -1,0 +1,69 @@
+name: macOS visibility research
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/macos-visibility-research.yml'
+      - 'experimental/127-macos-contract/**'
+      - 'experimental/127-macos-visibility/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-visibility:
+    name: macOS fileport and visibility fixtures (${{ matrix.runner }})
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Record toolchain
+        run: |
+          sw_vers -productVersion
+          /usr/bin/clang --version | head -n 1
+          /usr/sbin/lsof -v 2>&1 | grep -E '^ *revision:' || true
+          python3 -V
+          if test -x /usr/bin/sandbox-exec; then echo 'sandbox-exec present'; else echo 'sandbox-exec absent'; fi
+      - name: Deterministic evaluator and actor tests
+        env:
+          RESEARCH_TMP_ROOT: ${{ runner.temp }}
+        run: |
+          if python3 -I -B -W error::ResourceWarning experimental/127-macos-visibility/test_visibility.py > "$RUNNER_TEMP/visibility-tests.log" 2>&1; then
+            echo 'visibility tests passed'
+          else
+            echo 'visibility tests failed; raw diagnostics kept private'
+            exit 1
+          fi
+          if python3 -I -B -W error::ResourceWarning experimental/127-macos-contract/test_inherit.py > "$RUNNER_TEMP/inherit-tests.log" 2>&1; then
+            echo 'inherit tests passed'
+          else
+            echo 'inherit tests failed; raw diagnostics kept private'
+            exit 1
+          fi
+      # Prints only the allowlisted public summary. The raw result (paths,
+      # PIDs, service names, stderr) stays in RUNNER_TEMP and is not uploaded.
+      # A not_executed scenario, failed control or failed cleanup exits
+      # nonzero: there is no green result for an unmeasured scope.
+      - name: Measure fileport, hidden-sharer and sandbox visibility fixtures
+        run: |
+          root="$(mktemp -d "$RUNNER_TEMP/codex-127v-XXXXXX")"
+          chmod 700 "$root"
+          python3 -I -B experimental/127-macos-visibility/visibility.py \
+            --scratch-root "$root" --result "$RUNNER_TEMP/visibility.json" 2> "$RUNNER_TEMP/visibility.stderr"
+      - name: Record bounded evidence summary
+        if: ${{ !cancelled() }}
+        run: |
+          raw="$RUNNER_TEMP/visibility.json"
+          if [ ! -f "$raw" ]; then
+            echo '{"present": false}'
+            exit 0
+          fi
+          shasum -a 256 "$raw" | cut -d ' ' -f 1
+          python3 -I -B experimental/127-macos-visibility/visibility.py --summarize "$raw"
