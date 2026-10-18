@@ -98,9 +98,10 @@ The guard is released only when the **last** `Arc` clone is dropped.
 6. **Guard drop, conditional on the last reference.** If the last `Arc` clone
    is gone, `Drop for WriterLockGuard`
    (`writer_lock.rs:174-196`) takes the coordination lock, closes the thread
-   file (`185`; lock release also depends on no duplicate/inherited references
-   to that open description; the comment notes this ordering is
-   needed for Windows), removes `<thread-id>.lock` (`186-193`) and releases
+   file (`185`; the comment notes this ordering is needed for Windows).
+   Windows lock lifetime in the presence of duplicated/inherited handles is
+   not established by this source trace and remains a W4/W5 experiment.
+   It then removes `<thread-id>.lock` (`186-193`) and releases
    coordination (`194`).
 7. **Observable signal.** After `shutdown_and_wait` returns and the runtime is
    removed, the app-server emits `thread/closed`
@@ -120,8 +121,9 @@ Caveats visible in the source:
   coordination acquisition in `Drop` also has no hard duration bound.
 - If `Drop` cannot take the coordination lock, it logs and returns
   (`writer_lock.rs:176-182`). The `File` field is still dropped with the struct,
-  so this reference should close, but other shared references can retain the
-  OS lock and the lock file stays until a later
+  so this reference should close. The effect of other handle references on
+  Windows lock lifetime is unverified; the name is not removed by this path
+  and may remain until a later
   coordinator's stale cleanup (`124-171`). This is inferred from Rust drop
   semantics and was not executed.
 - `discard_thread` (`live_writer.rs:215-235`) is a second internal teardown
