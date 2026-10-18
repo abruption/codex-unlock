@@ -15,8 +15,8 @@ script are imported. #137 source was read from an isolated `git archive` of
 
 | Part | Question | Status at this revision |
 | --- | --- | --- |
-| G1 `g1-identity-visibility/` | Which of the two causes failed the 2026-10-16 F2 positive control, and does each fail independently? | Implemented. Argv predictions checked locally against the product's pure function; macOS plumbing smoke. **Not run on Linux.** |
-| G2 `g2-guard-gaps/` | fdinfo FD reuse, lock file system stalls, evidence aging, shared descriptions | Pure models with deterministic counterexamples. **G4 is no-go** (binding unproven). 3 Linux-only kernel checks **skipped on macOS** |
+| G1 `g1-identity-visibility/` | Which of the two causes failed the 2026-10-16 F2 positive control, and does each fail independently? | Local argv/plumbing checks and reviewer US Linux nominal/stall runs completed; see Integrating Linux validation. Positive controls remain blocked on that mount-warning host. |
+| G2 `g2-guard-gaps/` | fdinfo FD reuse, lock file system stalls, evidence aging, shared descriptions | Pure models with deterministic counterexamples. **G4 is no-go** (binding unproven). The 3 kernel checks skip on macOS and passed in the US Linux run. |
 
 ## Signals and bounds
 
