@@ -623,7 +623,7 @@ test('incomplete or contradictory runs fail collection', () => {
     'launch pid contradiction': mockRun({ edit: replace('launch:child', { pid: 8 }) }),
     'child binding contradiction': mockRun({ edit: replace('proc:child_after_exit', { recorded: { pid: 4242, createFiletime: '134050000000000009' } }) }),
     'start mismatch not one tick': mockRun({ edit: replace('proc:child_start_mismatch', { recorded: { pid: 4242, createFiletime: '134050000000000005' } }) }),
-    'invalid json line': mockRun().replace('\n', '\n{broken\n'),
+    'invalid json line': [full[0], '{broken', ...full.slice(1)].join('\n'),
   }
   for (const [label, text] of Object.entries(cases)) {
     const summary = evaluateJsonl(text)
