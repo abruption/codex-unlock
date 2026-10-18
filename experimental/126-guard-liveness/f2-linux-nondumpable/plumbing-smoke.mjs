@@ -19,7 +19,7 @@ import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { freshPrivateDir, startChild, stopAll, writeNew } from '../lib/common.mjs'
 import { lateExitStatus, runIsolated } from '../lib/isolated-observer.mjs'
-import { F2_STAGES, validateF2 } from './protocol.mjs'
+import { evaluateNominalPlumbing } from './plumbing-verdict.mjs'
 
 const DIR = path.dirname(fileURLToPath(import.meta.url))
 const THREAD_ID = '01a089e8-3731-7202-ba68-0f4b0a3b2711'
@@ -56,14 +56,11 @@ try {
   const args = [path.join(DIR, 'inspect-child.mjs'), BUILD, String(ready.pid), String(ready.fd), lockPath, home, THREAD_ID]
   const env = { PATH: '/usr/sbin:/usr/bin:/bin' }
   const nominal = await runIsolated(process.execPath, args, { startupBudgetMs: 10000, budgetMs: 15000, env })
-  const protocol = validateF2(nominal)
+  const verdict = evaluateNominalPlumbing(nominal)
+  const { protocol } = verdict
   report.cases.push({ case: 'nominal', faults: nominal.faults, protocolFaults: protocol.faults, begun: nominal.begun,
     outcomes: nominal.stages.map((s) => [s.stage, s.error ? `error:${s.error.code ?? s.error.name}:${s.error.message}` : 'result']) })
-  if (JSON.stringify(nominal.begun) !== JSON.stringify(F2_STAGES)) failures.push(`nominal stage order ${nominal.begun}`)
-  if (protocol.faults.some((f) => /^stage_(order|duplicate|unknown|result_malformed:(dist_identity|module_load))/.test(f) || f.startsWith('stages_missing'))) {
-    failures.push(`nominal protocol ${protocol.faults}`)
-  }
-  if (nominal.incomplete || nominal.faults.length) failures.push(`nominal observer ${nominal.faults}`)
+  failures.push(...verdict.failures)
   const stalled = await runIsolated(process.execPath, args, { startupBudgetMs: 10000, budgetMs: 2000, env: { ...env, F2_CHILD_FAULT: 'stall:prepare' } })
   const [late] = stalled.lateExit ? await lateExitStatus([{ label: { case: 'stall:prepare' }, instance: stalled.instance, lateExit: stalled.lateExit }], 20000) : [null]
   report.cases.push({ case: 'stall:prepare', incomplete: stalled.incomplete, phase: stalled.incompletePhase, openStage: stalled.openStage,

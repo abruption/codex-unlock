@@ -470,6 +470,16 @@ counterexamples. `npm ci`, type-check, lint, the existing repository suite
 passed. This revision was not run on the US host or with native Codex; all
 earlier measurements below retain their original source identities.
 
+The subsequent current-head review also tightened two runner verdicts. An M2
+part-2 scenario without usable owner/filter evidence now fails the run instead
+of merely recording an unavailable measurement. The nominal F2 plumbing smoke
+now rejects every protocol/stage fault, including later malformed payloads and
+stage errors outside the explicitly allowed `prepare` outcome. These changes
+passed 56 focused tests on macOS without skips and the same five repository
+checks (263 passing tests, three Linux-only skips). Only deterministic verdict
+tests were added; F1/M2 nominal measurements, Linux runs and native Codex were
+not rerun for these corrections.
+
 Original measurement files and validation files remain private because they
 contain local paths and process identifiers. Their SHA-256 values and sanitized
 outcome summaries are recorded in [evidence.md](evidence.md). The original

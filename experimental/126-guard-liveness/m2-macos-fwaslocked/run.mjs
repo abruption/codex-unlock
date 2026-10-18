@@ -30,6 +30,7 @@ import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { assertSocketPath, freshPrivateDir, startChild, stopAll, stopChild, writeNew } from '../lib/common.mjs'
 import { fgScan, filterDecision, withoutPid } from './fg-scan.mjs'
+import { evaluateFilterMeasurement } from './filter-measurement.mjs'
 import { options, wrapperText } from './options.mjs'
 
 const DIR = path.dirname(fileURLToPath(import.meta.url))
@@ -220,8 +221,10 @@ async function part2() {
           actualHolderUnfiltered: roleView(e.scan, { holder: holder.pid }).holder,
         }
       })
-      const ownerDecisions = scans.map((s) => s.owner?.decision ?? 'no_owner')
-      const filterMeasurementValid = scans.length > 0 && scans.every((s) => s.valid && s.owner && s.owner.decision !== 'unknown')
+      const { ownerDecisions, filterMeasurementValid, filterWouldRefuse, failure } = evaluateFilterMeasurement(scans)
+      // A completed scenario without a usable filter observation is still a
+      // failed measurement; it cannot leave the final run's failures empty.
+      if (failure) failures.push(`part2 ${rep} ${scenario}: ${failure}`)
       results.push({
         part: 2, rep, scenario,
         classification: inspection.classification, safeToUnlock: inspection.safeToUnlock,
@@ -231,7 +234,7 @@ async function part2() {
         // An unavailable owner or invalid evidence cannot establish a filter
         // measurement. A present flag still never establishes lock ownership.
         filterMeasurementValid,
-        filterWouldRefuse: filterMeasurementValid ? ownerDecisions.some((d) => d === 'reject') : null,
+        filterWouldRefuse,
         ownerDecisions, scans,
       })
       for (const handle of handles) await stop(handle)
