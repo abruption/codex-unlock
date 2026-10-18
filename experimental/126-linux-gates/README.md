@@ -143,7 +143,8 @@ integration revision. None of these changes closes G4 or #137's NO-GO gates.
 
 Root validation at runner source
 `25d1d8384ec65c54fdfaeee2702b49917e7dc4b6` passed all five repository checks
-(266 passing tests, three Linux-only skips) and the combined focused suite
+(265 passing tests, four skips: three Linux-only and one filesystem-dependent)
+and the combined focused suite
 (59 passed, three Linux-only skips). The post-rebase tree was byte-identical
 to the checked tree. The snapshot-based cross-platform argv check also exited
 0: all four fixture variants and the renamed-Node negative control matched
@@ -153,15 +154,25 @@ their predictions against unpatched source
 This pure-function check is not a new Linux G1 run or native Codex evidence.
 
 The subsequent unpatched-build gate correction passed the five repository
-checks again (266 passing tests, three Linux-only skips), 61 focused tests
+checks again (265 passing tests, four skips), 61 focused tests
 (three Linux-only skips), and all five pure argv cases against that same
 unpatched manifest. A valid patched manifest from the correct commit is now
 an explicit negative test; generic F2 patch support is unchanged.
 
 The versioned interpreter-inclusive digest and inspection self-consistency
-corrections passed all five repository checks again (266 passing tests,
-three Linux-only skips) and 68 focused tests (three Linux-only skips). These
+corrections passed all five repository checks again (265 passing tests,
+four skips) and 68 focused tests (three Linux-only skips). These
 checks do not add a Linux G1 or native Codex measurement for this revision.
+
+Validation-count correction: those integrating-root checks explicitly used a
+temporary root on case-sensitive APFS. The existing case-variant lease test
+therefore skips in addition to the three Linux-only tests: 269 total, 265
+passed, four skipped, zero failures. Earlier summaries incorrectly transcribed
+these root runs as 266/3; the old per-run TAP output was not retained. The
+correction follows the existing skip condition and preserved filesystem/path
+evidence, not a replay of historical commits. Earlier default-temp runs on a
+case-insensitive filesystem may legitimately report 266/3. Focused research
+and Ubuntu CI counts are unaffected; no assertion or skip condition changed.
 
 ### Stages and typed evidence
 
