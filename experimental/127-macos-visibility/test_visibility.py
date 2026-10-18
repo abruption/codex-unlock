@@ -763,57 +763,61 @@ class ActorTest(unittest.TestCase):
 
 # ------------------------------------------------------------ privacy
 
-SECRET_PATH = "/Users/secret-owner/.codex/sessions/x.lock"
-SECRET_PID = "9876543"
-SECRET_SERVICE = "dev.codex-unlock.research.127v.9876543.deadbeef"
-SECRETS = ("secret-owner", SECRET_PID, "deadbeef", "/Users", ".codex", "Traceback")
+# Fixed synthetic privacy markers, not credentials or observations from a real
+# account, process or bootstrap service. These values deliberately enter the
+# raw-file CLI fixture; the assertions below require their exclusion from the
+# public summary. No file at SYNTHETIC_PRIVATE_PATH is read or written.
+SYNTHETIC_PRIVATE_PATH = "/Users/fixture-owner/.codex/sessions/x.lock"
+FIXTURE_PID = "9876543"
+SYNTHETIC_SERVICE = "dev.codex-unlock.research.127v.9876543.deadbeef"
+PRIVATE_MARKERS = ("fixture-owner", FIXTURE_PID, "deadbeef", "/Users", ".codex", "Traceback")
 
 
 def poisoned_raw():
     scenarios = good_scenarios()
     stage = scenarios["fileport"]["stages"][0]
-    stage.update(stage=SECRET_PATH, probe="error:open:" + SECRET_PATH, raw={"pids": {SECRET_PID: SECRET_PATH}},
-                 scan_problems=[SECRET_PATH])
-    stage["roles"][SECRET_PATH] = SECRET_PID
-    stage["decisions"]["sender"] = "unknown:" + SECRET_PATH
-    stage["fileports"]["receiver"] = f"count={SECRET_PID},matching=0,was_locked=0"
-    stage["view_openers"] = int(SECRET_PID)
-    scenarios["fileport"]["ready"] = [{"pid": int(SECRET_PID), "service": SECRET_SERVICE}]
-    scenarios["hidden_sharer"]["fork_hide_child"]["outcome"] = SECRET_PATH
+    stage.update(stage=SYNTHETIC_PRIVATE_PATH, probe="error:open:" + SYNTHETIC_PRIVATE_PATH, raw={"pids": {FIXTURE_PID: SYNTHETIC_PRIVATE_PATH}},
+                 scan_problems=[SYNTHETIC_PRIVATE_PATH])
+    stage["roles"][SYNTHETIC_PRIVATE_PATH] = FIXTURE_PID
+    stage["decisions"]["sender"] = "unknown:" + SYNTHETIC_PRIVATE_PATH
+    stage["fileports"]["receiver"] = f"count={FIXTURE_PID},matching=0,was_locked=0"
+    stage["view_openers"] = int(FIXTURE_PID)
+    scenarios["fileport"]["ready"] = [{"pid": int(FIXTURE_PID), "service": SYNTHETIC_SERVICE}]
+    scenarios["hidden_sharer"]["fork_hide_child"]["outcome"] = SYNTHETIC_PRIVATE_PATH
     profiles = scenarios["sandbox_observer"]["profiles"]
-    profiles["deny_process_info"].update(lsof_stderr=SECRET_PATH, lsof_status=int(SECRET_PID),
-                                         classification=SECRET_PATH, probe=SECRET_PID)
-    profiles[SECRET_PATH] = {"decision": SECRET_SERVICE}
+    profiles["deny_process_info"].update(lsof_stderr=SYNTHETIC_PRIVATE_PATH, lsof_status=int(FIXTURE_PID),
+                                         classification=SYNTHETIC_PRIVATE_PATH, probe=FIXTURE_PID)
+    profiles[SYNTHETIC_PRIVATE_PATH] = {"decision": SYNTHETIC_SERVICE}
     return {
-        "ok": True, "run_ok": SECRET_PATH, "measurement_ok": True, "collected": False, "measured": False,
-        "failures": [f"fp_sender:exit:{SECRET_PID}", f"{SECRET_PATH}:eof", f"one_shot:{SECRET_PATH}:stderr",
-                     f"fp_receiver:unexpected_event:failed:{SECRET_SERVICE}"],
-        "incomplete": [f"diagnostic_timeout:lsof:{SECRET_PID}", f"fp_receiver:exit_wait:{SECRET_PID}",
-                       f"{SECRET_SERVICE}:no_event", f"diagnostic_timeout:{SECRET_PATH}:{SECRET_PID}"],
-        "errors": [{"where": SECRET_PATH, "kind": "OSError", "detail": SECRET_PATH},
-                   {"where": "cleanup", "kind": SECRET_PATH, "detail": SECRET_SERVICE}, SECRET_PATH],
-        "not_executed": {"fileport": {"kind": SECRET_PATH, "detail": SECRET_PATH},
-                         SECRET_PATH: {"kind": "clang_missing", "detail": SECRET_PID}},
-        "mismatches": [f"fileport:{SECRET_PATH}", f"fileport/sender_locked:unexpected_pids:{SECRET_PID}",
-                       "fileport:sent", SECRET_SERVICE],
-        "pending_diagnostics": [{"argv0": SECRET_PATH, "pid": int(SECRET_PID)}],
-        "bootstrap_names": [{"service": SECRET_SERVICE, "status": SECRET_PATH}, {"service": SECRET_SERVICE,
+        "ok": True, "run_ok": SYNTHETIC_PRIVATE_PATH, "measurement_ok": True, "collected": False, "measured": False,
+        "failures": [f"fp_sender:exit:{FIXTURE_PID}", f"{SYNTHETIC_PRIVATE_PATH}:eof", f"one_shot:{SYNTHETIC_PRIVATE_PATH}:stderr",
+                     f"fp_receiver:unexpected_event:failed:{SYNTHETIC_SERVICE}"],
+        "incomplete": [f"diagnostic_timeout:lsof:{FIXTURE_PID}", f"fp_receiver:exit_wait:{FIXTURE_PID}",
+                       f"{SYNTHETIC_SERVICE}:no_event", f"diagnostic_timeout:{SYNTHETIC_PRIVATE_PATH}:{FIXTURE_PID}"],
+        "errors": [{"where": SYNTHETIC_PRIVATE_PATH, "kind": "OSError", "detail": SYNTHETIC_PRIVATE_PATH},
+                   {"where": "cleanup", "kind": SYNTHETIC_PRIVATE_PATH, "detail": SYNTHETIC_SERVICE}, SYNTHETIC_PRIVATE_PATH],
+        "not_executed": {"fileport": {"kind": SYNTHETIC_PRIVATE_PATH, "detail": SYNTHETIC_PRIVATE_PATH},
+                         SYNTHETIC_PRIVATE_PATH: {"kind": "clang_missing", "detail": FIXTURE_PID}},
+        "mismatches": [f"fileport:{SYNTHETIC_PRIVATE_PATH}", f"fileport/sender_locked:unexpected_pids:{FIXTURE_PID}",
+                       "fileport:sent", SYNTHETIC_SERVICE],
+        "pending_diagnostics": [{"argv0": SYNTHETIC_PRIVATE_PATH, "pid": int(FIXTURE_PID)}],
+        "bootstrap_names": [{"service": SYNTHETIC_SERVICE, "status": SYNTHETIC_PRIVATE_PATH}, {"service": SYNTHETIC_SERVICE,
                                                                                  "status": "removed"}],
-        "cleanup": {"status": "failed", "reason": SECRET_PATH, "detail": SECRET_PATH},
-        "source_identity": {"unchanged": True, "start": {"visibility.py": SECRET_PATH},
-                            "end": {"visibility.py": "a" * 64, "inherit.py": SECRET_PID}},
-        "build": {"clang": [SECRET_PATH], "stderr": SECRET_PATH, "binary_sha256": SECRET_PATH},
-        "environment": {"release": SECRET_PATH, "machine": SECRET_PATH, "lsof": f"revision: {SECRET_PATH}",
-                        "filesystem": SECRET_PATH, "python": SECRET_PID, "mac_ver": SECRET_PATH},
-        "scratch_identity": [int(SECRET_PID), int(SECRET_PID)],
+        "cleanup": {"status": "failed", "reason": SYNTHETIC_PRIVATE_PATH, "detail": SYNTHETIC_PRIVATE_PATH},
+        "source_identity": {"unchanged": True, "start": {"visibility.py": SYNTHETIC_PRIVATE_PATH},
+                            "end": {"visibility.py": "a" * 64, "inherit.py": FIXTURE_PID}},
+        "build": {"clang": [SYNTHETIC_PRIVATE_PATH], "stderr": SYNTHETIC_PRIVATE_PATH, "binary_sha256": SYNTHETIC_PRIVATE_PATH},
+        "environment": {"release": SYNTHETIC_PRIVATE_PATH, "machine": SYNTHETIC_PRIVATE_PATH, "lsof": f"revision: {SYNTHETIC_PRIVATE_PATH}",
+                        "filesystem": SYNTHETIC_PRIVATE_PATH, "python": FIXTURE_PID, "mac_ver": SYNTHETIC_PRIVATE_PATH},
+        "scratch_identity": [int(FIXTURE_PID), int(FIXTURE_PID)],
         "scenarios": scenarios,
     }
 
 
 class PrivacyTest(unittest.TestCase):
     def assert_clean(self, text):
-        for secret in SECRETS:
-            self.assertNotIn(secret, text)
+        for marker in PRIVATE_MARKERS:
+            self.assertNotIn(marker, text)
 
     def test_poisoned_raw_result_gives_a_clean_public_summary(self):
         public = v.public_summary(poisoned_raw())
@@ -834,12 +838,12 @@ class PrivacyTest(unittest.TestCase):
         profile = public["sandbox_observer_profiles"]["deny_process_info"]
         self.assertEqual((profile["lsof_status"], profile["lsof_stderr_present"], profile["probe"]),
                          ("other", True, "other"))
-        self.assertNotIn(SECRET_PATH, public["sandbox_observer_profiles"])
+        self.assertNotIn(SYNTHETIC_PRIVATE_PATH, public["sandbox_observer_profiles"])
 
     def test_good_raw_result_keeps_the_needed_fields(self):
         raw = {"ok": True, "run_ok": True, "measurement_ok": True, "collected": True, "measured": True,
                "scenarios": good_scenarios(), "cleanup": {"status": "removed", "reason": None},
-               "bootstrap_names": [{"service": SECRET_SERVICE, "status": "removed"}]}
+               "bootstrap_names": [{"service": SYNTHETIC_SERVICE, "status": "removed"}]}
         public = v.public_summary(raw)
         self.assert_clean(json.dumps(public))
         self.assertEqual(public["stages"]["fileport/fileport"][3]["fileports"], {"sender": v.FP0, "receiver": v.FP1})
@@ -848,8 +852,8 @@ class PrivacyTest(unittest.TestCase):
         self.assertEqual(public["bootstrap_names"], {"removed": 1})
 
     def test_summary_never_raises_or_echoes(self):
-        for raw in ([], None, SECRET_PATH, {"scenarios": SECRET_PATH}, {"failures": SECRET_PATH},
-                    {"errors": [None, 3]}, {"scenarios": {"fileport": {"stages": [SECRET_PATH, None]}}}):
+        for raw in ([], None, SYNTHETIC_PRIVATE_PATH, {"scenarios": SYNTHETIC_PRIVATE_PATH}, {"failures": SYNTHETIC_PRIVATE_PATH},
+                    {"errors": [None, 3]}, {"scenarios": {"fileport": {"stages": [SYNTHETIC_PRIVATE_PATH, None]}}}):
             with self.subTest(raw=type(raw).__name__):
                 self.assert_clean(json.dumps(v.public_summary(raw)))
 
@@ -903,14 +907,14 @@ class CleanupTest(unittest.TestCase):
 
     def test_unlink_failure_is_failed_and_preserves(self):
         def unlink(name, dir_fd):
-            raise PermissionError(1, "Operation not permitted", SECRET_PATH)
+            raise PermissionError(1, "Operation not permitted", SYNTHETIC_PRIVATE_PATH)
         record = v.cleanup_scratch(self.dir, self.identity, self.created, unlink=unlink)
         self.assertEqual((record["status"], record["reason"]), ("failed", "unlink_failed"))
         self.assertEqual(self.remaining(), self.created)
 
     def test_rmdir_failure_is_failed_and_keeps_the_directory(self):
         def rmdir(name, dir_fd):
-            raise OSError(66, "Directory not empty", SECRET_PATH)
+            raise OSError(66, "Directory not empty", SYNTHETIC_PRIVATE_PATH)
         record = v.cleanup_scratch(self.dir, self.identity, self.created, rmdir=rmdir)
         self.assertEqual((record["status"], record["reason"]), ("failed", "rmdir_failed"))
         self.assertEqual(self.remaining(), set())
@@ -934,14 +938,14 @@ class CleanupTest(unittest.TestCase):
 
     def test_finalize_unlink_failure_is_not_ok_and_preserves_evidence(self):
         def unlink(name, dir_fd):
-            raise PermissionError(1, "Operation not permitted", SECRET_PATH)
+            raise PermissionError(1, "Operation not permitted", SYNTHETIC_PRIVATE_PATH)
         code, written = self.finalize(self.good_result(), unlink=unlink)
         self.assertEqual(code, 1)
         self.assertEqual((written["ok"], written["run_ok"], written["measurement_ok"]), (False, False, True))
         self.assertEqual(written["cleanup"]["reason"], "unlink_failed")
         self.assertEqual(self.remaining(), self.created)
         public = json.dumps(v.public_summary(written))
-        self.assertNotIn("secret-owner", public)
+        self.assertNotIn("fixture-owner", public)
         self.assertIn('"unlink_failed"', public)
 
     def test_finalize_rmdir_failure_is_not_ok(self):
@@ -953,11 +957,11 @@ class CleanupTest(unittest.TestCase):
 
     def test_finalize_unexpected_exception_still_writes_the_record(self):
         def unlink(name, dir_fd):
-            raise RuntimeError(SECRET_PATH)
+            raise RuntimeError(SYNTHETIC_PRIVATE_PATH)
         code, written = self.finalize(self.good_result(), unlink=unlink)
         self.assertEqual((code, written["run_ok"], written["cleanup"]["status"]), (1, False, "failed"))
         self.assertEqual(written["errors"][-1]["where"], "cleanup")
-        self.assertNotIn("secret-owner", json.dumps(v.public_summary(written)))
+        self.assertNotIn("fixture-owner", json.dumps(v.public_summary(written)))
 
     def test_finalize_preserves_when_measurement_failed_or_pending(self):
         result = self.good_result()
@@ -985,7 +989,7 @@ class MainTest(unittest.TestCase):
         return proc.returncode, proc.stdout.decode(), proc.stderr.decode()
 
     def test_existing_result_is_a_fatal_record_without_paths(self):
-        existing = self.root / "secret-owner-result.json"
+        existing = self.root / "fixture-owner-result.json"
         existing.write_text("{}")
         code, out, err = self.run_main("--scratch-root", str(self.root), "--result", str(existing))
         if platform.system() != "Darwin":
@@ -1000,13 +1004,13 @@ class MainTest(unittest.TestCase):
         raw.write_text(json.dumps(poisoned_raw()))
         code, out, err = self.run_main("--summarize", str(raw))
         self.assertEqual((code, err), (0, ""))
-        for secret in SECRETS:
-            self.assertNotIn(secret, out)
+        for marker in PRIVATE_MARKERS:
+            self.assertNotIn(marker, out)
         self.assertEqual(json.loads(out)["mismatches"], ["fileport:sent"])
 
     def test_summarize_of_a_broken_file_has_no_traceback(self):
         raw = self.root / "raw.json"
-        raw.write_text("{" + SECRET_PATH)
+        raw.write_text("{" + SYNTHETIC_PRIVATE_PATH)
         code, out, err = self.run_main("--summarize", str(raw))
         self.assertEqual((code, err), (2, ""))
         self.assertEqual(json.loads(out), {"ok": False, "fatal": "JSONDecodeError"})
