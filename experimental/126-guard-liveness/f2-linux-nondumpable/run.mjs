@@ -39,6 +39,7 @@ import { LineCollector, lateExitStatus, processInstance, runIsolated } from '../
 import { verifyBuild } from './build.mjs'
 import { evaluateReport, evaluateRun, sameTicks } from './expectations.mjs'
 import { parseChildFault, validateF2 } from './protocol.mjs'
+import { validateAccessObservation } from './access-observation.mjs'
 
 if (process.platform !== 'linux') throw new Error('F2 runs on Linux only')
 if (process.getuid() === 0 || process.getuid() !== process.geteuid()) throw new Error('F2 requires an unprivileged same-UID runner')
@@ -137,7 +138,14 @@ for (const dumpable of [1, 0]) {
     run.observe = observed
     run.holderInstanceAfterObserve = processInstance(ready.pid)
     if (observed.incomplete) incomplete.push({ role: 'observer', dumpable, instance: observed.instance })
-    else if (!observed.result) failures.push(`observer dumpable=${dumpable}: ${JSON.stringify(observed)}`)
+    else if (!Object.hasOwn(observed, 'result')) failures.push(`observer dumpable=${dumpable}: ${JSON.stringify(observed)}`)
+    else {
+      run.accessCollection = validateAccessObservation(observed.result, {
+        pid: ready.pid, fd: ready.fd, uid: process.getuid(), kernel: report.environment.kernel,
+        startTicks: run.holderInstanceAtReady.startTicks,
+      })
+      if (!run.accessCollection.collected) failures.push(`observer dumpable=${dumpable}: ${run.accessCollection.faults.join(',')}`)
+    }
     if (!sameTicks(run.holderInstanceAtReady.startTicks, run.holderInstanceAfterObserve.startTicks) || holderExited) {
       failures.push(`dumpable=${dumpable}: holder instance changed or ended during observation`)
     }

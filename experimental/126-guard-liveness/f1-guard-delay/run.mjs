@@ -23,6 +23,7 @@ import process from 'node:process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { freshPrivateDir, startChild, stopAll, writeNew } from '../lib/common.mjs'
+import { parseF1Fault } from '../lib/f1-options.mjs'
 
 const DIR = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(DIR, '../../..')
@@ -32,7 +33,8 @@ const REPEATS = Number(process.env.F1_REPEATS ?? 5)
 if (!Number.isInteger(REPEATS) || REPEATS < 1 || REPEATS > 10) throw new Error('F1_REPEATS must be an integer from 1 to 10')
 const WAITER_DEADLINE_MS = 5000
 const REPLY_BUDGET_MS = WAITER_DEADLINE_MS + 2000
-const FAULT = process.env.F1_FAULT ?? null
+// Validate before importing the product, creating scratch or starting a waiter.
+const FAULT = parseF1Fault(process.env.F1_FAULT)
 
 const { guardedProbeOnce } = await import(path.join(ROOT, 'dist', 'native-coordination.js'))
 const sleeper = new Int32Array(new SharedArrayBuffer(4))

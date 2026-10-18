@@ -21,8 +21,33 @@ import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
+import { parseArgs } from 'node:util'
 
 export const MANIFEST_SCHEMA = 'codex-unlock-research-build/1'
+
+// Validate the entire CLI before prepareBuild can inspect source paths, create
+// output, run git/npm, or hash any bytes. A missing patch value must never
+// silently select the unpatched build path.
+export function parseBuildArgs(args = process.argv.slice(2)) {
+  const { values, tokens } = parseArgs({
+    args, strict: true, allowPositionals: false, tokens: true,
+    options: {
+      repo: { type: 'string' }, commit: { type: 'string' },
+      patch: { type: 'string' }, out: { type: 'string' },
+    },
+  })
+  const seen = new Set()
+  for (const token of tokens) {
+    if (token.kind !== 'option') continue
+    if (seen.has(token.name)) throw new Error(`duplicate option: --${token.name}`)
+    seen.add(token.name)
+    if (!values[token.name].trim()) throw new Error(`--${token.name} requires a nonempty value`)
+  }
+  for (const name of ['repo', 'commit', 'out']) {
+    if (!seen.has(name)) throw new Error(`missing required option: --${name}`)
+  }
+  return { repo: values.repo, commit: values.commit, patch: values.patch, out: path.resolve(values.out) }
+}
 
 const sha256 = (data) => createHash('sha256').update(data).digest('hex')
 const fileSha256 = (file) => sha256(fs.readFileSync(file))
@@ -149,11 +174,8 @@ export function prepareBuild({ repo, commit, patch, out }) {
 }
 
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const args = process.argv.slice(2)
-  const value = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined }
-  const repo = value('--repo'); const commit = value('--commit'); const out = value('--out')
-  if (!repo || !commit || !out) throw new Error('usage: build.mjs --repo <repo> --commit <rev> [--patch <file>] --out <new dir>')
-  const result = prepareBuild({ repo, commit, patch: value('--patch'), out: path.resolve(out) })
+  const options = parseBuildArgs()
+  const result = prepareBuild(options)
   process.stdout.write(JSON.stringify(result, null, 2) + '\n')
   process.exitCode = result.ok ? 0 : 1
 }

@@ -1,12 +1,66 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import process from 'node:process'
 import { test } from 'node:test'
+import { fileURLToPath, URL } from 'node:url'
 import { freshPrivateDir } from '../lib/common.mjs'
-import { MANIFEST_SCHEMA, contentOf, reachableModules, verifyBuild } from './build.mjs'
+import { MANIFEST_SCHEMA, contentOf, parseBuildArgs, reachableModules, verifyBuild } from './build.mjs'
 
 const sha = (data) => createHash('sha256').update(data).digest('hex')
+
+const requiredArgs = ['--repo', 'local repo', '--commit', 'HEAD', '--out', 'new build']
+
+test('build arguments preserve patched and unpatched invocations and accept explicit equals values', () => {
+  const want = { repo: 'local repo', commit: 'HEAD', out: path.resolve('new build'), patch: undefined }
+  assert.deepEqual(parseBuildArgs(requiredArgs), want)
+  assert.deepEqual(parseBuildArgs([...requiredArgs, '--patch', 'source patch.diff']), { ...want, patch: 'source patch.diff' })
+  assert.deepEqual(parseBuildArgs(['--out=new build', '--patch=source patch.diff', '--commit=HEAD', '--repo=local repo']),
+    { ...want, patch: 'source patch.diff' })
+})
+
+test('build arguments refuse unknown options, duplicates and positional arguments', () => {
+  for (const extra of [['--pach', 'file.diff'], ['--unknown'], ['--patch', 'a', '--patch', 'b'],
+    ['--repo', 'another'], ['--commit=another'], ['--out=another'], ['extra'], ['--', 'extra'], ['-p', 'patch']]) {
+    assert.throws(() => parseBuildArgs([...requiredArgs, ...extra]), undefined, JSON.stringify(extra))
+  }
+})
+
+test('every build option requires a nonempty value and the three source/output options are mandatory', () => {
+  for (const name of ['repo', 'commit', 'out', 'patch']) {
+    const at = requiredArgs.indexOf(`--${name}`)
+    const without = at < 0 ? [...requiredArgs] : requiredArgs.filter((_arg, index) => index !== at && index !== at + 1)
+    // Patch is optional; the other options are required even if all remaining
+    // values are present and the source/output paths happen to be usable.
+    if (name !== 'patch') assert.throws(() => parseBuildArgs(without), /missing required option/)
+    for (const value of ['', '   ']) {
+      assert.throws(() => parseBuildArgs([...without, `--${name}`, value]), /requires a nonempty value/)
+    }
+    assert.throws(() => parseBuildArgs([...without, `--${name}`]))
+    assert.throws(() => parseBuildArgs([...without, `--${name}`, '--repo=other']))
+  }
+})
+
+test('invalid build CLI arguments fail before creating output or accessing the repository', () => {
+  const dir = freshPrivateDir('126-build-cli-test')
+  try {
+    const out = path.join(dir, 'must-not-exist')
+    const repo = path.join(dir, 'missing-repository')
+    const script = fileURLToPath(new URL('./build.mjs', import.meta.url))
+    for (const extra of [['--patch'], ['--pach', 'source.patch'], ['--patch', '--out=other'], ['--out', out]]) {
+      const result = spawnSync(process.execPath, [script, '--repo', repo, '--commit', 'HEAD', '--out', out, ...extra],
+        { encoding: 'utf8', timeout: 10000 })
+      assert.ifError(result.error)
+      assert.notEqual(result.status, 0)
+      assert.equal(result.stdout, '')
+      assert.match(result.stderr, /(?:--patch|--pach|duplicate option: --out)/)
+      assert.doesNotMatch(result.stderr, /ENOENT|output exists|npm ci/)
+      assert.equal(fs.existsSync(out), false)
+    }
+  } finally { fs.rmSync(dir, { recursive: true }) }
+})
 
 // A synthetic build tree with a manifest written the way build.mjs writes it.
 function fakeBuild({ patch = false } = {}) {

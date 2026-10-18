@@ -446,6 +446,30 @@ node experimental/126-guard-liveness/m2-macos-fwaslocked/run.mjs
 
 ## Evidence and review revisions
 
+### Research-only pre-merge review hardening
+
+The post-`e700770` revision closes three validation gaps without changing
+production code or claiming a new measurement:
+
+- F1 accepts only an absent/empty `F1_FAULT`, `skip_round` or
+  `waiter_lifetime`. A typo, padded name or other value is rejected before
+  importing product code, creating scratch or starting a waiter.
+- Access-matrix collection now checks the observer's PID, FD, UID, kernel and
+  all thirteen typed access outcomes, plus successful start ticks against the
+  runner's instance sample. Empty/partial/malformed JSON cannot count as
+  collection. Explicit errno outcomes, empty observed lists or false file
+  comparisons are collected observations, not successful permission/owner
+  hypotheses. Collection and expectation satisfaction remain separate.
+- The research builder rejects unknown, duplicate, positional, valueless and
+  blank CLI arguments before inspecting a repository or creating output.
+  `--patch` stays optional, but once present must have a nonempty value.
+
+The 49 focused tests passed on macOS (no skips), including parser/collection
+counterexamples. `npm ci`, type-check, lint, the existing repository suite
+(263 pass, three Linux-only skips), package smoke and whitespace checks also
+passed. This revision was not run on the US host or with native Codex; all
+earlier measurements below retain their original source identities.
+
 Original measurement files and validation files remain private because they
 contain local paths and process identifiers. Their SHA-256 values and sanitized
 outcome summaries are recorded in [evidence.md](evidence.md). The original
