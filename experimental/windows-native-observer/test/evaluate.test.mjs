@@ -8,7 +8,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { EXPECTATIONS, HARNESS_FILES, INTEGRITY, SCHEMA, STEP_SCHEMAS, normalizeLocalPath } from '../expectations.mjs'
 import {
-  deepEqualMap, evaluateRun, fixtureSummary, guardedCreate, guardedSample, hasAccessDenied, insideDisposableDir,
+  canonicalExpectation, deepEqualMap, evaluateRun, fixtureSummary, guardedCreate, guardedSample, hasAccessDenied, insideDisposableDir,
   integrityFromSid, pairSummaries, parseJsonl, pathGateSafe, recomputeIsolation, reconstructManifest,
   renderExpectationTable, sidFromWhoamiLine, tempRootSafeForCreation, validateBaseline, windowsPathRelation,
 } from '../lib.mjs'
@@ -84,15 +84,18 @@ function ranges(overrides = {}) {
 // The union of the raw table hypotheses for a mode+step, mirroring what
 // observer.ps1 records as its own advisory expectation (dotted keys literal).
 function expectFor(mode, step) {
-  const e = {}
-  for (const x of EXPECTATIONS) if (x.mode === mode && x.step === step && x.hypothesis) Object.assign(e, x.hypothesis)
-  return Object.keys(e).length > 0 ? e : null
+  return canonicalExpectation(mode, step)
 }
 
 function rec(mode, step, label, observed, sample = null) {
+  // Default synthetic type 1 at either integrity level. A label must never
+  // imply Full/Limited elevation: dedicated tests vary measured enum values.
+  if (observed && ['token.self', 'process.identity', 'process.sample', 'process.identity_after'].includes(step)) {
+    observed = { elevationType: 1, ...observed }
+  }
   return {
     schema: SCHEMA, mode, step, sample,
-    integrity: { label, sid: INTEGRITY[label], elevationType: label === 'high' ? 2 : 3, sessionId: 1 },
+    integrity: { label, sid: INTEGRITY[label], elevationType: 1, sessionId: 1 },
     expect: expectFor(mode, step), observed, verdict: 'match', safeToUnlock: false,
   }
 }
@@ -967,12 +970,21 @@ test('Add-Type runs only after the path and TEMP gate in both scripts', () => {
   }
 })
 
-test('native preflight and observe stay hard-refused while the ancestry boundary is open', () => {
+test('all observer modes stay hard-refused before path lookups while the boundary is open', () => {
   assert.ok(/NATIVE_MODES_REFUSED\s*=\s*\$true/.test(PS), 'observer.ps1 lost its hard refusal switch')
   assert.ok(PS.includes('Refuse $NativeRefusalReason'), 'observer.ps1 does not refuse the native modes')
+  assert.ok(PS_CODE.includes('if ($NATIVE_MODES_REFUSED) { Refuse $NativeRefusalReason }'), 'mode-dependent refusal could omit fixture-meta')
+  assert.ok(PS_CODE.indexOf('if ($NATIVE_MODES_REFUSED) { Refuse $NativeRefusalReason }') < PS_CODE.indexOf('$PathGate = Assert-PathGate'))
   // No bypass: nothing may turn the refusal off from the command line.
   assert.ok(!/param\([^)]*Force/is.test(PS), 'observer.ps1 gained a force-style parameter')
   assert.ok(!/\$env:[A-Z_]*(FORCE|BYPASS|ALLOW)/i.test(PS), 'observer.ps1 reads a bypass environment variable')
+})
+
+test('dormant RM/share observations are deferred rather than run outside a common guard', () => {
+  assert.ok(!/\[WinObserver\]::(?:RmList|ShareProbe)\s*\(/i.test(PS_CODE))
+  assert.ok(PS_CODE.includes('guarded_handle_binding_not_implemented'))
+  assert.ok(CHECK_CODE.includes('Get-DeferredObservationCalls'))
+  assert.ok(CHECK_CODE.includes('Get-ExecutionPolicyFailure'))
 })
 
 test('the creation gate refuses a TEMP inside a real home and skips creation', () => {
@@ -1150,6 +1162,124 @@ test('W6 comparison completion does not turn W7-only failures into success', () 
   assert.equal(paired.status, 'compared')
   assert.equal(paired.safeToUnlock, false)
   assert.ok(!paired.rows.some((r) => r.id === 'OB-range-beyond-fsext'))
+})
+
+test('missing or unusable measured elevation can never complete W6 comparison', () => {
+  for (const [mode, step, id2] of [
+    ['preflight', 'token.self', 'PF-token'], ['observe', 'token.self', 'OB-token'],
+    ['observe', 'process.identity', 'OB-process-token'],
+  ]) {
+    for (const value of [undefined, null, 0, 4, '2']) {
+      const run = idealRun('medium')
+      const o = find(run[mode].records, step).observed
+      if (value === undefined) delete o.elevationType
+      else o.elevationType = value
+      const summary = evaluate(run)
+      assert.equal(row(summary, id2).verdict, 'unknown', `${mode}:${step}:${value}`)
+      assert.notEqual(pairSummaries(summary, evaluate(idealRun('high'))).status, 'compared')
+    }
+  }
+})
+
+test('W6 compares measured elevation differences without inferring them from integrity labels', () => {
+  const summaries = [['medium', 3], ['high', 2]].map(([label, value]) => {
+    const run = idealRun(label)
+    for (const file of [run.preflight, run.observe]) {
+      for (const r of file.records) {
+        r.integrity.elevationType = value
+        if (Object.hasOwn(r.observed, 'elevationType')) r.observed.elevationType = value
+      }
+    }
+    return evaluate(run, { expectedLabel: label })
+  })
+  for (const [s, value] of [[summaries[0], 3], [summaries[1], 2]]) {
+    for (const id2 of ['PF-token', 'OB-token', 'OB-process-token']) {
+      assert.equal(row(s, id2).verdict, 'match')
+      assert.deepEqual(row(s, id2).values, [{ elevationType: value }])
+    }
+  }
+  const paired = pairSummaries(...summaries)
+  assert.equal(paired.status, 'unknown')
+  assert.deepEqual(paired.unexplained.sort(), ['OB-process-token', 'OB-token', 'PF-token'])
+  const explanations = Object.fromEntries(paired.unexplained.map((id2) => [id2, 'Synthetic measured elevation differs; no value inferred from a label.']))
+  assert.equal(pairSummaries(...summaries, explanations).status, 'compared')
+})
+
+test('elevation metadata binds to the file, preflight token and target instance', () => {
+  const mixed = idealRun('medium')
+  mixed.observe.records[0].integrity.elevationType = 2
+  assert.ok(evaluate(mixed).problems.includes('observe:mixed_elevation_type'))
+  const self = idealRun('medium')
+  find(self.preflight.records, 'token.self').observed.elevationType = 2
+  assert.equal(row(evaluate(self), 'PF-token').verdict, 'mismatch')
+  const changed = idealRun('medium')
+  for (const r of changed.observe.records) {
+    r.integrity.elevationType = 2
+    if (r.step === 'token.self') r.observed.elevationType = 2
+  }
+  assert.ok(row(evaluate(changed), 'OB-token').reasons.includes('elevation_type_differs_from_preflight'))
+  for (const [step, id2] of [['process.sample', 'OB-process-sample'], ['process.identity_after', 'OB-process-after']]) {
+    const run = idealRun('medium')
+    find(run.observe.records, step, step === 'process.sample' ? 1 : null).observed.elevationType = 2
+    assert.equal(row(evaluate(run), id2).verdict, 'mismatch')
+  }
+})
+
+test('unexplained range/share errors are unknown while valid contrary measurements remain mismatches', () => {
+  for (const code of [2, 5, 6, 32, 50, 87]) {
+    const run = idealRun('medium')
+    find(run.observe.records, 'range.probe', 1).observed.ranges.rust = { win32: code, acquired: false, released: null }
+    assert.equal(row(evaluate(run), 'OB-range-rust').verdict, 'unknown', `range ${code}`)
+  }
+  const free = idealRun('medium')
+  find(free.observe.records, 'range.probe', 1).observed.ranges.rust = { win32: 0, acquired: true, released: true }
+  assert.equal(row(evaluate(free), 'OB-range-rust').verdict, 'mismatch')
+  for (const [step, id2] of [['share.read_rwd', 'OB-share-read-rwd'], ['share.delete_rwd', 'OB-share-delete-rwd']]) {
+    for (const code of [2, 5, 6, 33, 50, 87]) {
+      const run = idealRun('medium')
+      Object.assign(find(run.observe.records, step, 1).observed, { opened: false, win32: code })
+      assert.equal(row(evaluate(run), id2).verdict, 'unknown', `share ${code}`)
+    }
+    const denied = idealRun('medium')
+    Object.assign(find(denied.observe.records, step, 1).observed, { opened: false, win32: 32 })
+    assert.equal(row(evaluate(denied), id2).verdict, 'mismatch')
+  }
+})
+
+test('non-NTFS filesystem evidence cannot satisfy the W7 environment precondition', () => {
+  for (const fileSystem of ['ReFS', 'FAT32', 'unknown', null]) {
+    const run = idealRun('medium')
+    find(run.preflight.records, 'host.volume').observed.fileSystem = fileSystem
+    assert.equal(row(evaluate(run), 'PF-volume').verdict, 'unknown')
+    assert.ok(evaluate(run).blockers.includes('PF-volume'))
+  }
+})
+
+test('producer expectations require the exact canonical union on raw, derived and recorded steps', () => {
+  assert.deepEqual(canonicalExpectation('observe', 'range.probe'), {
+    state: 'probed', 'ranges.rust.win32': 33, 'ranges.fsext.win32': 33, 'ranges.beyond_fsext.win32': 33,
+  })
+  assert.deepEqual(canonicalExpectation('preflight', 'binary.version'), { matches: true, exitCode: 0 })
+  assert.equal(canonicalExpectation('preflight', 'host.os'), null)
+  for (const [mode, step, id2, sample] of [
+    ['observe', 'share.read_rwd', 'OB-share-read-rwd', 1],
+    ['observe', 'range.probe', 'OB-range-rust', 1],
+    ['preflight', 'binary.version', 'PF-binary-version', null],
+    ['preflight', 'host.os', 'PF-os', null],
+  ]) {
+    const run = idealRun('medium')
+    const r = find(run[mode].records, step, sample)
+    r.expect = { ...r.expect, unexplainedAdditionalHypothesis: false }
+    r.verdict = 'mismatch'
+    const result = row(evaluate(run), id2)
+    assert.equal(result.verdict, 'unknown')
+    assert.ok(result.reasons.some((r) => r.startsWith('expectation_drift')))
+  }
+  for (const bad of [null, [], {}, { state: 'probed' }]) {
+    const run = idealRun('medium')
+    find(run.observe.records, 'range.probe', 1).expect = bad
+    assert.equal(row(evaluate(run), 'OB-range-rust').verdict, 'unknown')
+  }
 })
 
 test('missing whole steps, late process re-query and interleaved samples are unknown', () => {

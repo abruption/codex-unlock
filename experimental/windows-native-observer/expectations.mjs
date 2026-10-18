@@ -99,6 +99,9 @@ export const FORMATS = Object.freeze({
   int: (v) => Number.isInteger(v),
   nonNegInt: (v) => Number.isInteger(v) && v >= 0,
   posInt: (v) => Number.isSafeInteger(v) && v > 0,
+  // TOKEN_ELEVATION_TYPE: Default, Full or Limited. Missing/failed queries
+  // are unusable evidence; integrity level cannot substitute for this value.
+  elevationType: (v) => v === 1 || v === 2 || v === 3,
   // FILETIME (100ns since 1601) exceeds 2^53, so it is carried as an exact
   // decimal string and compared as a string; a JSON number would lose precision.
   filetime: (v) => typeof v === 'string' && /^[1-9]\d*$/.test(v),
@@ -166,7 +169,8 @@ const RANGE_NAMES = Object.freeze(['rust', 'fsext', 'beyond_fsext', 'tail'])
 
 // Each probed range must be internally consistent: a Win32 code of 0 is exactly
 // an acquired lock, an acquired lock must report its release, and a failed lock
-// must not claim a release.
+// must not claim a release. Only success and ERROR_LOCK_VIOLATION establish
+// range state; operational/unsupported errors remain unmeasured.
 function rangesConsistent(ranges) {
   if (ranges === null || typeof ranges !== 'object' || Array.isArray(ranges)) return false
   if (!sameKeySet(ranges, RANGE_NAMES)) return false
@@ -174,6 +178,7 @@ function rangesConsistent(ranges) {
     const r = ranges[name]
     if (r === null || typeof r !== 'object') return false
     if (!FORMATS.nonNegInt(r.win32) || !FORMATS.bool(r.acquired)) return false
+    if (r.win32 !== 0 && r.win32 !== 33) return false
     if ((r.win32 === 0) !== (r.acquired === true)) return false
     if (r.acquired === true) return r.released === true
     return r.released === null
@@ -207,7 +212,7 @@ export const STEP_SCHEMAS = Object.freeze({
     required: { complete: f('bool'), files: f('hashMap'), sourceCommit: f('commit') },
     invariants: { harness_name_set: (o) => sameKeySet(o.files, HARNESS_FILES) },
   },
-  'preflight:token.self': { required: { integritySid: f('sid'), userSid: f('anySid'), tokenOpened: f('bool'), pid: f('posInt') } },
+  'preflight:token.self': { required: { integritySid: f('sid'), userSid: f('anySid'), tokenOpened: f('bool'), pid: f('posInt'), elevationType: f('elevationType') } },
   'preflight:binary.sha256': {
     required: { path: f('localPath'), size: f('posInt'), sha256: f('sha256'), expected: f('sha256') },
   },
@@ -239,7 +244,12 @@ export const STEP_SCHEMAS = Object.freeze({
   'preflight:home.after_version': { required: { count: f('nonNegInt'), entries: f('array') }, invariants: { count_matches_entries: (o) => o.count === o.entries.length } },
   'preflight:host.execution_policy': { required: { effective: f('string'), scopes: f('array') } },
   'preflight:host.defender': { required: { amServiceEnabled: f('bool'), realTimeProtectionEnabled: f('bool'), antivirusEnabled: f('bool') } },
-  'preflight:host.volume': { required: { fileSystem: f('string'), probePath: f('localPath') } },
+  'preflight:host.volume': {
+    required: { fileSystem: f('string'), probePath: f('localPath') },
+    // Other filesystems require separate evidence; they are outside this run
+    // contract rather than measured failures of the NTFS hypothesis.
+    invariants: { supported_filesystem: (o) => o.fileSystem === 'NTFS' },
+  },
   'preflight:host.os': { required: { os: f('string'), ps: f('string'), elevated: f('bool'), sshSession: f('bool') } },
   'preflight:manifest': {
     required: {
@@ -255,7 +265,7 @@ export const STEP_SCHEMAS = Object.freeze({
     required: { complete: f('bool'), files: f('hashMap'), manifestSha256: f('sha256') },
     invariants: { harness_name_set: (o) => sameKeySet(o.files, HARNESS_FILES) },
   },
-  'observe:token.self': { required: { integritySid: f('sid'), userSid: f('anySid'), tokenOpened: f('bool'), pid: f('posInt') } },
+  'observe:token.self': { required: { integritySid: f('sid'), userSid: f('anySid'), tokenOpened: f('bool'), pid: f('posInt'), elevationType: f('elevationType') } },
   'observe:home.identity': { required: { ...PATH_FIELDS, ...ACL_FIELDS } },
   'observe:run': {
     required: {
@@ -271,6 +281,7 @@ export const STEP_SCHEMAS = Object.freeze({
     required: {
       pid: f('posInt'), opened: f('bool'), state: f('string'), createFiletime: f('filetime'),
       image: f('localPath'), tokenOpened: f('bool'), integritySid: f('sid'), userSid: f('anySid'),
+      elevationType: f('elevationType'),
     },
     invariants: { live_requires_handles: (o) => o.state !== 'live' || (o.opened === true && o.tokenOpened === true) },
   },
@@ -280,6 +291,7 @@ export const STEP_SCHEMAS = Object.freeze({
     required: {
       pid: f('posInt'), opened: f('bool'), state: f('string'), createFiletime: f('filetime'),
       image: f('localPath'), tokenOpened: f('bool'), integritySid: f('sid'), userSid: f('anySid'),
+      elevationType: f('elevationType'),
     },
     invariants: { live_requires_handles: (o) => o.state !== 'live' || (o.opened === true && o.tokenOpened === true) },
   },
@@ -299,6 +311,7 @@ export const STEP_SCHEMAS = Object.freeze({
     invariants: {
       opened_matches_win32: (o) => (o.opened === true) === (o.win32 === 0),
       requested_mode: (o) => o.access === 'read' && o.share === 'rwd',
+      interpretable_result: (o) => o.win32 === 0 || o.win32 === 32,
     },
   },
   'observe:share.delete_rwd': {
@@ -306,6 +319,7 @@ export const STEP_SCHEMAS = Object.freeze({
     invariants: {
       opened_matches_win32: (o) => (o.opened === true) === (o.win32 === 0),
       requested_mode: (o) => o.access === 'delete' && o.share === 'rwd',
+      interpretable_result: (o) => o.win32 === 0 || o.win32 === 32,
     },
   },
   'observe:range.probe': {
@@ -340,6 +354,7 @@ export const STEP_SCHEMAS = Object.freeze({
     required: {
       pid: f('posInt'), opened: f('bool'), state: f('string'), createFiletime: f('filetime'),
       image: f('localPath'), tokenOpened: f('bool'), integritySid: f('sid'), userSid: f('anySid'),
+      elevationType: f('elevationType'),
     },
     invariants: { live_requires_handles: (o) => o.state !== 'live' || (o.opened === true && o.tokenOpened === true) },
   },
@@ -349,8 +364,8 @@ export const EXPECTATIONS = Object.freeze([
   // ---- preflight: before the operator launches Codex -------------------
   { id: 'PF-harness', mode: 'preflight', step: 'harness', derive: 'harnessBaseline', gates: ['W6', 'W7'],
     basis: 'harness file SHA-256 values recorded for the exact file-name set and equal to the supplied baseline' },
-  { id: 'PF-token', mode: 'preflight', step: 'token.self', derive: 'tokenIntegrity', gates: ['W6', 'W7'],
-    basis: 'measured token integrity SID equals the label SID; never relabelled' },
+  { id: 'PF-token', mode: 'preflight', step: 'token.self', derive: 'tokenIntegrity', compare: ['elevationType'], gates: ['W6', 'W7'],
+    basis: 'measured integrity SID equals the label SID and a valid elevationType is recorded for W6; never inferred from a label' },
   { id: 'PF-binary-sha256', mode: 'preflight', step: 'binary.sha256', derive: 'binarySha256Baseline', gates: ['W7'],
     basis: 'binary bytes equal the recorded expected digest and the supplied baseline before any execution' },
   { id: 'PF-binary-signature', mode: 'preflight', step: 'binary.signature', hypothesis: null, gates: ['W7'],
@@ -368,7 +383,7 @@ export const EXPECTATIONS = Object.freeze([
   { id: 'PF-defender', mode: 'preflight', step: 'host.defender', hypothesis: { amServiceEnabled: true, realTimeProtectionEnabled: true }, gates: ['W7'],
     basis: 'W7 requires a host where Defender is already enabled; it is never enabled or changed here' },
   { id: 'PF-volume', mode: 'preflight', step: 'host.volume', hypothesis: null, gates: ['W7'],
-    basis: 'filesystem of the disposable home is recorded (NTFS or ReFS)' },
+    basis: 'the W7 disposable-home environment is measured as NTFS; ReFS belongs to separate W1 research' },
   { id: 'PF-os', mode: 'preflight', step: 'host.os', hypothesis: null, gates: ['W6', 'W7'],
     basis: 'OS build, PowerShell version, Administrators membership and SSH session are recorded' },
   { id: 'PF-manifest', mode: 'preflight', step: 'manifest', derive: 'manifestBaseline', gates: ['W7'],
@@ -377,16 +392,16 @@ export const EXPECTATIONS = Object.freeze([
   // ---- observe: while the operator-launched Codex holds one thread -----
   { id: 'OB-harness', mode: 'observe', step: 'harness', derive: 'harnessMatchesManifest', gates: ['W6', 'W7'],
     basis: 'observer files byte-identical to the preflight run, recomputed from the recorded digests' },
-  { id: 'OB-token', mode: 'observe', step: 'token.self', derive: 'tokenMatchesManifest', gates: ['W6', 'W7'],
-    basis: 'observe integrity SID equals the preflight manifest SID and the label SID' },
+  { id: 'OB-token', mode: 'observe', step: 'token.self', derive: 'tokenMatchesManifest', compare: ['elevationType'], gates: ['W6', 'W7'],
+    basis: 'observe integrity SID matches the manifest/label and measured self elevationType remains equal to preflight' },
   { id: 'OB-home', mode: 'observe', step: 'home.identity', derive: 'homeMatchesManifest', gates: ['W7'],
     basis: 'home and parent paths, file IDs, structure, disjointness, owner/DACL contract and no-follow ancestry all still hold and match the manifest' },
   { id: 'OB-run', mode: 'observe', step: 'run', derive: 'runControl', gates: ['W6', 'W7'],
     basis: 'the control record declares one positive target PID, a different observer PID and a sample count, and every process record binds to it' },
   { id: 'OB-process', mode: 'observe', step: 'process.identity', derive: 'imageLive', gates: ['W3', 'W6', 'W7'],
     basis: 'query-only handle to the declared PID is live, same-user, and its image equals the manifest binary path' },
-  { id: 'OB-process-token', mode: 'observe', step: 'process.identity', derive: 'codexToken', gates: ['W6'],
-    basis: 'Codex token integrity SID equals the -CodexIntegrityLabel SID; denial is unknown' },
+  { id: 'OB-process-token', mode: 'observe', step: 'process.identity', derive: 'codexToken', compare: ['elevationType'], gates: ['W6'],
+    basis: 'target integrity SID equals the declared label SID and a valid measured elevationType is retained for W6; denial is unknown' },
   { id: 'OB-process-sample', mode: 'observe', step: 'process.sample', perSample: true, derive: 'sampleProcess', gates: ['W3', 'W7'],
     basis: 'before each sample\'s active operations the declared PID is re-queried and must still be the same live, same-user instance, at the same creation FILETIME, image and integrity' },
   { id: 'OB-lockdir', mode: 'observe', step: 'lockdir.identity', perSample: true, hypothesis: { directory: true, reparse: false }, gates: ['W7'],

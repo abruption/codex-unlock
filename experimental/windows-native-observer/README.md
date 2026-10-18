@@ -9,7 +9,9 @@ PowerShell scripts were parsed, their AST gates and pure helpers checked, and
 the C# compiled on a designated Windows host. No observer mode, native method
 or real Codex binary was run. JavaScript tests use synthetic evidence only.
 
-`observer.ps1 -Mode preflight` and `-Mode observe` **refuse to run** (exit 3).
+All `observer.ps1` modes — `preflight`, `observe` and `fixture-meta` —
+**refuse to run** (exit 3) at the first statement of setup, before path lookups
+or compilation.
 The ancestor/junction and creation boundary is not closed: every check the
 harness can make compares identities at two points in time instead of pinning
 a path, so a same-user actor could still swap an ancestor between the check and
@@ -40,7 +42,7 @@ deleting anything.
 
 | File | Runs on | Role |
 | --- | --- | --- |
-| `observer.ps1` | Windows PowerShell 5.1 (designated host) | Orchestrator with three modes: `preflight` and `observe` (both hard-refused) and `fixture-meta` |
+| `observer.ps1` | Windows PowerShell 5.1 (designated host) | Proposed orchestrator; all three modes (`preflight`, `observe`, `fixture-meta`) are hard-refused |
 | `WinObserver.cs` | Compiled by `Add-Type` inside `observer.ps1` | Read-only native calls: token integrity, file identity, no-follow ancestry, share-mode probes, guarded lock-range probes, Restart Manager, process identity |
 | `check.ps1` | Windows PowerShell 5.1 | Static gate. Parses both scripts, checks the syntax tree (automatic-variable assignment, forbidden commands, gate and refusal ordering, harness list), runs the pure helper functions taken from the observer's tree, validates its own paths and `%TEMP%`, then compiles the C# without calling it |
 | `expectations.mjs` | Node.js 22.13+ or 24 (any OS) | The expected-result table, typed per-step schemas with internal-consistency invariants, format validators and the path-spelling rule (single source of truth) |
@@ -62,8 +64,9 @@ system temporary root.
 
 ## Safety boundary
 
-- **The native modes are refused.** `preflight` and `observe` exit 3 before
-  anything is compiled, created or observed. `check.ps1` fails if that refusal
+- **All observer modes are refused.** `preflight`, `observe` and `fixture-meta`
+  exit 3 before path lookups or anything is compiled, created or observed.
+  `check.ps1` fails if that refusal
   is removed, moved after `Add-Type`, or made conditional on a flag. It also
   constrains the actual `Refuse` and `Stop-Unknown` definitions and their
   literal exit 3/2 effects, with AST-only negative mutations, never by running
@@ -175,11 +178,14 @@ system temporary root.
   once, and the guard is released in `finally`. No await, spawn or signal
   happens while the guard is held. The lock order matches the production rule:
   native guard, then thread probe. A missing or busy guard is `unknown`.
-- **Full-sharing opens only.** Every open of a Codex file uses the full share
-  mask (read, write, delete). `share.read_rwd` and `share.delete_rwd` (DELETE
-  access plus the attribute-read right the file-type check needs, shared) are
-  the only share probes the default observer runs, so it
-  never withholds a sharing mode the holder relies on. Requesting the DELETE
+- **RM/share observations are deferred, even in the dormant producer.**
+  Path-based RM and share calls have been removed from the producer. It emits
+  `unknown` with `guarded_handle_binding_not_implemented` instead of reopening
+  a path outside a common guard. Implementing synchronous shared coordination
+  and handle/FileId binding is a separate requirement, not satisfied by the
+  current range-only guard. No new guarded native helper is introduced here.
+  The reviewable C# share helpers use full sharing (read, write, delete).
+  Requesting the DELETE
   access right is not a file-removal call; no delete disposition, rename or
   removal is ever issued. Restrictive-sharing probes (omitting write or delete
   sharing, which could block the holder's writes or its Drop-time delete) are a
@@ -264,7 +270,8 @@ before the run; the harness compares it exactly.
 
 ## Run commands (operator, on the designated host)
 
-> **Steps 1 and 4 currently refuse.** `-Mode preflight` and `-Mode observe`
+> **All observer modes currently refuse.** This includes `-Mode fixture-meta`
+> as well as `-Mode preflight` and `-Mode observe`. They
 > exit 3 with the refusal reason while remaining decision 10 is open. The
 > commands are documented so the intended procedure can be reviewed, not so it
 > can be run. Step 0 (static gate) and step 7 (offline evaluator) can run.
@@ -298,7 +305,7 @@ the High session), from the same commit.
      -ExpectedVersion '<exact version line>' -OutFile "$out\medium-preflight.jsonl"
    ```
 
-   Today: `refused: native preflight and observe are refused …`, exit 3,
+   Today: `refused: all observer modes are refused …`, exit 3,
    nothing created. If the boundary is ever closed, the expected output is
    `results: …`, `disposable CODEX_HOME: C:\…\codex-win-obs-<12 hex>\home`, a
    `next:` line, and `verdicts:` with only `match` and `recorded`, exit 0, with
@@ -504,7 +511,7 @@ Stop and report; do not work around any of these.
 
 | Condition | Where | Effect |
 | --- | --- | --- |
-| `-Mode preflight` or `-Mode observe` | any host | exit 3, refused: the ancestry/creation boundary is open and there is no bypass |
+| Any observer mode, including `fixture-meta` | any host | exit 3 before path lookups; the ancestry/creation boundary is open and there is no bypass |
 | Missing or invalid parameter, existing `-OutFile`, any path that is not an accepted absolute local drive spelling, any path inside a real Codex home, an output inside a `codex-win-obs-<12 hex>` directory, `%TEMP%` or the harness directory inside a real home, `USERPROFILE` unset | any mode | exit 3 before any file is opened or compiled |
 | `Get-Volume -FilePath` or `Get-MpComputerStatus` unavailable | preflight | exit 3 before anything is created |
 | `-CodexPid` missing, zero, or this observer process | observe | exit 3 |
@@ -541,6 +548,22 @@ record against `expectations.mjs` and reports two separate facts for every row:
   file ID, SID, absolute local drive path, integer, decimal FILETIME string),
   every schema **invariant** holds, and every hypothesis field is present and
   not null.
+
+Only range result codes 0 (acquired and released) or 33 (lock conflict) are
+measured lock states. Only share-open codes 0 (opened) or 32 (sharing
+violation) measure sharing behavior. Other errors, including invalid parameter,
+missing file or unsupported operation, are `unknown`, not measured mismatch.
+W7's `host.volume` must report `NTFS`; other filesystems remain `unknown`.
+Every self/target token requires measured `elevationType` enum 1, 2 or 3. Missing
+queries and null values are unknown; Full/Limited status is never inferred from
+a Medium/High label.
+
+Every record's advisory `expect` must exactly equal the canonical key/value
+union for that mode and step, even for derived or recorded rows. This includes
+all raw hypotheses of a shared step plus the closed legacy derived expectation
+map in `lib.mjs`; extra keys, missing keys, wrong values and wrong shapes are
+`expectation_drift`. Matching that metadata never makes a producer-written
+boolean or verdict evidence: derivations still recompute from raw fields.
 
 Invariants are the record's internal consistency, and a record that
 contradicts itself is never evidence. For example: `opened: true` with a
@@ -608,7 +631,7 @@ harness file-name set, and every provenance row (`PF-harness`, `PF-token`,
   require W7's unmeasurable coordination range, but it does require every
   provenance prerequisite of it.
 - Only rows tagged `W6` are compared. Verdicts and selected values (hypothesis
-  fields, plus Restart Manager `count` and role list) are shown side by side
+  fields, measured token `elevationType`, and Restart Manager `count` and role list) are shown side by side
   per level. They are never merged.
 - Any difference needs a written explanation. Any row that is `unknown` at
   either level keeps the pair `unknown`; it is never filled in from the other
@@ -686,7 +709,7 @@ Windows accepts that offset has not been established. Restart Manager rows are
 | `check.ps1` | executed on Windows PowerShell 5.1 | Both scripts parsed; AST checks, refusal mutations and nine pure-helper groups passed |
 | `observer.ps1` body (all modes) | not executed | Only its parsed AST and selected pure helper functions were used |
 | `WinObserver.cs` | compiled on Windows | `Add-Type` and method-name reflection only; no native method was called |
-| `observer.ps1 -Mode preflight` / `-Mode observe` | **refused by the harness** | The ancestry/creation boundary is open (remaining decision 10). This is a hard refusal, not just an absence of a host |
+| All `observer.ps1` modes, including `fixture-meta` | **refused by the harness** | The ancestry/creation boundary is open (remaining decision 10). Refusal is before path checks, not just compilation |
 | Real Codex binary, version, disposable home, lock observations | not executed | Requires the designated host and an operator, and the native modes refuse; no real Codex was run anywhere |
 | Medium-integrity and High-integrity runs | not executed | Same |
 | `lab.ps1` reruns and the `fixture-meta` pairing step | deferred | The fixture producer cannot be bound without changing `experimental/windows-fixture/` (remaining decision 4), so the paired result could never complete |
@@ -704,21 +727,24 @@ The existing `RemoteSigned` policy was unchanged. A new private staging
 directory outside every real Codex home held the checked inputs and compiler
 temporaries. Source hashes were checked before execution.
 
-The post-review static run exited **0**: both parses, automatic-variable and
-forbidden-call checks, the exact hard-refusal AST contract, seven switch/guard
-mutations plus twelve definition/termination mutations for each of `Refuse`
-and `Stop-Unknown`, nine pure-helper groups (including short-name/tilde
-refusal and case-insensitive disposable matching), and C# compilation passed.
+The latest review-follow-up static run exited **0**: both parses,
+automatic-variable and forbidden-call checks, the exact all-mode refusal AST
+contract, eleven switch/guard mutations plus twelve definition/termination
+mutations for each of `Refuse` and `Stop-Unknown`, two deferred RM/share-call
+insertion checks, nine pure-helper groups (including short-name/tilde refusal,
+case-insensitive disposable matching, and execution-policy failure handling),
+and C# compilation passed.
 Tested inputs:
 
-- `check.ps1`: `a5e0499990c9700e743429b794e69366469def8f465e40a15b3c4aedbafb17b2`
-- `observer.ps1`: `15e5ea87bd4766de1fe3537d49fec201837abbfda1a378f4cced3f3fe99a06de`
+- `check.ps1`: `738d4fdd8278602f2e32faa35b6d501264a8c300c27a715b501c87acae4d3360`
+- `observer.ps1`: `85a84194bef9b781a8ff3b059a87616bd0e3e46d6ae8e6b3c5eb4e4a3d477c28`
 - `WinObserver.cs`: `9b44dc7403368857fd7c55cdf4a596310b7b501c1343755f3adc08758f3eb83c`
-- Static output SHA-256: `5e8951d7b56c31012aadc8980b8f9694f2cfbe859fd742fc6937ce9619702fc8`
+- Static output SHA-256: `3d642797f734d144fdaf559ed4e2806a119b009cae6a26198f531c27c6eebaed`
 
-The earlier static baseline (output digest
-`3ea3e85a2b6f31ba4bb7a41b9273460832bd9d8667ad0ff12e1edf74ff111736`)
-is retained separately and is not counted as verification of these later edits.
+The earlier static baselines (output digests
+`3ea3e85a2b6f31ba4bb7a41b9273460832bd9d8667ad0ff12e1edf74ff111736` and
+`5e8951d7b56c31012aadc8980b8f9694f2cfbe859fd742fc6937ce9619702fc8`)
+are retained separately and are not counted as verification of these later edits.
 
 Earlier failures were retained rather than counted as passes: the original
 checker used an unavailable `VariablePath.UnqualifiedPath` property; after

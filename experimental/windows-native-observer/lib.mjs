@@ -330,10 +330,38 @@ export function recomputeIsolation(o) {
   return problems.length === 0 && o.empty === true
 }
 
-function sameExpectation(tableHypothesis, recordExpect) {
-  if (tableHypothesis === null) return true
-  if (!recordExpect || typeof recordExpect !== 'object') return false
-  return Object.entries(tableHypothesis).every(([k, v]) => Object.hasOwn(recordExpect, k) && recordExpect[k] === v)
+// Derived rows recompute their verdicts instead of comparing producer booleans.
+// Their legacy advisory expectations remain a separate, closed contract that
+// mirrors observer.ps1's $Expect, alongside the raw table hypotheses. Neither
+// these expected booleans nor the producer's verdict establish an observation.
+const DERIVED_EXPECTATIONS = Object.freeze({
+  'preflight:token.self': { integrityMatchesLabel: true },
+  'preflight:binary.sha256': { matches: true },
+  'preflight:home.isolated': { isolated: true },
+  'preflight:binary.version': { matches: true, exitCode: 0 },
+  'observe:harness': { matchesManifest: true },
+  'observe:token.self': { integrityMatchesLabel: true, matchesManifest: true },
+  'observe:home.identity': { matchesManifest: true },
+  'observe:process.identity': { state: 'live', imageMatchesBinary: true, tokenOpened: true, codexIntegrityMatchesLabel: true },
+  'observe:process.sample': { state: 'live' },
+  'observe:thread.identity_after': { sameFileId: true },
+  'observe:process.identity_after': { state: 'live', sameCreate: true },
+})
+
+// A record carries the union for its mode/step, including steps represented
+// by several rows (range.probe). The caller's selected rows cannot weaken it.
+export function canonicalExpectation(mode, step) {
+  const union = { ...DERIVED_EXPECTATIONS[`${mode}:${step}`] }
+  for (const exp of EXPECTATIONS) {
+    if (exp.mode === mode && exp.step === step && exp.hypothesis) Object.assign(union, exp.hypothesis)
+  }
+  return Object.keys(union).length > 0 ? union : null
+}
+
+function sameExpectation(canonical, recordExpect) {
+  if (canonical === null) return recordExpect === null
+  return sameKeySet(recordExpect, Object.keys(canonical)) &&
+    Object.entries(canonical).every(([key, value]) => recordExpect[key] === value)
 }
 
 export function deepEqualMap(a, b) {
@@ -379,7 +407,8 @@ const DERIVATIONS = {
     if (!ctx.label) return unk('label_unresolved')
     if (o.tokenOpened !== true) return unk('token_not_opened')
     if (o.integritySid !== INTEGRITY[ctx.label]) return mis('integrity_sid_differs_from_label')
-    return ok(o.integritySid)
+    if (o.elevationType !== rec.integrity.elevationType) return mis('elevation_type_differs_from_file')
+    return ok({ integritySid: o.integritySid, elevationType: o.elevationType })
   },
   binarySha256Baseline(rec, _s, ctx) {
     const o = rec.observed
@@ -447,7 +476,12 @@ const DERIVATIONS = {
     if (o.integritySid !== INTEGRITY[ctx.label]) return mis('integrity_sid_differs_from_label')
     if (!ctx.manifest) return unk('no_manifest')
     if (o.integritySid !== ctx.manifest.integritySid) return mis('integrity_sid_differs_from_manifest')
-    return ok(o.integritySid)
+    if (o.elevationType !== rec.integrity.elevationType) return mis('elevation_type_differs_from_file')
+    const before = ctx.preflightByStep.get('token.self')
+    if (unmeasuredReason(before, 'preflight', null)) return unk('preflight_token_unusable')
+    if (o.elevationType !== before.observed.elevationType) return mis('elevation_type_differs_from_preflight')
+    if (o.userSid !== before.observed.userSid) return mis('user_sid_differs_from_preflight')
+    return ok({ integritySid: o.integritySid, elevationType: o.elevationType })
   },
   // Observe binds the home to the manifest by path AND file ID for both the
   // home and its parent, re-checks the structure and disjointness, and
@@ -512,6 +546,8 @@ const DERIVATIONS = {
     if (!first || !FORMATS.filetime(first.createFiletime)) return unk('baseline_create_missing')
     if (o.createFiletime !== first.createFiletime) return mis('create_filetime_changed')
     if (o.integritySid !== first.integritySid) return mis('integrity_sid_changed')
+    if (!FORMATS.elevationType(first.elevationType)) return unk('baseline_elevation_type_unusable')
+    if (o.elevationType !== first.elevationType) return mis('elevation_type_changed')
     if (!ctx.manifest) return unk('no_manifest')
     if (windowsPathRelation(o.image, ctx.manifest.binaryPath) !== 'same') return mis('image_differs_from_manifest_binary')
     return ok(o.createFiletime)
@@ -521,7 +557,7 @@ const DERIVATIONS = {
     if (!ctx.codexLabel) return unk('codex_label_missing')
     if (o.tokenOpened !== true) return unk('token_not_opened')
     if (o.integritySid !== INTEGRITY[ctx.codexLabel]) return mis('codex_integrity_differs_from_label')
-    return ok(o.integritySid)
+    return ok({ integritySid: o.integritySid, elevationType: o.elevationType })
   },
   processAfterLive(rec, _s, ctx) {
     const o = rec.observed
@@ -532,6 +568,9 @@ const DERIVATIONS = {
     if (!FORMATS.filetime(first?.createFiletime)) return unk('baseline_create_missing')
     if (o.createFiletime !== first.createFiletime) return mis('create_filetime_changed')
     if (o.userSid !== first.userSid) return mis('target_user_changed')
+    if (o.integritySid !== first.integritySid) return mis('integrity_sid_changed')
+    if (!FORMATS.elevationType(first.elevationType)) return unk('baseline_elevation_type_unusable')
+    if (o.elevationType !== first.elevationType) return mis('elevation_type_changed')
     return ok(o.createFiletime)
   },
   threadStable(rec, sample, ctx) {
@@ -608,6 +647,7 @@ export function validateObserverFile(records, mode, problems = [], samples = nul
   const limit = validSampleCount(samples) ? samples : MAX_SAMPLES
   const sids = new Set()
   const labels = new Set()
+  const elevations = new Set()
   const seen = new Set()
   const order = new Map()
   const sampleSeq = new Map()
@@ -628,12 +668,16 @@ export function validateObserverFile(records, mode, problems = [], samples = nul
     } else if (sample !== null) out.problems.push(`sample_unexpected:${r.step}#${sample}`)
     sids.add(r.integrity?.sid ?? null)
     labels.add(r.integrity?.label ?? null)
+    const elevation = r.integrity?.elevationType
+    if (!FORMATS.elevationType(elevation)) out.problems.push(`elevation_type_unusable:${r.step}`)
+    elevations.add(elevation)
     const key = `${r.step}#${sample ?? ''}`
     if (seen.has(key)) out.problems.push(`duplicate:${key}`)
     seen.add(key)
     if (!order.has(r.step)) order.set(r.step, index)
     order.set(`last:${r.step}`, index)
   })
+  if (elevations.size > 1) out.problems.push('mixed_elevation_type')
   // Per-sample steps must appear once per sample, in increasing sample order.
   if (validSampleCount(samples)) {
     for (const step of sampled) {
@@ -744,9 +788,9 @@ function rowFor(exp, records, samples, fileUsable, ctx) {
     const rec = records.find((r) => r.step === exp.step && (r.sample ?? null) === sample)
     if (rec) collected++
     let reason = unmeasuredReason(rec, exp.mode, exp.hypothesis)
-    // Drift only applies to raw-comparison rows; derived and recorded rows have
-    // no table hypothesis to drift from.
-    if (!reason && exp.hypothesis && !sameExpectation(exp.hypothesis, rec.expect)) reason = 'expectation_drift'
+    // Every row sharing this step checks the entire canonical union, including
+    // derived/recorded rows. Additional producer keys cannot go unexamined.
+    if (!reason && !sameExpectation(canonicalExpectation(exp.mode, exp.step), rec.expect)) reason = 'expectation_drift'
     if (reason) {
       row.reasons.push(`${reason}${tag}`)
       verdicts.push('unknown')

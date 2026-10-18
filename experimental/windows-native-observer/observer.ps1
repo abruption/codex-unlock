@@ -1,7 +1,7 @@
 <#
 Read-only Windows observer for codex-unlock research W6/W7 (#151, #152).
 
-Windows PowerShell 5.1. WinObserver.cs is compiled by Add-Type. Three modes:
+Windows PowerShell 5.1. All three modes below are dormant and hard-refused:
 
   preflight     verify the Codex binary by SHA-256 before any execution, then
                 its version; measure token integrity; record host policy and
@@ -17,8 +17,9 @@ Windows PowerShell 5.1. WinObserver.cs is compiled by Add-Type. Three modes:
   powershell -NoProfile -NonInteractive -File observer.ps1 -Mode observe -IntegrityLabel <medium|high> -CodexIntegrityLabel <medium|high> -Manifest <preflight jsonl> -CodexPid <pid> -OutFile <new file>
   powershell -NoProfile -NonInteractive -File observer.ps1 -Mode fixture-meta -IntegrityLabel <medium|high> -SourceCommit <40 hex> -OutFile <new file>
 
-HARD REFUSAL (incomplete prototype gate): -Mode preflight and -Mode observe
-refuse to run. The ancestor/junction and creation boundary is NOT closed: the
+HARD REFUSAL (incomplete prototype gate): preflight, observe and fixture-meta
+all refuse before setup path checks, compilation or observation. The
+ancestor/junction and creation boundary is NOT closed: the
 no-follow ancestry check, the identity comparisons and the creation gate all
 compare identities at separate points in time instead of pinning a path, so a
 same-user actor could still swap an ancestor between the check and the use. No
@@ -84,9 +85,9 @@ $AclType = 'Allow'
 # Add-Type starts is NOT covered by this allowlist: it inherits this process's
 # environment, which is why no credential may be exported into this shell.
 $ChildEnvAllowlist = @('SystemRoot', 'SystemDrive', 'windir', 'COMSPEC', 'PATHEXT', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE')
-# The native modes stay refused while the ancestry/creation boundary is open.
+# All modes stay refused while the ancestry/creation boundary is open.
 $NATIVE_MODES_REFUSED = $true
-$NativeRefusalReason = 'native preflight and observe are refused in this prototype: the ancestor/junction and creation boundary is not closed (identities are compared at separate points in time, not pinned), so no native observation is approved. There is no bypass flag; see README remaining decision 10.'
+$NativeRefusalReason = 'all modes (preflight, observe and fixture-meta) are refused in this prototype: the ancestor/junction and creation boundary is not closed, so no observation is approved. There is no bypass flag; see README remaining decision 10.'
 
 # Union of the expectations.mjs hypotheses per step. evaluate.mjs re-checks
 # every record against its own table and reports drift as unknown.
@@ -364,6 +365,20 @@ function Test-Expect($observed, $expect) {
     'match'
 }
 
+# Pure preflight predicate. A failed/partial policy record cannot permit
+# downstream binary hashing, directory creation or execution. This does not
+# approve a particular policy or change the host policy.
+function Get-ExecutionPolicyFailure($observed) {
+    if ((Test-Expect $observed $null) -ne 'recorded') { return 'execution_policy_unusable' }
+    if ($observed.effective -isnot [string] -or [string]::IsNullOrWhiteSpace($observed.effective) -or
+        $observed.scopes -isnot [Array] -or $observed.scopes.Count -eq 0) { return 'execution_policy_incomplete' }
+    foreach ($entry in $observed.scopes) {
+        if ($entry.scope -isnot [string] -or [string]::IsNullOrWhiteSpace($entry.scope) -or
+            $entry.policy -isnot [string] -or [string]::IsNullOrWhiteSpace($entry.policy)) { return 'execution_policy_incomplete' }
+    }
+    $null
+}
+
 function Test-SameDigests($a, $b) {
     if ($null -eq $a -or $null -eq $b) { return $false }
     $na = @($a.PSObject.Properties | ForEach-Object { $_.Name } | Sort-Object)
@@ -411,6 +426,9 @@ function Assert-PathGate {
 
 # ---- Refusals: nothing is created, compiled or observed until these pass --
 try {
+    # Deliberately mode-independent and first: even fixture-meta must not
+    # reach path checks, compiler scratch or token observation in this state.
+    if ($NATIVE_MODES_REFUSED) { Refuse $NativeRefusalReason }
     if (-not $Mode) { Refuse '-Mode is required (preflight, observe, fixture-meta)' }
     if (-not $IntegrityLabel) { Refuse '-IntegrityLabel is required (medium or high, the level this session is expected to have)' }
     if (-not $OutFile) { Refuse '-OutFile is required (new file)' }
@@ -468,11 +486,6 @@ try {
         if ($null -eq $volumeCommand -or -not $volumeCommand.Parameters.ContainsKey('FilePath')) { Refuse 'Storage Get-Volume -FilePath is required' }
         if ($null -eq (Get-Command Get-MpComputerStatus -ErrorAction SilentlyContinue)) { Refuse 'Get-MpComputerStatus is required to record the existing Defender state; it is never changed' }
     }
-
-    # ---- Hard refusal of the native modes (incomplete prototype gate) ----
-    # The ancestor/junction and creation boundary is not closed, so no native
-    # preflight or observe run is approved. There is no bypass.
-    if ($NATIVE_MODES_REFUSED -and ($Mode -eq 'preflight' -or $Mode -eq 'observe')) { Refuse $NativeRefusalReason }
 
     # ---- Compilation (after the path and TEMP gate) ----------------------
     # Add-Type starts the .NET compiler as a child process and writes compiler
@@ -735,6 +748,8 @@ try {
                 scopes = @(Get-ExecutionPolicy -List | ForEach-Object { [pscustomobject]@{ scope = $_.Scope.ToString(); policy = $_.ExecutionPolicy.ToString() } }) }
         } catch { $pol = [pscustomobject]@{ ok = $false; exception = $_.Exception.Message } }
         Record 'host.execution_policy' $pol | Out-Null
+        $policyFailure = Get-ExecutionPolicyFailure $pol
+        if ($policyFailure -and -not $Abort) { $Abort = $policyFailure }
         Record 'host.os' ([pscustomobject]@{ ok = $true; os = [Environment]::OSVersion.VersionString; ps = $PSVersionTable.PSVersion.ToString()
                 elevated = (New-Object Security.Principal.WindowsPrincipal ([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole('Administrators')
                 sshSession = [bool]$env:SSH_CONNECTION }) | Out-Null
@@ -1067,18 +1082,14 @@ try {
                     $threadOk = ($before.ok -eq $true -and $before.reparse -eq $false -and $before.directory -eq $false -and
                         $before.links -eq 1 -and $before.deletePending -eq $false -and $null -ne $before.fileId)
                     if (-not $threadOk) { return }
-                    $rm = Native { [WinObserver]::RmList([string[]]@($thread, $guard)) }
-                    if ($rm.ok -eq $true -and $rm.complete -eq $true) {
-                        foreach ($entry in @($rm.processes)) {
-                            $entry | Add-Member -NotePropertyName role -NotePropertyValue (
-                                Get-OpenerRole ([int]$entry.pid) "$($entry.startFiletime)" $CodexPid "$create0" $PID)
-                        }
+                    # Deferred even in this dormant producer: separate path-based
+                    # RM/share calls do not bind the validated handles and are not
+                    # covered by a common guard. Do not issue them until that
+                    # contract has been implemented and separately reviewed.
+                    foreach ($deferredStep in 'openers.rm', 'share.read_rwd', 'share.delete_rwd') {
+                        Record $deferredStep ([pscustomobject]@{ ok = $true; state = 'unknown';
+                                deferred = $true; reason = 'guarded_handle_binding_not_implemented' }) $s | Out-Null
                     }
-                    Record 'openers.rm' $rm $s | Out-Null
-                    # Only full-sharing opens; restrictive-sharing probes are a
-                    # separately proposed, NOT-executed experiment (see README).
-                    Record 'share.read_rwd' (Native { [WinObserver]::ShareProbe($thread, 'read', 'rwd') }) $s | Out-Null
-                    Record 'share.delete_rwd' (Native { [WinObserver]::ShareProbe($thread, 'delete', 'rwd') }) $s | Out-Null
                     # Bind the guarded range probe to the validated expected
                     # identities (lock directory, coordination guard and thread
                     # lock) so it refuses a changed target before locking. The

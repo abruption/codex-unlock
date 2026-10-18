@@ -148,8 +148,9 @@ function Test-TerminationDefinition($tree, [string]$functionName, [int]$exitCode
 
 # This is deliberately an exact contract, not a general control-flow proof.
 # The one true assignment must be top-level, and the exact refusal statement
-# must immediately precede the sole Add-Type command in the same top-level
-# try body. No additional reference (including a parameter or mutation) to the
+# must be the FIRST statement of the top-level setup try containing the sole
+# Add-Type command. Its condition cannot depend on Mode, so all three modes
+# refuse before path lookups or compilation. No additional reference to the
 # switch is accepted. These checks inspect ASTs; they never run the observer.
 function Test-NativeRefusalAst($tree) {
     $switchUses = @($tree.FindAll({
@@ -189,14 +190,25 @@ function Test-NativeRefusalAst($tree) {
         if ([object]::ReferenceEquals($statements[$i], $compilePipeline)) { $index = $i; break }
     }
     if ($index -lt 1) { return $false }
-    $refusal = $statements[$index - 1]
+    $refusal = $statements[0]
     if ($refusal -isnot [System.Management.Automation.Language.IfStatementAst] -or
         $refusal.Clauses.Count -ne 1 -or $null -ne $refusal.ElseClause) { return $false }
     $condition = $refusal.Clauses[0].Item1.Extent.Text -replace '\s+', ''
-    if ($condition -cne '$NATIVE_MODES_REFUSED-and($Mode-eq''preflight''-or$Mode-eq''observe'')') { return $false }
+    if ($condition -cne '$NATIVE_MODES_REFUSED') { return $false }
     $body = $refusal.Clauses[0].Item2.Statements
     if ($body.Count -ne 1 -or ($body[0].Extent.Text -replace '\s+', ' ').Trim() -cne 'Refuse $NativeRefusalReason') { return $false }
     $true
+}
+
+# RM/share observations remain deferred in the dormant producer as well. This
+# checks literal calls only; it is not a general proof against dynamic code.
+function Get-DeferredObservationCalls($tree) {
+    $tree.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+            $node.Expression.Extent.Text -ieq '[WinObserver]' -and
+            $node.Member.Extent.Text -in @('RmList', 'ShareProbe')
+        }, $true)
 }
 
 function Parse-Only([string]$text) {
@@ -265,24 +277,34 @@ if ($null -ne $observerAst) {
     elseif ($gateAt -gt $addTypeAt) { Fail 'observer.ps1 compiles before its path and TEMP gate' }
     else { Report 'ordering ok: observer.ps1 gates paths and TEMP before Add-Type' }
     if (-not (Test-NativeRefusalAst $observerAst)) { Fail 'observer.ps1 lost the exact top-level native refusal contract' }
-    else { Report 'refusal ok: exact native refusal immediately precedes Add-Type in the same setup try' }
+    else { Report 'refusal ok: all-mode refusal is first in the setup try, before paths and Add-Type' }
+    if (@(Get-DeferredObservationCalls $observerAst).Count -ne 0) { Fail 'observer.ps1 invokes deferred RM/share observations' }
     try {
         $source = $observerAst.Extent.Text
-        $line = 'if ($NATIVE_MODES_REFUSED -and ($Mode -eq ''preflight'' -or $Mode -eq ''observe'')) { Refuse $NativeRefusalReason }'
+        $line = 'if ($NATIVE_MODES_REFUSED) { Refuse $NativeRefusalReason }'
         if (-not $source.Contains($line)) { throw 'native refusal mutation anchor missing' }
         $compile = 'Add-Type -Path (Join-Path $PSScriptRoot ''WinObserver.cs'')'
         if (-not $source.Contains($compile)) { throw 'compile mutation anchor missing' }
         $variants = @{
             removed = Replace-SourceText $source $line ''
             moved = Replace-SourceText (Replace-SourceText $source $line '') $compile ($compile + "`n" + $line)
+            moved_after_path = Replace-SourceText (Replace-SourceText $source $line '') '$PathGate = Assert-PathGate' ('$PathGate = Assert-PathGate' + "`n" + $line)
             conditional_false = Replace-SourceText $source $line ('if ($false) { ' + $line + ' }')
-            condition_and_false = Replace-SourceText $source '$NATIVE_MODES_REFUSED -and ($Mode' '$NATIVE_MODES_REFUSED -and $false -and ($Mode'
+            condition_and_false = Replace-SourceText $source $line 'if ($NATIVE_MODES_REFUSED -and $false) { Refuse $NativeRefusalReason }'
+            omit_preflight = Replace-SourceText $source $line 'if ($NATIVE_MODES_REFUSED -and $Mode -ne ''preflight'') { Refuse $NativeRefusalReason }'
+            omit_observe = Replace-SourceText $source $line 'if ($NATIVE_MODES_REFUSED -and $Mode -ne ''observe'') { Refuse $NativeRefusalReason }'
+            omit_fixture_meta = Replace-SourceText $source $line 'if ($NATIVE_MODES_REFUSED -and $Mode -ne ''fixture-meta'') { Refuse $NativeRefusalReason }'
             second_assignment = Replace-SourceText $source $line ('$NATIVE_MODES_REFUSED = $false' + "`n" + $line)
             parameter_override = ('param([bool]$NATIVE_MODES_REFUSED)' + "`n" + '$NATIVE_MODES_REFUSED = $true' + "`ntry { " + $line + "`n" + $compile + ' } catch {}')
             env_override = Replace-SourceText $source '$NATIVE_MODES_REFUSED = $true' '$NATIVE_MODES_REFUSED = $env:NATIVE_MODES_REFUSED'
         }
         foreach ($variant in $variants.Keys) {
             if (Test-NativeRefusalAst (Parse-Only $variants[$variant])) { throw "native refusal mutation accepted: $variant" }
+        }
+        foreach ($call in '[WinObserver]::RmList(@())', '[WinObserver]::ShareProbe(''fixture'', ''read'', ''rwd'')') {
+            if (@(Get-DeferredObservationCalls (Parse-Only ($source + "`n" + $call))).Count -ne 1) {
+                throw 'deferred native call mutation was not detected'
+            }
         }
         # Mutate only source text and parse it. None of these altered helper
         # definitions, including their exit statements, is ever executed.
@@ -357,7 +379,7 @@ if ($null -ne $observerAst) {
     try {
         foreach ($name in 'Get-PathRelation', 'Test-LocalPathSpelling', 'Test-InsideDisposableDir', 'Test-PathGateSafe',
             'Test-CandidateTempSafe', 'Invoke-GuardedCreate', 'Invoke-GuardedSample', 'New-StreamChannel',
-            'Read-BothStreams', 'Read-BoundedStream', 'Get-OpenerRole', 'Get-Dotted', 'Test-Denied', 'Test-Expect',
+            'Read-BothStreams', 'Read-BoundedStream', 'Get-OpenerRole', 'Get-Dotted', 'Test-Denied', 'Test-Expect', 'Get-ExecutionPolicyFailure',
             'Test-SameDigests') {
             $fn = $observerAst.Find({
                     param($node)
@@ -520,6 +542,18 @@ if ($helpersLoaded) {
     }
 
     Invoke-CheckGroup 'expectation and digest helpers' {
+        $policy = [pscustomobject]@{ ok = $true; effective = 'RemoteSigned';
+            scopes = @([pscustomobject]@{ scope = 'LocalMachine'; policy = 'RemoteSigned' }) }
+        if ($null -ne (Get-ExecutionPolicyFailure $policy)) { throw 'a complete policy observation must be usable' }
+        foreach ($invalidPolicy in @($null,
+                [pscustomobject]@{ ok = $false; exception = 'synthetic failure' },
+                [pscustomobject]@{ ok = $true; complete = $false; effective = 'RemoteSigned'; scopes = $policy.scopes },
+                [pscustomobject]@{ ok = $true; state = 'unknown'; effective = 'RemoteSigned'; scopes = $policy.scopes },
+                [pscustomobject]@{ ok = $true; effective = ''; scopes = $policy.scopes },
+                [pscustomobject]@{ ok = $true; effective = 'RemoteSigned'; scopes = @() },
+                [pscustomobject]@{ ok = $true; effective = 'RemoteSigned'; scopes = @([pscustomobject]@{ scope = 'LocalMachine' }) })) {
+            if (-not (Get-ExecutionPolicyFailure $invalidPolicy)) { throw 'failed or incomplete policy must stop dormant preflight' }
+        }
         $probe = [pscustomobject]@{ ok = $true; state = 'probed'; ranges = [pscustomobject]@{ rust = [pscustomobject]@{ win32 = 33 } } }
         if ((Test-Expect $probe @{ state = 'probed'; 'ranges.rust.win32' = 33 }) -ne 'match') { throw 'dotted hypothesis must match' }
         if ((Test-Expect $probe @{ 'ranges.fsext.win32' = 33 }) -ne 'mismatch') { throw 'missing dotted field must not match' }
