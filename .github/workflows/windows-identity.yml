@@ -77,8 +77,10 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $out = Join-Path $env:RUNNER_TEMP 'windows-identity.jsonl'
           $labLog = Join-Path $env:RUNNER_TEMP 'windows-identity-lab.log'
+          $ErrorActionPreference = 'Continue'
           & powershell -NoProfile -NonInteractive -File experimental/windows-identity/lab.ps1 -OutFile $out *> $labLog
           $labExit = $LASTEXITCODE
+          $ErrorActionPreference = 'Stop'
           & node experimental/windows-identity/classify.mjs $out | Select-Object -Last 1
           $classifyExit = $LASTEXITCODE
           Write-Output "lab exit $labExit, classify exit $classifyExit"
@@ -113,8 +115,10 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $out = Join-Path $env:RUNNER_TEMP "windows-identity-$env:FAULT.jsonl"
           $labLog = Join-Path $env:RUNNER_TEMP "windows-identity-$env:FAULT.log"
+          $ErrorActionPreference = 'Continue'
           & powershell -NoProfile -NonInteractive -File experimental/windows-identity/lab.ps1 -OutFile $out -FaultInjection $env:FAULT *> $labLog
           $labExit = $LASTEXITCODE
+          $ErrorActionPreference = 'Stop'
           & node experimental/windows-identity/classify.mjs --fault $env:FAULT $out | Select-Object -Last 1
           $classifyExit = $LASTEXITCODE
           Write-Output "lab exit $labExit, classify exit $classifyExit"

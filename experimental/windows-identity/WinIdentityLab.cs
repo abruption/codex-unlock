@@ -587,13 +587,12 @@ public static class WinIdentityLab
         return c;
     }
 
-    static void SendEof(Child c, string lastLine)
+    static void SendEof(Child c)
     {
         if (!c.StdinOpen) return;
         c.StdinOpen = false;
         try
         {
-            if (lastLine != null) c.P.StandardInput.WriteLine(lastLine);
             c.P.StandardInput.Close();
         }
         catch (IOException) { }
@@ -629,7 +628,7 @@ public static class WinIdentityLab
     {
         foreach (var c in Children)
         {
-            SendEof(c, null);
+            SendEof(c);
             WaitExit(c, ChildWaitBudgetMs);
             Finish(c);
         }
@@ -1126,7 +1125,11 @@ public static class WinIdentityLab
         Emit("mode", "mode:self", "W3", "\"obs\":" + selfObs + "," + Expect("unknown", "not_codex_image"));
 
         // A child that exits on stdin EOF; it is never terminated.
-        string args = Fault == "child_ignores_eof" ? "/d /c ping -n 20 127.0.0.1" : "/d /q";
+        // The abnormal fixture waits for input EOF and exits itself. Writing
+        // an "exit 7" command through Framework's console-dependent writer
+        // can prefix it with a BOM, which cmd treats as part of the command.
+        string args = Fault == "child_ignores_eof" ? "/d /c ping -n 20 127.0.0.1"
+            : Fault == "child_abnormal_exit" ? "/d /q /c \"set /p CU_LAB_EOF= & exit 7\"" : "/d /q";
         Child c = Launch("child", args, true);
         string recorded = Recorded(c.Pid, c.Start);
         Emit("setup", "launch:child", "setup", "\"ok\":" + B(c.Start != null && c.Probe != IntPtr.Zero) + ",\"pid\":" + c.Pid + ",\"win32\":0");
@@ -1139,7 +1142,7 @@ public static class WinIdentityLab
         Emit("process", "proc:child_start_mismatch", "W3", Recorded(c.Pid, shifted) + ",\"obs\":" + ObserveProcessHandle(c.Probe, "held") + "," + Expect("unknown", "identity_changed"));
         Emit("mode", "mode:child", "W3", "\"obs\":" + live + "," + Expect("unknown", "not_codex_image"));
 
-        SendEof(c, Fault == "child_abnormal_exit" ? "exit 7" : null);
+        SendEof(c);
         bool exited = WaitExit(c, ChildWaitBudgetMs);
         Emit("setup", "eof:child", "setup", "\"ok\":" + B(exited && c.ExitCode == 0) + ",\"exited\":" + B(exited) +
             ",\"exitCode\":" + (exited ? c.ExitCode.ToString() : "null") + ",\"win32\":0");
