@@ -5,6 +5,35 @@ synthetic fixtures. Linux measurements are identified separately below. No
 actual Codex session or Windows recovery was exercised. Raw result files were hash-checked and retained
 privately; hashes identify the original files, not this sanitized summary.
 
+## Snapshot and complete-control validation at cd9bb2e
+
+Runner source: `cd9bb2ed5018b34ad8c2ed9f2341b8cede7282db`. The follow-up
+documentation commit records this execution without changing runner bytes.
+
+- All five repository checks passed again: 266 passing tests, three Linux-only
+  skips, zero failures. All 84 focused research tests passed without skips.
+- One M2 nominal repetition exited 0: all seven Part 1 matrix cases and four
+  Part 2 scenarios matched their now-enforced fixed expectations, with
+  failures/incomplete zero and recorded diagnostic signals zero. The former
+  holder remained the documented refusal-filter counterexample. This does not
+  establish a real-world failure frequency or positive holder attribution.
+- One F2 macOS plumbing run using the private verified runtime-copy path
+  exited 0. Nominal stages had no observer/protocol faults; macOS `prepare`
+  returned the expected `/proc` ENOENT. Injected `stall:prepare` was incomplete
+  at that stage, then the child exited 4 with no signal. Startup manifest was
+  the same unpatched `b483cd5` build identified below. No deadline was raised
+  to make the snapshot path pass.
+- This does not add Linux/native Codex or Windows evidence. Private read-only
+  copies isolate later mutations of the supplied build, not malicious
+  same-UID tampering; dependency JavaScript is copied but not authenticated by
+  the original manifest. Static import-walk limits remain documented.
+
+| Private raw file | SHA-256 |
+| --- | --- |
+| M2 nominal result | 8dc60f9e04e9c07df3bf3d9c4715bf25445a013263d58b3541a0738382bf481b |
+| M2 nominal events | 83d1fd5c704fb364e792f218b6135c6de261ca6f802f4d3a4188d0fa8c42f510 |
+| F2 plumbing result | 46f8883a56e1d2fac7ce928f87c30eacacec84c009da64d539ec179e4a7324c4 |
+
 ## Pre-merge validation at 28925a5
 
 Runner source: `28925a50c1df118a09d950237bf3db0012751b4c`, after the
