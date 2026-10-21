@@ -1,0 +1,22 @@
+[package]
+name = "codex-unlock-windows-diagnostic"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+default-run = "codex-unlock-windows-diagnostic"
+
+[[bin]]
+name = "codex-unlock-windows-diagnostic"
+path = "src/main.rs"
+
+[[bin]]
+name = "codex-unlock-windows-fixture"
+path = "src/bin/fixture.rs"
+
+[dependencies]
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.145"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_IO", "Win32_System_Memory", "Win32_System_WindowsProgramming"] }
