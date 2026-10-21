@@ -1,0 +1,80 @@
+name: Windows Rust diagnostics
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - experimental/windows-rust-diagnostics/**
+      - .github/workflows/windows-rust-diagnostics.yml
+  push:
+    branches: [main]
+    paths:
+      - experimental/windows-rust-diagnostics/**
+      - .github/workflows/windows-rust-diagnostics.yml
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: experimental/windows-rust-diagnostics
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned toolchain
+        run: |
+          rustup toolchain install 1.90.0 --profile minimal --component rustfmt --component clippy
+          rustc --version
+          cargo --version
+      - run: cargo fetch --locked
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --offline --all-targets -- -D warnings
+      - name: Create private synthetic parent and test
+        run: |
+          $parentPath = Join-Path $env:RUNNER_TEMP ('codex-rust-diag-' + [guid]::NewGuid().ToString('N'))
+          $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+          $acl = [Security.AccessControl.DirectorySecurity]::new()
+          $acl.SetOwner($sid)
+          $acl.SetAccessRuleProtection($true, $false)
+          $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))
+          $directory = [IO.DirectoryInfo]::new($parentPath)
+          [IO.FileSystemAclExtensions]::Create($directory, $acl)
+          $env:WINDOWS_DIAGNOSTIC_FIXTURE_PARENT = $parentPath
+          cargo test --locked --offline -- --test-threads=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build unpublished measurement binaries
+        run: |
+          cargo build --locked --offline --bins
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --offline --no-run
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Validate native observer contracts
+        run: node --test test/*.test.mjs
+      - name: Record measurement binary digests
+        run: |
+          $items = @(Get-Item target/debug/codex-unlock-windows-diagnostic.exe, target/debug/codex-unlock-windows-fixture.exe) + @(Get-ChildItem target/debug/deps/windows-*.exe)
+          $records = @($items | ForEach-Object {
+            [pscustomobject]@{name=[IO.Path]::GetRelativePath((Resolve-Path target/debug).Path, $_.FullName).Replace('\','/'); sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower()}
+          })
+          $records | ConvertTo-Json | Set-Content target/debug/artifact-manifest.json -Encoding utf8
+          $records | Format-Table
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-rust-diagnostic-research
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            experimental/windows-rust-diagnostics/target/debug/codex-unlock-windows-diagnostic.exe
+            experimental/windows-rust-diagnostics/target/debug/codex-unlock-windows-fixture.exe
+            experimental/windows-rust-diagnostics/target/debug/deps/windows-*.exe
+            experimental/windows-rust-diagnostics/target/debug/artifact-manifest.json

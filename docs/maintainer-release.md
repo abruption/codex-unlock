@@ -29,14 +29,16 @@ The stable aggregate branch-protection checks are `supported-tests`, `lint`,
 
 `supported-tests` covers the explicit x64/arm64 macOS and Linux matrix in
 [`platform-support.md`](platform-support.md). `package-smoke` requires exact
-artifact contents, an offline clean tarball installation, CLI/JSON smoke tests,
+artifact contents, an offline clean installation of the packed bytes through
+registry metadata, CLI/JSON smoke tests,
 and rejected package-root/internal imports on both operating systems.
 It generates the runtime-only `npm-shrinkwrap.json` from `package-lock.json`,
 asserts that the native runtime dependency is an exact pin matching the
 lockfile, that the shrinkwrap is published without development entries, that a
 regular dependency installation contains exactly `codex-unlock`,
 `fs-ext-extra-prebuilt`, and `nan`, and that their installed versions equal the
-pins. The generated shrinkwrap is removed afterwards.
+pins. The registry fixture serves the newly packed artifact, not an already
+published version. The generated shrinkwrap is removed afterwards.
 It also compiles a consumer against the installed tarball's type-only JSON
 declarations in NodeNext and bundler modes, without Node.js type dependencies,
 and rejects `/types` as a runtime import.
@@ -142,6 +144,13 @@ The published shrinkwrap makes `npm install codex-unlock`
 `nan` versions that CI validated instead of the newest compatible release.
 `package.json` also pins `fs-ext-extra-prebuilt` to an exact version for
 package managers that ignore npm's shrinkwrap.
+
+Registry metadata is part of this npm installation contract: npm 10.9.2 uses
+the version's `_hasShrinkwrap` flag to discover the embedded shrinkwrap.
+Installing identical bytes by a local tarball path can instead resolve the
+native dependency's compatible `nan` range without honoring that pin. Do not
+treat a local-file install as proof of registry pin enforcement, or update the
+expected pin merely because a newer compatible dependency has appeared.
 
 Never publish the full lockfile as a shrinkwrap: npm installs every entry of a
 dependency's shrinkwrap, so 0.4.1 installed its development tooling into
