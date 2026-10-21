@@ -115,6 +115,23 @@ EOF and records incomplete status, never force-terminates it. `collected` means
 the sequence completed, not that diagnostics were positive or recovery passed.
 The hash check does not pin the launched image against same-user replacement.
 
+Native startup is pinned to Codex 0.163.0. Before launch the observer obtains
+Windows known-folder paths through PowerShell and requires observed absence of
+the system Codex config, requirements and skills, plus actual-profile
+`.agents/skills`. Denied, reparse or existing entries stop the experiment; they
+are not modified. Invocation-only settings select a fresh file auth store,
+disable shell snapshots/hooks/plugins/code-mode prewarm, and use a custom
+unauthenticated provider at a temporary loopback listener. That listener closes
+connections without reading data; any connection makes the run partial. The
+thread response must confirm the research provider/model. These settings are
+specific to the source pin and are not a general Codex sandbox guarantee.
+
+The pinned source traces show why an isolated `CODEX_HOME` alone is insufficient:
+[`HostSkillProvider`](https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/ext/skills/src/host_roots.rs#L35)
+also considers the actual profile, while system configuration uses the Windows
+ProgramData known folder. The custom provider avoids the traced remote model
+discovery and credential prewarm paths; no model turn is submitted.
+
 ## Recovery decision
 
 The current result is diagnostic-only. Rust makes the Windows primitives
