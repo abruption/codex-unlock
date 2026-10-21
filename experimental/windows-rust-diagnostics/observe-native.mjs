@@ -121,9 +121,19 @@ async function startupPreflight(env, home) {
     || !/^[A-Za-z]:\\/.test(folders.profile) || !/^[A-Za-z]:\\/.test(folders.common)) throw new Error('known_folders_unverified');
   const systemRoot = path.win32.join(folders.common, 'OpenAI', 'Codex');
   const absent = [path.win32.join(systemRoot, 'config.toml'), path.win32.join(systemRoot, 'requirements.toml'),
-    path.win32.join(systemRoot, 'skills'), path.win32.join(folders.profile, '.agents', 'skills')];
+    path.win32.join(systemRoot, 'skills')];
   for (const candidate of absent) await requireAbsent(candidate);
-  return { state: 'observed_absent', paths: absent, knownFolders: folders };
+  const profileSkillsPath = path.win32.join(folders.profile, '.agents', 'skills');
+  let profileSkills = 'absent';
+  try {
+    const metadata = await lstat(profileSkillsPath);
+    if (metadata.isSymbolicLink() || !metadata.isDirectory()) throw new Error('profile_skills_not_plain_directory');
+    profileSkills = 'present_readonly_discovery';
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  return { state: 'system_configuration_absent', paths: absent, knownFolders: folders,
+    profileSkills: { path: profileSkillsPath, state: profileSkills } };
 }
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function launch(binary, args, env, cwd, rpcMode = false) {

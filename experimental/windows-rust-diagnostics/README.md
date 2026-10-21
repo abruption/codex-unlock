@@ -117,9 +117,11 @@ The hash check does not pin the launched image against same-user replacement.
 
 Native startup is pinned to Codex 0.163.0. Before launch the observer obtains
 Windows known-folder paths through PowerShell and requires observed absence of
-the system Codex config, requirements and skills, plus actual-profile
-`.agents/skills`. Denied, reparse or existing entries stop the experiment; they
-are not modified. Invocation-only settings select a fresh file auth store,
+the system Codex config, requirements and skills. Denied, reparse or existing
+system entries stop the experiment; they are not modified. A plain existing
+actual-profile `.agents/skills` directory is recorded: native Codex may perform
+its normal read-only skill discovery there. The harness does not copy those
+contents or claim complete profile isolation. Invocation-only settings select a fresh file auth store,
 disable shell snapshots/hooks/plugins/code-mode prewarm, and use a custom
 unauthenticated provider at a temporary loopback listener. That listener closes
 connections without reading data; any connection makes the run partial. The
