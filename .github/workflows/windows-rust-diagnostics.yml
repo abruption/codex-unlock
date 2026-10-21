@@ -54,6 +54,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked --offline --no-run
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Validate native observer contracts
+        run: node --test test/*.test.mjs
       - name: Record measurement binary digests
         run: |
           $items = @(Get-Item target/debug/codex-unlock-windows-diagnostic.exe, target/debug/codex-unlock-windows-fixture.exe) + @(Get-ChildItem target/debug/deps/windows-*.exe)
