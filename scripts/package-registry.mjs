@@ -3,6 +3,21 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 
+// Keep corporate proxies for external dependency downloads, but make both
+// spellings agree that the local registry must always be reached directly.
+export function packageNpmEnvironment(environment) {
+  const entries = Object.entries(environment);
+  const bypass = entries.filter(([key]) => /^no_proxy$/i.test(key))
+    .flatMap(([, value]) => value.split(",")).map((value) => value.trim()).filter(Boolean);
+  const noProxy = [...new Set([...bypass, "127.0.0.1", "localhost", "::1"])].join(",");
+  return {
+    ...Object.fromEntries(entries.filter(([key]) =>
+      !/^npm_config_/i.test(key) && key !== "NODE_ENV" && !/^no_proxy$/i.test(key))),
+    NO_PROXY: noProxy,
+    no_proxy: noProxy,
+  };
+}
+
 // A fixed, read-only registry fixture. It never forwards client headers or
 // proxies arbitrary URLs, and never looks up the project on the public registry.
 export async function artifactRegistry(packages) {

@@ -16,7 +16,7 @@ import { parseFragment } from "parse5";
 import { parseSrcset } from "srcset";
 
 import { assertConsumerShrinkwrap, consumerShrinkwrap } from "./consumer-shrinkwrap.mjs";
-import { artifactRegistry, runtimeMetadata } from "./package-registry.mjs";
+import { artifactRegistry, packageNpmEnvironment, runtimeMetadata } from "./package-registry.mjs";
 
 const npmCli = process.env.npm_execpath;
 assert.ok(npmCli, "Run through npm run smoke:package");
@@ -162,8 +162,7 @@ const configPath = join(directory, "empty-npmrc");
 const globalConfigPath = join(directory, "empty-global-npmrc");
 writeFileSync(configPath, "");
 writeFileSync(globalConfigPath, "");
-const npmEnv = Object.fromEntries(Object.entries(process.env)
-  .filter(([key]) => !/^npm_config_/i.test(key) && key !== "NODE_ENV"));
+const npmEnv = packageNpmEnvironment(process.env);
 const npm = async (args, cwd = process.cwd()) =>
   (await promisify(execFile)(process.execPath, [npmCli,
     "--userconfig", configPath, "--globalconfig", globalConfigPath,
