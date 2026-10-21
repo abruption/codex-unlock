@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { log } from "node:console";
 import {
   constants, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync,
@@ -9,12 +9,14 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import process from "node:process";
+import { promisify } from "node:util";
 
 import { marked } from "marked";
 import { parseFragment } from "parse5";
 import { parseSrcset } from "srcset";
 
 import { assertConsumerShrinkwrap, consumerShrinkwrap } from "./consumer-shrinkwrap.mjs";
+import { artifactRegistry, runtimeMetadata } from "./package-registry.mjs";
 
 const npmCli = process.env.npm_execpath;
 assert.ok(npmCli, "Run through npm run smoke:package");
@@ -156,20 +158,30 @@ const installedPackages = (root) => {
 };
 
 const directory = mkdtempSync(join(tmpdir(), "codex-unlock-package-smoke-"));
-const npm = (args, cwd = process.cwd()) =>
-  execFileSync(process.execPath, [npmCli, ...args], {
+const configPath = join(directory, "empty-npmrc");
+const globalConfigPath = join(directory, "empty-global-npmrc");
+writeFileSync(configPath, "");
+writeFileSync(globalConfigPath, "");
+const npmEnv = Object.fromEntries(Object.entries(process.env)
+  .filter(([key]) => !/^npm_config_/i.test(key) && key !== "NODE_ENV"));
+const npm = async (args, cwd = process.cwd()) =>
+  (await promisify(execFile)(process.execPath, [npmCli,
+    "--userconfig", configPath, "--globalconfig", globalConfigPath,
+    "--update-notifier=false", ...args], {
     cwd,
+    env: npmEnv,
     encoding: "utf8",
     timeout: 120_000,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+    maxBuffer: 4 * 1024 * 1024,
+  })).stdout;
+let registry;
 
 try {
   // Written only for packing; restored or removed below so a stale
   // shrinkwrap never overrides package-lock.json for local installs.
   writeFileSync(shrinkwrapPath, `${JSON.stringify(shrinkwrap, null, 2)}\n`);
   const [packed] = JSON.parse(
-    npm(["pack", "--json", "--ignore-scripts", "--pack-destination", directory]),
+    await npm(["pack", "--json", "--ignore-scripts", "--pack-destination", directory]),
   );
   const expectedFiles = [
     "CHANGELOG.md",
@@ -216,9 +228,19 @@ try {
   );
 
   const cacheDirectory = join(directory, "npm-cache");
+  // File installs do not carry npm's registry _hasShrinkwrap metadata. Test
+  // the actual consumer registry protocol, using these exact packed bytes,
+  // not an already-published release. The strict runtime pin assertion below
+  // remains a required gate, including when a newer compatible nan exists.
+  registry = await artifactRegistry([
+    { manifest: workspaceManifest, tarball: readFileSync(join(directory, packed.filename)) },
+    ...await Promise.all(Object.keys(pinnedRuntime).map(runtimeMetadata)),
+  ]);
+  const registryArgs = ["--registry", registry.url, "--replace-registry-host=never"];
+  const packageSpec = `${workspaceManifest.name}@${workspaceManifest.version}`;
   const primeDirectory = join(directory, "cache-prime");
   mkdirSync(primeDirectory);
-  npm(
+  await npm(
     [
       "install",
       "--prefix",
@@ -228,15 +250,23 @@ try {
       "--ignore-scripts",
       "--no-audit",
       "--no-fund",
-      join(directory, packed.filename),
+      ...registryArgs,
+      packageSpec,
     ],
     primeDirectory,
   );
+  assert.ok(registry.requests.some(({ path }) => path === `/${workspaceManifest.name}`),
+    "Install must request the local registry metadata");
+  assert.ok(registry.requests.some(({ path }) => path ===
+    `/${workspaceManifest.name}/-/${workspaceManifest.name}-${workspaceManifest.version}.tgz`),
+  "Install must fetch the exact newly packed artifact from the local registry");
+  await registry.close();
+  registry = undefined;
   rmSync(primeDirectory, { recursive: true, force: true });
 
   const installDirectory = join(directory, "installation");
   mkdirSync(installDirectory);
-  npm(
+  await npm(
     [
       "install",
       "--prefix",
@@ -246,7 +276,8 @@ try {
       "--offline",
       "--no-audit",
       "--no-fund",
-      join(directory, packed.filename),
+      ...registryArgs,
+      packageSpec,
     ],
     installDirectory,
   );
@@ -325,16 +356,16 @@ try {
     /^#!\/usr\/bin\/env node/,
   );
   assert.equal(
-    npm(["exec", "--offline", "--", "codex-unlock", "--version"], installDirectory).trim(),
+    (await npm(["exec", "--offline", "--", "codex-unlock", "--version"], installDirectory)).trim(),
     manifest.version,
   );
   assert.match(
-    npm(["exec", "--offline", "--", "codex-unlock", "--help"], installDirectory),
+    await npm(["exec", "--offline", "--", "codex-unlock", "--help"], installDirectory),
     /codex-unlock/,
   );
   const emptyHome = join(directory, "empty-home");
   mkdirSync(emptyHome);
-  const jsonOutput = npm(
+  const jsonOutput = await npm(
     ["exec", "--offline", "--", "codex-unlock", "list", "--json", "--codex-home", emptyHome],
     installDirectory,
   );
@@ -394,7 +425,11 @@ try {
     log(`Verified release artifact: ${packed.filename}`);
   }
 } finally {
-  rmSync(directory, { recursive: true, force: true });
-  if (previousShrinkwrap === null) rmSync(shrinkwrapPath, { force: true });
-  else writeFileSync(shrinkwrapPath, previousShrinkwrap);
+  try {
+    if (registry) await registry.close();
+  } finally {
+    if (previousShrinkwrap === null) rmSync(shrinkwrapPath, { force: true });
+    else writeFileSync(shrinkwrapPath, previousShrinkwrap);
+    rmSync(directory, { recursive: true, force: true });
+  }
 }
