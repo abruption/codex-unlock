@@ -65,6 +65,11 @@ export function threadId(result) {
   if (typeof id !== 'string' || !UUID.test(id)) throw new Error('invalid_thread_id');
   return id;
 }
+export function validateThreadConfiguration(result) {
+  if (result?.modelProvider !== 'research' || result?.model !== 'research-no-turn'
+    || result?.approvalPolicy !== 'never' || result?.sandbox?.type !== 'readOnly'
+    || result?.sandbox?.networkAccess !== false) throw new Error('effective_configuration_unverified');
+}
 export function requests(home) {
   return [
     { id: 1, method: 'initialize', params: { clientInfo: { name: 'codex_unlock_observation', version: '0.0.0' } } },
@@ -111,14 +116,19 @@ export async function requireAbsent(candidate, statPath = lstat) {
     if (!stat.isDirectory()) throw new Error('startup_parent_not_directory');
   }
 }
+export async function knownFolders(value, resolveDirectory = (input) => plainAbsolute(input, true)) {
+  if (!value || typeof value.profile !== 'string' || typeof value.common !== 'string'
+    || !/^[A-Za-z]:\\/.test(value.profile) || !/^[A-Za-z]:\\/.test(value.common)
+    || value.profile.includes('\uFFFD') || value.common.includes('\uFFFD')) throw new Error('known_folders_unverified');
+  // A corrupted or nonexistent base must never become proof of config absence.
+  return { profile: await resolveDirectory(value.profile), common: await resolveDirectory(value.common) };
+}
+export const KNOWN_FOLDER_QUERY = '[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); [pscustomobject]@{profile=[Environment]::GetFolderPath("UserProfile");common=[Environment]::GetFolderPath("CommonApplicationData")} | ConvertTo-Json -Compress';
 async function startupPreflight(env, home) {
   const powershell = path.win32.join(env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const query = '[pscustomobject]@{profile=[Environment]::GetFolderPath("UserProfile");common=[Environment]::GetFolderPath("CommonApplicationData")} | ConvertTo-Json -Compress';
-  const result = await runOnce(powershell, ['-NoProfile', '-NonInteractive', '-Command', query], env, home);
+  const result = await runOnce(powershell, ['-NoProfile', '-NonInteractive', '-Command', KNOWN_FOLDER_QUERY], env, home);
   if (result.exit?.code !== 0 || !result.complete || result.faults.length) throw new Error('known_folders_unverified');
-  const folders = JSON.parse(result.stdout);
-  if (!folders || typeof folders.profile !== 'string' || typeof folders.common !== 'string'
-    || !/^[A-Za-z]:\\/.test(folders.profile) || !/^[A-Za-z]:\\/.test(folders.common)) throw new Error('known_folders_unverified');
+  const folders = await knownFolders(JSON.parse(result.stdout));
   const systemRoot = path.win32.join(folders.common, 'OpenAI', 'Codex');
   const absent = [path.win32.join(systemRoot, 'config.toml'), path.win32.join(systemRoot, 'requirements.toml'),
     path.win32.join(systemRoot, 'skills')];
@@ -255,12 +265,14 @@ export function parseDiagnostic(record, request) {
   const value = JSON.parse(record.stdout);
   requireSchema(object(value) && value.schemaVersion === 1 && value.safeToUnlock === false && value.experimental === true && value.platform === 'windows');
   if (request?.command === 'capabilities') {
+    requireSchema(exactKeys(value, ['schemaVersion', 'safeToUnlock', 'experimental', 'platform', 'architecture', 'diagnosticsAvailable', 'commands', 'supportedFilesystems', 'holderAttribution', 'recoveryAvailable', 'probeEffects', 'prototypeVersion']));
     requireSchema(record.exit.code === 0 && value.diagnosticsAvailable === true && value.recoveryAvailable === false
       && value.holderAttribution === 'unproven' && typeof value.prototypeVersion === 'string' && /^\d+\.\d+\.\d+$/.test(value.prototypeVersion)
       && ['x86_64', 'aarch64', 'x86'].includes(value.architecture)
       && JSON.stringify(value.commands) === JSON.stringify(['capabilities', 'inspect'])
       && JSON.stringify(value.supportedFilesystems) === JSON.stringify(['NTFS']) && text(value.probeEffects));
   } else {
+    requireSchema(exactKeys(value, ['schemaVersion', 'safeToUnlock', 'experimental', 'platform', 'requestedPid', 'lock', 'observation']));
     requireSchema(request?.command === 'inspect' && (request.pid === null || integer(request.pid, 1))
       && text(request.home) && UUID.test(request.thread) && value.requestedPid === request.pid);
     const observation = value.observation;
@@ -369,7 +381,7 @@ export async function main(argv) {
     report.initialize = await server.rpc(initialize, 10000);
     await server.rpc(initialized, 0);
     report.threadStart = await server.rpc(start, 15000);
-    if (report.threadStart?.modelProvider !== 'research' || report.threadStart?.model !== 'research-no-turn') throw new Error('effective_provider_unverified');
+    validateThreadConfiguration(report.threadStart);
     const id = threadId(report.threadStart);
     if (!Number.isInteger(server.state.pid) || server.state.pid <= 0) throw new Error('missing_server_pid');
     report.nativeFilesBeforeInspection = await nativeFilePresence(report.home, id);

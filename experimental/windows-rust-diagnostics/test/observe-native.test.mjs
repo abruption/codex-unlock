@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { response, requests, threadId, RpcTranscript, parseDiagnostic, isEntryPoint, nativeArguments, requireAbsent } from '../observe-native.mjs';
+import { response, requests, threadId, RpcTranscript, parseDiagnostic, isEntryPoint, nativeArguments, requireAbsent, knownFolders, KNOWN_FOLDER_QUERY, validateThreadConfiguration } from '../observe-native.mjs';
 test('responses need exactly one outcome and the expected ID', () => {
   assert.deepEqual(response({ id: 1, result: {} }, 1), {});
   for (const record of [null, [], { id: 1 }, { id: 1, result: {}, error: {} }, { id: 2, result: {} }, { id: 1, error: {} }]) {
@@ -41,6 +41,7 @@ test('diagnostic rejects minimal output, wrong platform, snapshot, process and e
   assert.throws(() => parseDiagnostic(record({ schemaVersion: 1, safeToUnlock: false }), request));
   const mutations = [
     (v) => { v.platform = 'linux'; }, (v) => { v.experimental = false; }, (v) => { v.safeToUnlock = true; },
+    (v) => { v.holderAttribution = 'proven'; }, (v) => { v.recoveryAvailable = true; },
     (v) => { v.requestedPid += 1; }, (v) => { v.lock.state = 'free'; }, (v) => { v.lock.reason = 'unexpected'; },
     (v) => { delete v.observation.coordination; }, (v) => { v.observation.holder = 'proven'; },
     (v) => { v.observation.fileOwnerSelf = false; }, (v) => { v.observation.range = 'partial'; },
@@ -75,6 +76,7 @@ test('capabilities require the supported Windows contract and exit zero', () => 
     assert.throws(() => parseDiagnostic(record({ ...value, [key]: invalid }), { command: 'capabilities' }));
   }
   assert.throws(() => parseDiagnostic(record(value, 2), { command: 'capabilities' }));
+  assert.throws(() => parseDiagnostic(record({ ...value, authorization: 'granted' }), { command: 'capabilities' }));
 });
 function completeTranscript() {
   const transcript = new RpcTranscript();
@@ -146,8 +148,26 @@ test('pinned native startup uses a no-auth loopback provider and disables startu
 test('startup path gate accepts only observed absence, never denial or reparse', async () => {
   const directory = { isSymbolicLink: () => false, isDirectory: () => true };
   const missing = Object.assign(new Error('missing'), { code: 'ENOENT' });
-  await requireAbsent('C:\\Users\\user\\.agents\\skills', async () => { throw missing; });
-  await assert.rejects(requireAbsent('C:\\Users\\user\\.agents\\skills', async () => directory), /external_startup_configuration_present/);
-  await assert.rejects(requireAbsent('C:\\Users\\user\\.agents\\skills', async () => ({ ...directory, isSymbolicLink: () => true })), /startup_path_reparse/);
-  await assert.rejects(requireAbsent('C:\\Users\\user\\.agents\\skills', async () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); }), /startup_path_unreadable/);
+  await requireAbsent('C:\\ProgramData\\OpenAI\\Codex\\config.toml', async () => { throw missing; });
+  await assert.rejects(requireAbsent('C:\\ProgramData\\OpenAI\\Codex\\config.toml', async () => directory), /external_startup_configuration_present/);
+  await assert.rejects(requireAbsent('C:\\ProgramData\\OpenAI\\Codex\\config.toml', async () => ({ ...directory, isSymbolicLink: () => true })), /startup_path_reparse/);
+  await assert.rejects(requireAbsent('C:\\ProgramData\\OpenAI\\Codex\\config.toml', async () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); }), /startup_path_unreadable/);
+});
+test('known-folder bases must be valid UTF-8 and existing plain directories before absence checks', async () => {
+  const value = { profile: 'C:\\Users\\한글', common: 'C:\\ProgramData' };
+  const seen = [];
+  assert.deepEqual(await knownFolders(value, async (candidate) => { seen.push(candidate); return candidate; }), value);
+  assert.deepEqual(seen, [value.profile, value.common]);
+  assert.ok(KNOWN_FOLDER_QUERY.startsWith('[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);'));
+  await assert.rejects(knownFolders({ ...value, profile: 'C:\\Users\\\uFFFD' }), /known_folders_unverified/);
+  await assert.rejects(knownFolders(value, async () => { throw Object.assign(new Error('missing base'), { code: 'ENOENT' }); }), /missing base/);
+});
+test('effective thread model and read-only approval/network configuration are enforced', () => {
+  const value = { model: 'research-no-turn', modelProvider: 'research', approvalPolicy: 'never', sandbox: { type: 'readOnly', networkAccess: false } };
+  validateThreadConfiguration(value);
+  for (const changed of [{ ...value, approvalPolicy: 'on-request' }, { ...value, model: 'other' },
+    { ...value, modelProvider: 'openai' }, { ...value, sandbox: { type: 'readOnly', networkAccess: true } },
+    { ...value, sandbox: { type: 'dangerFullAccess', networkAccess: false } }, { ...value, sandbox: null }]) {
+    assert.throws(() => validateThreadConfiguration(changed), /effective_configuration_unverified/);
+  }
 });
