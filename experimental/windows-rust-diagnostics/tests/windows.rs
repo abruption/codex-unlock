@@ -4,6 +4,7 @@
 use serde_json::Value;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
@@ -275,7 +276,8 @@ fn junction_ancestor_is_refused() {
         fixture.home.display()
     );
     let created = Command::new("cmd.exe")
-        .args(["/D", "/V:OFF", "/C", &script])
+        .args(["/D", "/V:OFF", "/C"])
+        .raw_arg(&script)
         .output()
         .unwrap();
     assert!(
