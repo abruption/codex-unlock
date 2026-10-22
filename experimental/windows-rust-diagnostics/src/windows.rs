@@ -212,7 +212,10 @@ fn token_info(t: &Handle, class: TOKEN_INFORMATION_CLASS) -> Result<Vec<usize>> 
             t.0,
             class,
             b.as_mut_ptr().cast(),
-            (b.len() * size_of::<usize>()) as u32,
+            // Allocation is rounded only for alignment. Fixed-size classes
+            // (including TokenIsAppContainer) require their reported byte
+            // length, not the padded usize allocation length.
+            needed,
             &mut needed,
         )
     } == 0
@@ -514,6 +517,14 @@ pub fn inspect(home: &str, thread_id: &str, pid: Option<u32>) -> Value {
 mod tests {
     use super::*;
     const ID: &str = "12345678-1234-1234-1234-123456789abc";
+    #[test]
+    fn current_token_fixed_size_queries_use_reported_byte_lengths() {
+        let context = preview_context();
+        assert_eq!(context["state"], "observed", "{context}");
+        assert!(context["integrityRid"].is_u64());
+        assert!(context["elevated"].is_boolean());
+        assert!(context["appContainer"].is_boolean());
+    }
     #[test]
     fn local_path_grammar_rejects_aliases_and_redirecting_spellings() {
         for home in [
