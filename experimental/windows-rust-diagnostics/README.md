@@ -2,7 +2,9 @@
 
 The standalone [Windows diagnostic preview](PREVIEW.md) adds a separate
 `codex-unlock-windows.exe` with human/JSON output and a mandatory Medium-token
-boundary. The research executable described below retains its existing behavior.
+boundary. Its [release-byte verification](PREVIEW-EVIDENCE.md) includes actual
+High refusal and Medium native contention. The research executable below keeps
+its command/output interface and native lock-probing policy.
 
 This unpublished prototype observes explicitly selected Windows lock files and
 an optional PID. It implements no recovery command. Every JSON result includes
