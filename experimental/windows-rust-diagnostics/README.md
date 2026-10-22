@@ -1,5 +1,9 @@
 # Diagnostic-only Rust Windows prototype
 
+The standalone [Windows diagnostic preview](PREVIEW.md) adds a separate
+`codex-unlock-windows.exe` with human/JSON output and a mandatory Medium-token
+boundary. The research executable described below retains its existing behavior.
+
 This unpublished prototype observes explicitly selected Windows lock files and
 an optional PID. It implements no recovery command. Every JSON result includes
 `safeToUnlock: false`; `held` means an OS lock conflicted, not that the supplied
@@ -107,6 +111,13 @@ confirmed normal exit. This tests one self-started app-server mode only.
 node observe-native.mjs --binary C:\private-lab\codex.exe --sha256 <sha256> --diagnostic C:\private-lab\codex-unlock-windows-diagnostic.exe --parent C:\private-lab\measurements --result C:\private-lab\measurements\native.json
 ```
 
+To measure the standalone preview instead, select its executable with
+`--diagnostic C:\private-lab\codex-unlock-windows.exe --diagnostic-format preview
+--diagnostic-sha256 <manifest-binary-sha256>`.
+The collector requires the preview's Medium/non-elevated/non-AppContainer
+capability result and validates its envelope plus the nested native observation.
+The default `--diagnostic-format research` retains the research binary protocol.
+
 The parent must already be a trusted, private, plain directory outside real
 Codex homes. It is not an adversarial-path/ACL verifier. Results and the newly
 created native home are retained for inspection. Capture and parent waits are
@@ -114,6 +125,9 @@ bounded, but a child blocked in an OS call can remain alive: the observer sends
 EOF and records incomplete status, never force-terminates it. `collected` means
 the sequence completed, not that diagnostics were positive or recovery passed.
 The hash check does not pin the launched image against same-user replacement.
+The diagnostic executable is rehashed before and after every invocation;
+detected drift makes collection partial while preserving an executed result.
+These path-based samples still do not provide an atomic executable binding.
 
 Native startup is pinned to Codex 0.163.0. Before launch the observer obtains
 Windows known-folder paths through PowerShell and requires observed absence of

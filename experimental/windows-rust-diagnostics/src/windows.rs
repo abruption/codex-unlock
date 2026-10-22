@@ -466,6 +466,35 @@ fn inspect_inner(home: &str, thread: &str) -> Result<Value> {
     )
 }
 
+/// Current process token only: never opens native files or a requested PID.
+/// Kept separate so the research observer retains its original behavior.
+#[allow(dead_code)]
+pub fn preview_context() -> Value {
+    fn query() -> Result<Value> {
+        let t = token(unsafe { GetCurrentProcess() })?;
+        let integrity = token_info(&t, TokenIntegrityLevel)?;
+        let sid = unsafe {
+            (*(integrity.as_ptr() as *const TOKEN_MANDATORY_LABEL))
+                .Label
+                .Sid
+        };
+        if sid.is_null() || unsafe { IsValidSid(sid) } == 0 {
+            return Err(fail("integrity_sid_invalid"));
+        }
+        let count = unsafe { *GetSidSubAuthorityCount(sid) };
+        if count == 0 {
+            return Err(fail("integrity_sid_invalid"));
+        }
+        let rid = unsafe { *GetSidSubAuthority(sid, u32::from(count - 1)) };
+        let elevation = token_info(&t, TokenElevation)?;
+        let container = token_info(&t, TokenIsAppContainer)?;
+        Ok(json!({"state":"observed", "integrityRid":rid,
+            "elevated":unsafe { (*(elevation.as_ptr() as *const TOKEN_ELEVATION)).TokenIsElevated != 0 },
+            "appContainer":unsafe { *(container.as_ptr() as *const u32) != 0 }}))
+    }
+    query().unwrap_or_else(failure_value)
+}
+
 pub fn inspect(home: &str, thread_id: &str, pid: Option<u32>) -> Value {
     // The requested PID observation is independent and survives a lock refusal.
     // Its handle closes before any coordination lock is acquired.
