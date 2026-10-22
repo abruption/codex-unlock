@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { response, requests, threadId, RpcTranscript, parseDiagnostic, isEntryPoint, nativeArguments, requireAbsent, knownFolders, KNOWN_FOLDER_QUERY, validateThreadConfiguration } from '../observe-native.mjs';
+import { response, requests, threadId, RpcTranscript, parseDiagnostic, parsePreviewDiagnostic, parseObserverOptions, runVerifiedDiagnostic, isEntryPoint, nativeArguments, requireAbsent, knownFolders, KNOWN_FOLDER_QUERY, validateThreadConfiguration } from '../observe-native.mjs';
 test('responses need exactly one outcome and the expected ID', () => {
   assert.deepEqual(response({ id: 1, result: {} }, 1), {});
   for (const record of [null, [], { id: 1 }, { id: 1, result: {}, error: {} }, { id: 2, result: {} }, { id: 1, error: {} }]) {
@@ -77,6 +77,79 @@ test('capabilities require the supported Windows contract and exit zero', () => 
   }
   assert.throws(() => parseDiagnostic(record(value, 2), { command: 'capabilities' }));
   assert.throws(() => parseDiagnostic(record({ ...value, authorization: 'granted' }), { command: 'capabilities' }));
+});
+const previewEnvelope = () => ({ schema: 'codex-unlock-windows-preview', schemaVersion: 1, preview: true,
+  experimental: true, version: '0.0.0', platform: 'windows', architecture: 'x86_64', safeToUnlock: false,
+  recoveryAvailable: false, context: { state: 'observed', integrityRid: 8192, elevated: false, appContainer: false },
+  diagnosticsAvailable: true });
+function previewInspect() {
+  const diagnostic = liveValue();
+  return { ...previewEnvelope(), command: 'inspect', requestedPid: request.pid,
+    requestedPidEvidence: 'requested_pid_only_not_holder', lock: { ...diagnostic.lock }, diagnostic,
+    reason: 'diagnostic_observation_only' };
+}
+test('preview observer validates Medium context and nested observation without losing raw output', () => {
+  const value = previewInspect();
+  const result = parsePreviewDiagnostic(record(value), request);
+  assert.deepEqual(result.preview, value);
+  assert.deepEqual(result.parsed, value.diagnostic);
+  assert.equal(result.stdout, JSON.stringify(value));
+  const mutations = [
+    (v) => { v.context.integrityRid = 12288; }, (v) => { v.context.elevated = true; },
+    (v) => { v.context.appContainer = true; }, (v) => { delete v.context.elevated; },
+    (v) => { v.diagnosticsAvailable = false; }, (v) => { v.safeToUnlock = true; },
+    (v) => { v.requestedPid += 1; }, (v) => { v.lock.state = 'free'; },
+    (v) => { v.reason = 'requested_process_unverified'; }, (v) => { delete v.diagnostic; },
+    (v) => { v.diagnostic.observation.process.pid += 1; }, (v) => { v.schema = 'other'; },
+    (v) => { v.extra = true; }, (v) => { v.context.state = 'unknown'; },
+  ];
+  for (const mutate of mutations) {
+    const changed = previewInspect(); mutate(changed);
+    assert.throws(() => parsePreviewDiagnostic(record(changed), request), mutate.toString());
+  }
+  assert.throws(() => parsePreviewDiagnostic(record(value, 2), request));
+});
+test('preview capabilities must prove the supported caller context before native observation', () => {
+  const value = { ...previewEnvelope(), command: 'capabilities', commands: ['capabilities', 'inspect'],
+    supportedFilesystems: ['NTFS'], holderAttribution: 'unproven', reason: 'diagnostic_preview_available' };
+  assert.equal(parsePreviewDiagnostic(record(value), { command: 'capabilities' }).parsed.version, '0.0.0');
+  for (const changed of [{ ...value, diagnosticsAvailable: false }, { ...value, reason: 'current_token_unknown' },
+    { ...value, commands: ['capabilities', 'inspect', 'unlock'] }, { ...value, architecture: 'aarch64' },
+    { ...value, context: { state: 'unknown', reason: 'token_open_failed', win32: 5 } }]) {
+    assert.throws(() => parsePreviewDiagnostic(record(changed), { command: 'capabilities' }));
+  }
+});
+test('diagnostic digest checks block changed input and retain executed records after drift', async () => {
+  const pin = 'a'.repeat(64);
+  let calls = 0;
+  const run = async () => { calls += 1; return record(liveValue()); };
+  await assert.rejects(runVerifiedDiagnostic('diag.exe', [], {}, 'C:\\lab', pin,
+    { digest: async () => 'b'.repeat(64), run }), /diagnostic_changed_before_launch/);
+  assert.equal(calls, 0);
+  const stable = await runVerifiedDiagnostic('diag.exe', [], {}, 'C:\\lab', pin, { digest: async () => pin, run });
+  assert.deepEqual(stable.faults, []);
+  for (const after of ['b'.repeat(64), new Error('read failure')]) {
+    let hashes = 0;
+    const changed = await runVerifiedDiagnostic('diag.exe', [], {}, 'C:\\lab', pin, {
+      run, digest: async () => { hashes += 1; if (hashes === 1) return pin; if (after instanceof Error) throw after; return after; },
+    });
+    assert.equal(changed.stdout, JSON.stringify(liveValue()));
+    assert.equal(changed.faults.length, 1);
+    assert.throws(() => parseDiagnostic(changed, request), /diagnostic_incomplete/);
+  }
+  assert.equal(calls, 3);
+});
+test('preview observer requires a manifest diagnostic digest without changing research defaults', () => {
+  const args = ['--binary', 'C:\\codex.exe', '--sha256', 'a'.repeat(64), '--diagnostic', 'C:\\diag.exe',
+    '--parent', 'C:\\private', '--result', 'C:\\private\\result.json'];
+  assert.equal(parseObserverOptions(args).diagnosticFormat, 'research');
+  assert.throws(() => parseObserverOptions([...args, '--diagnostic-format', 'preview']), /diagnostic_digest_required/);
+  for (const pin of ['', 'bad', 'a'.repeat(63)]) {
+    assert.throws(() => parseObserverOptions([...args, '--diagnostic-format', 'preview', '--diagnostic-sha256', pin]));
+  }
+  const valid = [...args, '--diagnostic-format', 'preview', '--diagnostic-sha256', 'b'.repeat(64)];
+  assert.equal(parseObserverOptions(valid).options['--diagnostic-sha256'], 'b'.repeat(64));
+  assert.throws(() => parseObserverOptions([...valid, '--diagnostic-sha256', 'c'.repeat(64)]), /usage/);
 });
 function completeTranscript() {
   const transcript = new RpcTranscript();

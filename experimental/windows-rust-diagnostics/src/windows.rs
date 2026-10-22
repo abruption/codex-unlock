@@ -212,7 +212,10 @@ fn token_info(t: &Handle, class: TOKEN_INFORMATION_CLASS) -> Result<Vec<usize>> 
             t.0,
             class,
             b.as_mut_ptr().cast(),
-            (b.len() * size_of::<usize>()) as u32,
+            // Allocation is rounded only for alignment. Fixed-size classes
+            // (including TokenIsAppContainer) require their reported byte
+            // length, not the padded usize allocation length.
+            needed,
             &mut needed,
         )
     } == 0
@@ -466,6 +469,35 @@ fn inspect_inner(home: &str, thread: &str) -> Result<Value> {
     )
 }
 
+/// Current process token only: never opens native files or a requested PID.
+/// Kept separate so the research observer retains its original behavior.
+#[allow(dead_code)]
+pub fn preview_context() -> Value {
+    fn query() -> Result<Value> {
+        let t = token(unsafe { GetCurrentProcess() })?;
+        let integrity = token_info(&t, TokenIntegrityLevel)?;
+        let sid = unsafe {
+            (*(integrity.as_ptr() as *const TOKEN_MANDATORY_LABEL))
+                .Label
+                .Sid
+        };
+        if sid.is_null() || unsafe { IsValidSid(sid) } == 0 {
+            return Err(fail("integrity_sid_invalid"));
+        }
+        let count = unsafe { *GetSidSubAuthorityCount(sid) };
+        if count == 0 {
+            return Err(fail("integrity_sid_invalid"));
+        }
+        let rid = unsafe { *GetSidSubAuthority(sid, u32::from(count - 1)) };
+        let elevation = token_info(&t, TokenElevation)?;
+        let container = token_info(&t, TokenIsAppContainer)?;
+        Ok(json!({"state":"observed", "integrityRid":rid,
+            "elevated":unsafe { (*(elevation.as_ptr() as *const TOKEN_ELEVATION)).TokenIsElevated != 0 },
+            "appContainer":unsafe { *(container.as_ptr() as *const u32) != 0 }}))
+    }
+    query().unwrap_or_else(failure_value)
+}
+
 pub fn inspect(home: &str, thread_id: &str, pid: Option<u32>) -> Value {
     // The requested PID observation is independent and survives a lock refusal.
     // Its handle closes before any coordination lock is acquired.
@@ -485,6 +517,14 @@ pub fn inspect(home: &str, thread_id: &str, pid: Option<u32>) -> Value {
 mod tests {
     use super::*;
     const ID: &str = "12345678-1234-1234-1234-123456789abc";
+    #[test]
+    fn current_token_fixed_size_queries_use_reported_byte_lengths() {
+        let context = preview_context();
+        assert_eq!(context["state"], "observed", "{context}");
+        assert!(context["integrityRid"].is_u64());
+        assert!(context["elevated"].is_boolean());
+        assert!(context["appContainer"].is_boolean());
+    }
     #[test]
     fn local_path_grammar_rejects_aliases_and_redirecting_spellings() {
         for home in [

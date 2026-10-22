@@ -239,6 +239,18 @@ async function runOnce(binary, args, env, cwd, ms = 10000) {
   return command.state;
 }
 async function digest(file) { const hash = createHash('sha256'); for await (const chunk of createReadStream(file)) hash.update(chunk); return hash.digest('hex'); }
+export async function runVerifiedDiagnostic(binary, args, env, cwd, expected, dependencies = {}) {
+  const hash = dependencies.digest ?? digest;
+  const run = dependencies.run ?? runOnce;
+  if (await hash(binary) !== expected) throw new Error('diagnostic_changed_before_launch');
+  const record = await run(binary, args, env, cwd);
+  try {
+    if (await hash(binary) !== expected) record.faults.push('diagnostic_changed_after_run');
+  } catch {
+    record.faults.push('diagnostic_digest_recheck_failed');
+  }
+  return record;
+}
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const integer = (value, min = 0, max = 0xffffffff) => Number.isInteger(value) && value >= min && value <= max;
 const text = (value) => typeof value === 'string' && value.length > 0;
@@ -303,6 +315,44 @@ export function parseDiagnostic(record, request) {
   record.parsed = value;
   return record;
 }
+// Preview is a distinct envelope. Validate it before accepting the unchanged
+// research observation nested inside; raw stdout remains the preview output.
+export function parsePreviewDiagnostic(record, request) {
+  if (![0, 2].includes(record.exit?.code) || record.exit?.signal !== null || !record.complete
+    || !Array.isArray(record.faults) || record.faults.length) throw new Error('diagnostic_incomplete');
+  const value = JSON.parse(record.stdout);
+  const common = ['schema', 'schemaVersion', 'preview', 'experimental', 'version', 'platform', 'architecture',
+    'safeToUnlock', 'recoveryAvailable', 'context', 'diagnosticsAvailable', 'command', 'reason'];
+  requireSchema(object(value) && value.schema === 'codex-unlock-windows-preview' && value.schemaVersion === 1
+    && value.preview === true && value.experimental === true && value.safeToUnlock === false
+    && value.recoveryAvailable === false && value.platform === 'windows' && value.architecture === 'x86_64'
+    && value.version === '0.0.0' && value.diagnosticsAvailable === true
+    && exactKeys(value.context, ['state', 'integrityRid', 'elevated', 'appContainer'])
+    && value.context.state === 'observed' && value.context.integrityRid === 8192
+    && value.context.elevated === false && value.context.appContainer === false);
+  if (request?.command === 'capabilities') {
+    requireSchema(exactKeys(value, [...common, 'commands', 'supportedFilesystems', 'holderAttribution'])
+      && value.command === 'capabilities' && record.exit.code === 0
+      && value.reason === 'diagnostic_preview_available' && value.holderAttribution === 'unproven'
+      && JSON.stringify(value.commands) === JSON.stringify(['capabilities', 'inspect'])
+      && JSON.stringify(value.supportedFilesystems) === JSON.stringify(['NTFS']));
+    record.parsed = value;
+  } else {
+    requireSchema(exactKeys(value, [...common, 'requestedPid', 'requestedPidEvidence', 'lock', 'diagnostic'])
+      && value.command === 'inspect' && value.requestedPid === request.pid
+      && value.requestedPidEvidence === 'requested_pid_only_not_holder');
+    const nested = parseDiagnostic({ ...record, stdout: JSON.stringify(value.diagnostic) }, request).parsed;
+    requireSchema(exactKeys(value.lock, ['state', 'reason', 'win32'])
+      && ['state', 'reason', 'win32'].every((key) => value.lock[key] === nested.lock[key]));
+    const p = nested.observation.process;
+    const expectedReason = nested.lock.state === 'unknown' ? nested.lock.reason
+      : p !== null && (p.state !== 'observed' || !p.sameUser) ? 'requested_process_unverified' : 'diagnostic_observation_only';
+    requireSchema(value.reason === expectedReason);
+    record.parsed = nested;
+  }
+  record.preview = value;
+  return record;
+}
 function inside(candidate, parent) {
   const relative = path.win32.relative(parent.toLowerCase(), candidate.toLowerCase());
   return relative === '' || (!relative.startsWith('..\\') && relative !== '..' && !path.win32.isAbsolute(relative));
@@ -332,15 +382,27 @@ export function isEntryPoint(entry, moduleUrl, platform = process.platform, reso
   const modulePath = resolve(fileURLToPath(moduleUrl));
   return platform === 'win32' ? entryPath.toLowerCase() === modulePath.toLowerCase() : entryPath === modulePath;
 }
-export async function main(argv) {
-  if (process.platform !== 'win32') throw new Error('windows_required');
+export function parseObserverOptions(argv) {
   const options = {};
   for (let i = 0; i < argv.length; i += 2) {
     const key = argv[i];
-    if (!['--binary', '--sha256', '--diagnostic', '--parent', '--result'].includes(key) || options[key] || !argv[i + 1]) throw new Error('usage');
+    if (!['--binary', '--sha256', '--diagnostic', '--parent', '--result', '--diagnostic-format', '--diagnostic-sha256'].includes(key) || options[key] || !argv[i + 1]) throw new Error('usage');
     options[key] = argv[i + 1];
   }
-  if (Object.keys(options).length !== 5 || !/^[0-9a-f]{64}$/i.test(options['--sha256'])) throw new Error('usage');
+  if (!['--binary', '--sha256', '--diagnostic', '--parent', '--result'].every((key) => options[key])
+    || !/^[0-9a-f]{64}$/i.test(options['--sha256'])) throw new Error('usage');
+  const diagnosticFormat = options['--diagnostic-format'] ?? 'research';
+  if (!['research', 'preview'].includes(diagnosticFormat)) throw new Error('usage');
+  if ((diagnosticFormat === 'preview' || options['--diagnostic-sha256'] !== undefined)
+    && !/^[0-9a-f]{64}$/i.test(options['--diagnostic-sha256'] ?? '')) throw new Error('diagnostic_digest_required');
+  return { options, diagnosticFormat };
+}
+export async function main(argv) {
+  if (process.platform !== 'win32') throw new Error('windows_required');
+  const { options, diagnosticFormat } = parseObserverOptions(argv);
+  const expectedDiagnostic = options['--diagnostic-sha256']?.toLowerCase();
+  const jsonArgs = diagnosticFormat === 'preview' ? ['--json'] : [];
+  const parseOutput = diagnosticFormat === 'preview' ? parsePreviewDiagnostic : parseDiagnostic;
   const binary = await plainAbsolute(options['--binary'], false);
   const diagnostic = await plainAbsolute(options['--diagnostic'], false);
   const parent = await plainAbsolute(options['--parent'], true);
@@ -358,9 +420,11 @@ export async function main(argv) {
   const report = { schemaVersion: 1, safeToUnlock: false, mode: 'own_stdio_appserver_no_model_turn',
     holderAttribution: 'unproven', status: 'partial', binarySha256: expected, diagnosticSha256: null,
     diagnosticVersion: null, home: null, observations: [], server: null, reason: null };
+  if (diagnosticFormat === 'preview') report.diagnosticFormat = diagnosticFormat;
   let server, trap;
   try {
     report.diagnosticSha256 = await digest(diagnostic);
+    if (expectedDiagnostic !== undefined && report.diagnosticSha256 !== expectedDiagnostic) throw new Error('diagnostic_digest_mismatch');
     report.home = await mkdtemp(path.join(parent, 'codex-native-observation-'));
     const env = envFor(report.home, parent);
     report.startupPreflight = await startupPreflight(env, report.home);
@@ -370,9 +434,11 @@ export async function main(argv) {
     if (version.exit?.code !== 0 || version.faults.length) throw new Error('version_failed');
     if (version.stdout.trim() !== 'codex-cli 0.163.0') throw new Error('upstream_version_not_reviewed');
     report.upstreamCommit = '83086188ae0614bd882818ff1aa23f3194962012';
-    report.capabilities = await runOnce(diagnostic, ['capabilities'], env, report.home);
-    parseDiagnostic(report.capabilities, { command: 'capabilities' });
-    report.diagnosticVersion = report.capabilities.parsed.prototypeVersion ?? null;
+    const runDiagnostic = (args) => runVerifiedDiagnostic(diagnostic, args, env, report.home, report.diagnosticSha256);
+    report.capabilities = await runDiagnostic(['capabilities', ...jsonArgs]);
+    parseOutput(report.capabilities, { command: 'capabilities' });
+    report.diagnosticVersion = diagnosticFormat === 'preview'
+      ? report.capabilities.parsed.version : report.capabilities.parsed.prototypeVersion;
     if (await digest(binary) !== expected) throw new Error('binary_changed_before_launch');
     trap = await loopbackTrap();
     report.nativeArguments = nativeArguments(trap.port);
@@ -385,17 +451,17 @@ export async function main(argv) {
     const id = threadId(report.threadStart);
     if (!Number.isInteger(server.state.pid) || server.state.pid <= 0) throw new Error('missing_server_pid');
     report.nativeFilesBeforeInspection = await nativeFilePresence(report.home, id);
-    const live = await runOnce(diagnostic,
-      ['inspect', '--home', report.home, '--thread', id, '--pid', String(server.state.pid)], env, report.home);
+    const live = await runDiagnostic(
+      ['inspect', '--home', report.home, '--thread', id, '--pid', String(server.state.pid), ...jsonArgs]);
     report.observations.push({ phase: 'server_live', result: live });
-    parseDiagnostic(live, { command: 'inspect', home: report.home, thread: id, pid: server.state.pid });
+    parseOutput(live, { command: 'inspect', home: report.home, thread: id, pid: server.state.pid });
     report.server = await server.stop();
     server = null;
     if (!report.server.exit || !report.server.complete || report.server.faults.length || report.server.exit.code !== 0) throw new Error('server_exit_unconfirmed');
     report.nativeFilesAfterExit = await nativeFilePresence(report.home, id);
-    const after = await runOnce(diagnostic, ['inspect', '--home', report.home, '--thread', id], env, report.home);
+    const after = await runDiagnostic(['inspect', '--home', report.home, '--thread', id, ...jsonArgs]);
     report.observations.push({ phase: 'after_server_exit', result: after });
-    parseDiagnostic(after, { command: 'inspect', home: report.home, thread: id, pid: null });
+    parseOutput(after, { command: 'inspect', home: report.home, thread: id, pid: null });
     if (trap.count() !== 0) throw new Error('unexpected_provider_connection');
     report.status = 'collected'; // Observation completion is not a passing product gate.
   } catch (error) {
