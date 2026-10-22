@@ -132,6 +132,68 @@ installed dependency tree and its counts are not a claim that the single
 provenance, an integrity mismatch, or an invalid signature blocks release
 verification even if installation succeeds.
 
+## Windows prerelease preparation
+
+The Windows diagnostic channel uses separate Release Please files:
+`release-please-windows-config.json` and
+`.release-please-windows-manifest.json`. The Rust component's first target is
+`0.5.0-alpha.1`, tagged `windows-v0.5.0-alpha.1`; the stable npm package stays at
+0.4.7. Do not merge the Node release PR as a substitute for Windows preparation.
+
+The **Windows prerelease preparation** workflow runs only by manual dispatch
+on `main`. It has two operations:
+
+Before either dispatch, a maintainer must run
+`gh api repos/abruption/codex-unlock/immutable-releases` and confirm
+`enabled: true`. This read requires administration permission, which the
+workflow's `GITHUB_TOKEN` does not have. The required
+`immutable_policy_confirmed=true` input records the maintainer's acknowledgement,
+not an automated measurement; do not set it without checking the policy.
+
+1. `gh workflow run windows-prerelease.yml --ref main -f mode=prepare -F immutable_policy_confirmed=true` asks
+   Release Please to open a draft Windows version PR. It updates the Rust
+   Cargo version/lockfile, component changelog and Windows version manifest.
+   Review its exact diff and run the repository and Windows checks. Bot-token
+   PR creation may not trigger Actions; a maintainer can push an empty CI
+   trigger commit to that generated branch, without editing generated version
+   files. Mark it ready for automatic review, then merge after the checks and
+   review gates pass. The bot-PR provenance check identifies that PR; it does
+   not replace reviewing its complete diff for unexpected changes.
+2. `gh workflow run windows-prerelease.yml --ref main -f mode=draft -F immutable_policy_confirmed=true` asks
+   Release Please to create the draft prerelease and builds its immutable
+   source commit. The workflow verifies the bot version PR, Cargo/manifest
+   version, source SHA, ZIP and checksums before attaching three assets to the
+   draft. It never changes `draft` to false and never runs npm publication.
+
+The config fixes `draft=true`, `prerelease=true` and
+`force-tag-creation=false`. GitHub does not create the actual tag until the
+draft is published. The helper refuses published releases, a public matching
+tag, wrong source/author/version, unexpected assets and differing existing
+asset bytes. For a partial upload, use **Re-run failed jobs** on the original
+run so the attachment job reuses the same retained build artifact. Do this
+before that artifact expires. A new dispatch rebuilds the executable and ZIP,
+whose bytes may differ; it is not an equivalent retry and will refuse to
+overwrite differing assets. If the original artifact is unavailable, stop for
+maintainer reconciliation rather than forcing an upload.
+
+Do not manually publish the draft or change release configuration, workflow
+files or repository release policy while preparation is running. The helper
+requires an explicit acknowledgement of GitHub's enabled immutable-releases
+policy; leave it enabled.
+Its draft checks and uploads are separate API operations, not an atomic
+transaction. Server-side immutability prevents asset modification after
+publication, but does not make concurrent manual publication a supported
+workflow. The reusable workflow definition comes from the dispatch revision;
+the executable source is the verified version-PR merge commit. Keep those
+workflow definitions unchanged between the version PR and draft preparation.
+
+Before public publication, inspect the completed draft and validate its exact
+executable bytes on the designated Windows host. A package checksum is not
+publisher authentication. The supported prerelease scope and measurement
+limits are in [platform support](platform-support.md#windows-diagnostic-prerelease).
+Public publication is a separate maintainer decision. This preparation does
+not close the holder-attribution or cooperative-recovery gates.
+
 ## Runtime dependency pinning
 
 `package-lock.json` is the repository lockfile. The build job's package smoke

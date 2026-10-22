@@ -115,7 +115,7 @@ node observe-native.mjs --binary C:\private-lab\codex.exe --sha256 <sha256> --di
 
 To measure the standalone preview instead, select its executable with
 `--diagnostic C:\private-lab\codex-unlock-windows.exe --diagnostic-format preview
---diagnostic-sha256 <manifest-binary-sha256>`.
+--diagnostic-sha256 <manifest-binary-sha256> --diagnostic-version <manifest-binary-version>`.
 The collector requires the preview's Medium/non-elevated/non-AppContainer
 capability result and validates its envelope plus the nested native observation.
 The default `--diagnostic-format research` retains the research binary protocol.

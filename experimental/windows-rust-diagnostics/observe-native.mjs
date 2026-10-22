@@ -12,6 +12,7 @@ import { Buffer } from 'node:buffer';
 import { setTimeout, clearTimeout } from 'node:timers';
 import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
+import { versionPattern } from './scripts/validate-preview.mjs';
 
 const CAP = 1024 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -279,7 +280,7 @@ export function parseDiagnostic(record, request) {
   if (request?.command === 'capabilities') {
     requireSchema(exactKeys(value, ['schemaVersion', 'safeToUnlock', 'experimental', 'platform', 'architecture', 'diagnosticsAvailable', 'commands', 'supportedFilesystems', 'holderAttribution', 'recoveryAvailable', 'probeEffects', 'prototypeVersion']));
     requireSchema(record.exit.code === 0 && value.diagnosticsAvailable === true && value.recoveryAvailable === false
-      && value.holderAttribution === 'unproven' && typeof value.prototypeVersion === 'string' && /^\d+\.\d+\.\d+$/.test(value.prototypeVersion)
+      && value.holderAttribution === 'unproven' && typeof value.prototypeVersion === 'string' && versionPattern.test(value.prototypeVersion)
       && ['x86_64', 'aarch64', 'x86'].includes(value.architecture)
       && JSON.stringify(value.commands) === JSON.stringify(['capabilities', 'inspect'])
       && JSON.stringify(value.supportedFilesystems) === JSON.stringify(['NTFS']) && text(value.probeEffects));
@@ -326,7 +327,8 @@ export function parsePreviewDiagnostic(record, request) {
   requireSchema(object(value) && value.schema === 'codex-unlock-windows-preview' && value.schemaVersion === 1
     && value.preview === true && value.experimental === true && value.safeToUnlock === false
     && value.recoveryAvailable === false && value.platform === 'windows' && value.architecture === 'x86_64'
-    && value.version === '0.0.0' && value.diagnosticsAvailable === true
+    && versionPattern.test(request?.expectedVersion ?? '0.0.0')
+    && value.version === (request?.expectedVersion ?? '0.0.0') && value.diagnosticsAvailable === true
     && exactKeys(value.context, ['state', 'integrityRid', 'elevated', 'appContainer'])
     && value.context.state === 'observed' && value.context.integrityRid === 8192
     && value.context.elevated === false && value.context.appContainer === false);
@@ -386,7 +388,7 @@ export function parseObserverOptions(argv) {
   const options = {};
   for (let i = 0; i < argv.length; i += 2) {
     const key = argv[i];
-    if (!['--binary', '--sha256', '--diagnostic', '--parent', '--result', '--diagnostic-format', '--diagnostic-sha256'].includes(key) || options[key] || !argv[i + 1]) throw new Error('usage');
+    if (!['--binary', '--sha256', '--diagnostic', '--parent', '--result', '--diagnostic-format', '--diagnostic-sha256', '--diagnostic-version'].includes(key) || options[key] || !argv[i + 1]) throw new Error('usage');
     options[key] = argv[i + 1];
   }
   if (!['--binary', '--sha256', '--diagnostic', '--parent', '--result'].every((key) => options[key])
@@ -395,6 +397,8 @@ export function parseObserverOptions(argv) {
   if (!['research', 'preview'].includes(diagnosticFormat)) throw new Error('usage');
   if ((diagnosticFormat === 'preview' || options['--diagnostic-sha256'] !== undefined)
     && !/^[0-9a-f]{64}$/i.test(options['--diagnostic-sha256'] ?? '')) throw new Error('diagnostic_digest_required');
+  if ((diagnosticFormat === 'preview' || options['--diagnostic-version'] !== undefined)
+    && !versionPattern.test(options['--diagnostic-version'] ?? '')) throw new Error('diagnostic_version_required');
   return { options, diagnosticFormat };
 }
 export async function main(argv) {
@@ -402,7 +406,9 @@ export async function main(argv) {
   const { options, diagnosticFormat } = parseObserverOptions(argv);
   const expectedDiagnostic = options['--diagnostic-sha256']?.toLowerCase();
   const jsonArgs = diagnosticFormat === 'preview' ? ['--json'] : [];
-  const parseOutput = diagnosticFormat === 'preview' ? parsePreviewDiagnostic : parseDiagnostic;
+  const parseOutput = diagnosticFormat === 'preview'
+    ? (record, request) => parsePreviewDiagnostic(record, { ...request, expectedVersion: options['--diagnostic-version'] })
+    : parseDiagnostic;
   const binary = await plainAbsolute(options['--binary'], false);
   const diagnostic = await plainAbsolute(options['--diagnostic'], false);
   const parent = await plainAbsolute(options['--parent'], true);

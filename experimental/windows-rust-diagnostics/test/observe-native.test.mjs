@@ -119,6 +119,22 @@ test('preview capabilities must prove the supported caller context before native
     assert.throws(() => parsePreviewDiagnostic(record(changed), { command: 'capabilities' }));
   }
 });
+test('preview prerelease outputs require the matching expected manifest version', () => {
+  const value = { ...previewInspect(), version: '0.5.0-alpha.1' };
+  const expected = { ...request, expectedVersion: '0.5.0-alpha.1' };
+  assert.equal(parsePreviewDiagnostic(record(value), expected).preview.version, expected.expectedVersion);
+  assert.throws(() => parsePreviewDiagnostic(record(value), request));
+  assert.throws(() => parsePreviewDiagnostic(record(value), { ...expected, expectedVersion: '0.5.0-alpha.2' }));
+  assert.throws(() => parsePreviewDiagnostic(record({ ...value, version: '0.5.0-alpha.01' }),
+    { ...expected, expectedVersion: '0.5.0-alpha.01' }));
+});
+test('research capabilities accept valid prerelease Cargo versions', () => {
+  const value = { ...envelope, prototypeVersion: '0.5.0-alpha.1', architecture: 'x86_64', diagnosticsAvailable: true,
+    commands: ['capabilities', 'inspect'], supportedFilesystems: ['NTFS'], holderAttribution: 'unproven',
+    recoveryAvailable: false, probeEffects: 'brief native locks' };
+  assert.equal(parseDiagnostic(record(value), { command: 'capabilities' }).parsed.prototypeVersion, '0.5.0-alpha.1');
+  assert.throws(() => parseDiagnostic(record({ ...value, prototypeVersion: '0.5.0-alpha.01' }), { command: 'capabilities' }));
+});
 test('diagnostic digest checks block changed input and retain executed records after drift', async () => {
   const pin = 'a'.repeat(64);
   let calls = 0;
@@ -147,8 +163,12 @@ test('preview observer requires a manifest diagnostic digest without changing re
   for (const pin of ['', 'bad', 'a'.repeat(63)]) {
     assert.throws(() => parseObserverOptions([...args, '--diagnostic-format', 'preview', '--diagnostic-sha256', pin]));
   }
-  const valid = [...args, '--diagnostic-format', 'preview', '--diagnostic-sha256', 'b'.repeat(64)];
+  const pinned = [...args, '--diagnostic-format', 'preview', '--diagnostic-sha256', 'b'.repeat(64)];
+  assert.throws(() => parseObserverOptions(pinned), /diagnostic_version_required/);
+  assert.throws(() => parseObserverOptions([...pinned, '--diagnostic-version', '0.5.0-alpha.01']), /diagnostic_version_required/);
+  const valid = [...pinned, '--diagnostic-version', '0.5.0-alpha.1'];
   assert.equal(parseObserverOptions(valid).options['--diagnostic-sha256'], 'b'.repeat(64));
+  assert.equal(parseObserverOptions(valid).options['--diagnostic-version'], '0.5.0-alpha.1');
   assert.throws(() => parseObserverOptions([...valid, '--diagnostic-sha256', 'c'.repeat(64)]), /usage/);
 });
 function completeTranscript() {

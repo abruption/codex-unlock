@@ -17,8 +17,10 @@ test('observer accepts actual Rust mapping output with the documented exit contr
   assert.deepEqual(cases.map(({ name }) => name).sort(), Object.keys(expected).sort());
   for (const entry of cases) {
     assert.deepEqual([entry.exitCode, entry.result.lock.state], expected[entry.name]);
+    assert.equal(typeof entry.request.expectedVersion, 'string', 'Rust producer must supply the expected build version');
     const record = { stdout: JSON.stringify(entry.result), exit: { code: entry.exitCode, signal: null },
       complete: true, faults: [] };
     assert.equal(parsePreviewDiagnostic(record, entry.request).parsed.safeToUnlock, false);
+    assert.throws(() => parsePreviewDiagnostic({ ...record }, { ...entry.request, expectedVersion: '999.0.0' }));
   }
 });

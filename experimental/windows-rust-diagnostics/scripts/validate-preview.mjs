@@ -3,8 +3,10 @@ import { createHash } from 'node:crypto';
 
 export const names = ['PREVIEW.md', 'SHA256SUMS', 'codex-unlock-windows.exe', 'manifest.json'].sort();
 export const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+export const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
-export function validatePayload(entries, binary, sourceSha, quickstart) {
+export function validatePayload(entries, binary, sourceSha, quickstart, expectedVersion) {
+  assert.match(expectedVersion, versionPattern, 'explicit expected version required');
   assert.match(sourceSha, /^[a-f0-9]{40}$/);
   assert.deepEqual(entries.map(([name]) => name).sort(), names, 'unexpected or duplicate archive entries');
   const files = Object.fromEntries(entries);
@@ -18,7 +20,7 @@ export function validatePayload(entries, binary, sourceSha, quickstart) {
   assert.equal(manifest.sourceSha, sourceSha);
   assert.equal(manifest.target, 'x86_64-pc-windows-msvc');
   assert.deepEqual(manifest.binary, {
-    name: 'codex-unlock-windows.exe', version: '0.0.0', sha256: digest(binary),
+    name: 'codex-unlock-windows.exe', version: expectedVersion, sha256: digest(binary),
   });
   const expected = ['codex-unlock-windows.exe', 'PREVIEW.md', 'manifest.json']
     .map((name) => `${digest(files[name])}  ${name}\n`).join('');

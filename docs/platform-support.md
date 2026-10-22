@@ -1,6 +1,8 @@
 # Supported platform evidence
 
-`codex-unlock` supports macOS and Linux only. Support means that the published
+The stable `codex-unlock` npm CLI supports macOS and Linux only. It requires
+Node.js 22.13+ (22.x) or 24.x and `lsof`; these requirements are unchanged by the
+separate Windows diagnostic prerelease described below. Stable CLI support means that the published
 CLI can load its native advisory-lock dependency and that CI proves the full
 non-mutating evidence path, including native coordination, against a real lock
 owner. It does not mean that every
@@ -50,7 +52,7 @@ current platform support or runtime policy.
 
 ## Diagnostic command execution
 
-Process evidence is collected with the same rules on every supported platform:
+Stable npm CLI process evidence is collected with the same rules on every supported platform:
 
 - `ps` runs only from `/bin/ps` or `/usr/bin/ps`, and `lsof` only from
   `/usr/sbin/lsof` or `/usr/bin/lsof`. `PATH` is never consulted; when neither
@@ -128,7 +130,44 @@ treated as partial success. Inspection returns `unknown` or adds a blocker, and
 that this path remains refused; it also proves that a shadowing `ps` or `lsof`
 on `PATH` is never executed.
 
-Windows, other Unix variants, and OS/architecture combinations absent from the
-matrix are unverified. Windows lock and process semantics require a separate
-design and real-host evidence before the package may advertise support. The
-tool does not infer support from a fixture-only or cross-compiled result.
+For the stable npm CLI, Windows, other Unix variants, and OS/architecture
+combinations absent from the matrix remain unsupported or unverified. The
+separate Windows diagnostic channel below does not extend that matrix or
+authorize Windows recovery. Support is not inferred from fixture-only or
+cross-compiled results.
+
+## Windows diagnostic prerelease
+
+The separate **0.5.0-alpha.1** diagnostic-only prerelease uses tag
+`windows-v0.5.0-alpha.1` and does not change the stable npm CLI. The
+[GitHub Releases page](https://github.com/abruption/codex-unlock/releases)
+is authoritative for publication status and asset availability.
+
+For a published release of this tag, download
+`windows-diagnostics-preview-windows-x86_64.zip`, `SHA256SUMS` and `manifest.json`
+from the same release. The ZIP contains the standalone
+`codex-unlock-windows.exe`; running it needs no Node.js, Rust or `lsof`
+installation. Compare the ZIP's SHA-256 with the sidecar checksum before
+extracting it, then compare the executable's hash with the inner checksum and
+manifest. Verify the manifest version, target and source commit against the
+selected release. Checksums detect changed bytes, not publisher identity.
+See the [Windows preview quickstart](https://github.com/abruption/codex-unlock/blob/main/experimental/windows-rust-diagnostics/PREVIEW.md)
+for PowerShell commands and JSON/exit-code interpretation.
+
+The supported diagnostic scope is Windows x64 on local NTFS, with an actually
+observed Medium-integrity token (RID 8192), no elevation and no AppContainer.
+Path, ownership and native-file checks still apply. The backend was measured
+on a designated Windows 10 x64/NTFS host with a genuine Medium token and a
+self-started Codex 0.163.0 app-server. Defender real-time protection was disabled
+on that host; the tool does not change that policy or ask users to disable it.
+Windows 11 was not measured. This evidence does not qualify other Codex modes
+or security configurations. ReFS, network/UNC/device paths, reparse paths, hardlinked native
+files, and unsupported or uncertain execution contexts are refused.
+
+This executable provides diagnostics only: no Windows unlock, process
+termination, lock-file deletion or recovery command. An observed lock conflict
+does not identify its holder, and an optional user-supplied PID provides only
+process observations, never holder authority. `safeToUnlock` and
+`recoveryAvailable` are always `false`. Its preview JSON schema is separate
+from the stable npm CLI's JSON v1. Probes briefly acquire existing native locks;
+diagnostics are not guaranteed to be operationally inert.
