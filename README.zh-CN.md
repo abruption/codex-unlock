@@ -34,8 +34,8 @@ codex-unlock inspect <thread-id>
 
 ## 快速开始
 
-需要 macOS 或 Linux、Node.js **22.13+（22.x）或 24.x**，以及 `lsof`。
-不支持 Windows 和 Node.js 26。
+稳定版 npm CLI 需要 macOS 或 Linux、Node.js **22.13+（22.x）或 24.x**，以及 `lsof`。
+此 CLI 不支持 Windows 和 Node.js 26。
 
 `list` 和 `inspect` 不会修改 Codex 原生锁文件或对话记录文件的内容，但每次探测都会短暂获取 Codex 的协调锁。
 在交互式命令输出主要结果后，`codex-unlock` 可能会单独刷新更新提示缓存。详见[更新行为](docs/cli-reference.md#updates)。
@@ -65,6 +65,12 @@ npm install --global codex-unlock@latest
 ```
 
 `check-update` 只检查软件包注册表中的版本，不会安装更新。自动提示仅供参考。详见[更新行为](docs/cli-reference.md#updates)。
+
+## Windows 诊断预发布版
+
+独立的 Windows 仅诊断 **0.5.0-alpha.1** 预发布版使用标签 `windows-v0.5.0-alpha.1`，不改变稳定版 npm CLI。请在 [GitHub Releases](https://github.com/abruption/codex-unlock/releases) 查看发布状态及 ZIP 是否可供下载。运行独立 ZIP 中的可执行文件无需安装 Node.js、Rust 或 `lsof`。
+
+适用范围为使用本地 NTFS 的 Windows x64，且必须确认实际令牌为 Medium 完整性级别、未提升权限且不处于 AppContainer 中。测量依据仅来自关闭 Defender 实时保护的指定 Windows 10 x64 主机。Windows 11 尚未测量，此依据也不能证明其他安全配置已通过验证。不提供 Windows 解锁或恢复功能，用户指定的 PID 不能证明锁的持有者身份，`safeToUnlock` 始终为 `false`。详见 [Windows 适用范围与下载说明](docs/platform-support.md#windows-diagnostic-prerelease)。
 
 ## 文档
 

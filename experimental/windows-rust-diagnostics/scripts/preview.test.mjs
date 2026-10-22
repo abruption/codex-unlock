@@ -12,18 +12,26 @@ import { digest, validatePayload as validateRawPayload } from './validate-previe
 const sha = 'a'.repeat(40);
 const binary = Buffer.from('synthetic executable bytes');
 const quickstart = Buffer.from('Diagnostic preview quickstart');
-const validatePayload = (entries, bytes, source) => validateRawPayload(entries, bytes, source, quickstart);
-function fixture() {
+const validatePayload = (entries, bytes, source, version = '0.0.0') => validateRawPayload(entries, bytes, source, quickstart, version);
+function fixture(version = '0.0.0') {
   const files = {
     'codex-unlock-windows.exe': binary,
     'PREVIEW.md': Buffer.from('Diagnostic preview quickstart'),
     'manifest.json': Buffer.from(JSON.stringify({ schemaVersion: 1, sourceSha: sha,
-      target: 'x86_64-pc-windows-msvc', binary: { name: 'codex-unlock-windows.exe', version: '0.0.0', sha256: digest(binary) } })),
+      target: 'x86_64-pc-windows-msvc', binary: { name: 'codex-unlock-windows.exe', version, sha256: digest(binary) } })),
   };
   files.SHA256SUMS = Buffer.from(Object.entries(files).map(([name, bytes]) => `${digest(bytes)}  ${name}\n`).join(''));
   return Object.entries(files);
 }
 test('valid minimal preview and exact build bytes', () => validatePayload(fixture(), binary, sha));
+test('prerelease payload must match an explicit independently expected version', () => {
+  validatePayload(fixture('0.5.0-alpha.1'), binary, sha, '0.5.0-alpha.1');
+  assert.throws(() => validatePayload(fixture('0.5.0-alpha.2'), binary, sha, '0.5.0-alpha.1'));
+  assert.throws(() => validateRawPayload(fixture(), binary, sha, quickstart));
+  for (const version of ['v0.5.0-alpha.1', '0.5.0-alpha.01', '0.5.0-', 'garbage']) {
+    assert.throws(() => validatePayload(fixture(version), binary, sha, version));
+  }
+});
 test('validator CLI executes through a directory alias and rejects changed payload', () => {
   const scratch = mkdtempSync(join(tmpdir(), 'codex-preview-validator-'));
   const alias = join(scratch, 'aliased-scripts');
@@ -38,8 +46,12 @@ test('validator CLI executes through a directory alias and rejects changed paylo
     writeFileSync(quickstartPath, quickstart);
     symlinkSync(dirname(fileURLToPath(import.meta.url)), alias, process.platform === 'win32' ? 'junction' : 'dir');
     linked = true;
-    const args = [join(alias, 'validate-preview-cli.mjs'), payload, build, sha, quickstartPath];
+    const args = [join(alias, 'validate-preview-cli.mjs'), payload, build, sha, quickstartPath, '0.0.0'];
     assert.match(execFileSync(process.execPath, args, { encoding: 'utf8', timeout: 10_000 }), /checks passed/);
+    for (const invalidArgs of [args.slice(0, -1), [...args.slice(0, -1), '0.5.0-alpha.1']]) {
+      assert.throws(() => execFileSync(process.execPath, invalidArgs, { stdio: 'pipe', timeout: 10_000 }),
+        (error) => error.status !== 0);
+    }
     writeFileSync(join(payload, 'codex-unlock-windows.exe'), 'changed');
     assert.throws(() => execFileSync(process.execPath, args, { stdio: 'pipe', timeout: 10_000 }),
       (error) => error.status !== 0);
@@ -63,7 +75,7 @@ test('rejects modified executable, quickstart, manifest, checksums and source SH
   assert.throws(() => validatePayload(fixture(), Buffer.from('different build'), sha));
   assert.throws(() => validatePayload(fixture(), binary, 'b'.repeat(40)));
   assert.throws(() => validatePayload(fixture(), binary, 'not-a-sha'));
-  assert.throws(() => validateRawPayload(fixture(), binary, sha, Buffer.from('different source')));
+  assert.throws(() => validateRawPayload(fixture(), binary, sha, Buffer.from('different source'), '0.0.0'));
 });
 test('rejects structurally valid but incorrect manifest fields', () => {
   for (const change of [

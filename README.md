@@ -37,8 +37,8 @@ recovery only when every safety check passes.
 
 ## Quick Start
 
-Requires macOS or Linux, Node.js **22.13+ (22.x) or 24.x**, and `lsof`.
-Windows and Node.js 26 are not supported.
+The stable npm CLI requires macOS or Linux, Node.js **22.13+ (22.x) or 24.x**, and `lsof`.
+That CLI does not support Windows or Node.js 26.
 
 `list` and `inspect` do not change the contents of Codex's native lock or
 transcript files, though each probe briefly takes Codex's coordination lock.
@@ -73,6 +73,22 @@ npm install --global codex-unlock@latest
 
 `check-update` checks the registry; it does not install anything.
 Automatic notices are advisory only. See [update behavior](docs/cli-reference.md#updates).
+
+## Windows diagnostic prerelease
+
+The separate Windows diagnostic-only **0.5.0-alpha.1** prerelease uses tag
+`windows-v0.5.0-alpha.1` and does not change the stable npm CLI. Consult
+[GitHub Releases](https://github.com/abruption/codex-unlock/releases) for its
+publication status and ZIP availability. Running the standalone ZIP's executable
+requires no Node.js, Rust or `lsof` installation.
+
+Its scope is Windows x64 on local NTFS, with a verified Medium-integrity,
+non-elevated, non-AppContainer token. Measurements cover a designated Windows
+10 x64 host with Defender real-time protection disabled. Windows 11 was not
+measured, and other security configurations are not qualified by this evidence.
+There is no Windows unlock or recovery, a supplied
+PID does not establish the lock holder, and `safeToUnlock` is always `false`.
+See [Windows scope and download guidance](docs/platform-support.md#windows-diagnostic-prerelease).
 
 ## Docs
 

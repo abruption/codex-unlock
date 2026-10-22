@@ -439,7 +439,8 @@ mod tests {
                 }
             );
             cases.push(json!({"name":name,"exitCode":code,"result":result,
-                "request":{"command":"inspect","home":home,"thread":thread,"pid":pid}}));
+                "request":{"command":"inspect","home":home,"thread":thread,"pid":pid,
+                    "expectedVersion":env!("CARGO_PKG_VERSION")}}));
         }
         if let Some(directory) = std::env::var_os("PREVIEW_TEST_GOLDEN_DIR") {
             let directory = std::path::PathBuf::from(directory);

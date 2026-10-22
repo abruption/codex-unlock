@@ -1,6 +1,24 @@
 name: Windows Rust diagnostics
 
 on:
+  workflow_call:
+    inputs:
+      source_ref:
+        description: Immutable source commit to validate (defaults to github.sha)
+        type: string
+        required: false
+        default: ''
+    outputs:
+      preview_artifact_id:
+        description: Validated Windows preview artifact ID
+        value: ${{ jobs.windows.outputs.preview_artifact_id }}
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Immutable 40-character source commit (blank uses github.sha)
+        type: string
+        required: false
+        default: ''
   pull_request:
     branches: [main]
     paths:
@@ -19,14 +37,31 @@ jobs:
   windows:
     runs-on: windows-2022
     timeout-minutes: 15
+    outputs:
+      preview_artifact_id: ${{ steps.preview-upload.outputs.artifact-id }}
     defaults:
       run:
         shell: pwsh
         working-directory: experimental/windows-rust-diagnostics
     steps:
+      - name: Validate immutable source ref
+        id: source
+        working-directory: .
+        env:
+          SOURCE_REF: ${{ inputs.source_ref || github.sha }}
+        run: |
+          if ($env:SOURCE_REF -cnotmatch '^[a-f0-9]{40}$') { throw 'source_ref must be an immutable commit SHA' }
+          "sha=$env:SOURCE_REF" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ steps.source.outputs.sha }}
+      - name: Verify checked-out source
+        env:
+          SOURCE_REF: ${{ steps.source.outputs.sha }}
+        run: |
+          $actual = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $actual -cne $env:SOURCE_REF) { throw 'Source checkout mismatch' }
       - name: Install pinned toolchain
         run: |
           rustup toolchain install 1.90.0 --profile minimal --component rustfmt --component clippy
@@ -36,6 +71,13 @@ jobs:
           cargo --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - run: cargo fetch --locked
+      - name: Read expected Cargo version
+        run: |
+          $metadata = cargo metadata --no-deps --locked --offline --format-version 1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $packages = @(($metadata | ConvertFrom-Json).packages | Where-Object { $_.name -ceq 'codex-unlock-windows-diagnostic' })
+          if ($packages.Count -ne 1) { throw 'Expected one diagnostic Cargo package' }
+          "PREVIEW_EXPECTED_VERSION=$($packages[0].version)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - run: cargo fmt --check
       - run: cargo clippy --locked --offline --all-targets -- -D warnings
       - name: Create private synthetic parent and test
@@ -86,8 +128,10 @@ jobs:
             experimental/windows-rust-diagnostics/target/debug/deps/windows-*.exe
             experimental/windows-rust-diagnostics/target/debug/artifact-manifest.json
       - name: Validate preview packaging contracts
-        run: node --test scripts/preview.test.mjs
+        run: node --test scripts/*.test.mjs
       - name: Build Windows x86_64 diagnostic preview
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
         run: |
           cargo build --locked --offline --release --target x86_64-pc-windows-msvc --bin codex-unlock-windows
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -99,11 +143,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $version = & $binary --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if (($version -join "`n").Trim() -cne 'codex-unlock-windows 0.0.0') { throw 'Unexpected CLI version' }
+          if (($version -join "`n").Trim() -cne "codex-unlock-windows $env:PREVIEW_EXPECTED_VERSION") { throw 'Unexpected CLI version' }
           $capabilities = & $binary capabilities --json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $cap = $capabilities | ConvertFrom-Json -ErrorAction Stop
           $capabilities
+          if ($cap.version -cne $env:PREVIEW_EXPECTED_VERSION) { throw 'Unexpected capabilities version' }
           if ($cap.schema -ne 'codex-unlock-windows-preview' -or $cap.safeToUnlock -ne $false -or $cap.recoveryAvailable -ne $false) { throw 'Invalid capabilities contract' }
           if ($cap.diagnosticsAvailable -ne $false -or $cap.context.state -ne 'observed' -or $cap.context.elevated -isnot [bool] -or $cap.context.appContainer -isnot [bool] -or $cap.context.integrityRid -isnot [long]) { throw 'This refusal gate requires an observed unsupported caller; Medium is measured separately' }
           if ($cap.context.appContainer) { $expectedReason = 'app_container_refused' }
@@ -134,6 +179,7 @@ jobs:
             -SourceSha $sourceSha `
             -ExpectedSha256 $env:PREVIEW_TESTED_SHA256
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        id: preview-upload
         with:
           name: windows-diagnostics-preview-windows-x86_64
           retention-days: 7

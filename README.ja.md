@@ -35,8 +35,8 @@ codex-unlock inspect <thread-id>
 
 ## クイックスタート
 
-macOS または Linux、Node.js **22.13 以上（22.x）または 24.x**、および `lsof` が必要です。
-Windows と Node.js 26 はサポートしていません。
+安定版 npm CLI には macOS または Linux、Node.js **22.13 以上（22.x）または 24.x**、および `lsof` が必要です。
+この CLI は Windows と Node.js 26 をサポートしていません。
 
 `list` と `inspect` は Codex のネイティブロックファイルや会話記録ファイルの内容を変更しませんが、各プローブで Codex の調整ロックを短時間取得します。対話形式でコマンドを実行すると、主な結果を出力した後に `codex-unlock` の更新案内キャッシュを別途更新することがあります。詳しくは[更新の動作](docs/cli-reference.md#updates)を参照してください。
 再検証により、対象ロックを所有しているのが同一ユーザーの Codex プロセス1つだけだと確認できた場合に限り、`unlock` は `SIGTERM` を送ります。
@@ -66,6 +66,12 @@ npm install --global codex-unlock@latest
 
 `check-update` はパッケージレジストリで更新を確認するだけで、インストールは行いません。
 自動通知は参考情報にすぎません。詳しくは[更新の動作](docs/cli-reference.md#updates)を参照してください。
+
+## Windows 診断プレリリース
+
+独立した Windows 診断専用 **0.5.0-alpha.1** プレリリースのタグは `windows-v0.5.0-alpha.1` で、安定版 npm CLI には影響しません。公開状況と ZIP の入手可否は [GitHub Releases](https://github.com/abruption/codex-unlock/releases) で確認してください。単体実行用 ZIP に含まれる実行ファイルには Node.js、Rust、`lsof` のインストールは不要です。
+
+対象はローカル NTFS 上の Windows x64 で、実際のトークンが Medium 整合性レベル、非昇格、非 AppContainer であることを確認する必要があります。測定の根拠は Defender のリアルタイム保護が無効な指定の Windows 10 x64 ホストに限られます。Windows 11 は未測定で、この根拠では他のセキュリティ構成も検証済みとはいえません。Windows のロック解除・復旧機能はなく、指定した PID はロック保持者を確定する根拠にはなりません。`safeToUnlock` は常に `false` です。[Windows の対応範囲とダウンロード案内](docs/platform-support.md#windows-diagnostic-prerelease)を参照してください。
 
 ## ドキュメント
 

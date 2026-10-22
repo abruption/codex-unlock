@@ -1,8 +1,13 @@
 # Windows diagnostic CLI preview
 
+The diagnostic-only **0.5.0-alpha.1** prerelease uses tag
+`windows-v0.5.0-alpha.1`. This channel is separate from the stable macOS/Linux
+npm CLI. Consult [GitHub Releases](https://github.com/abruption/codex-unlock/releases)
+for publication status and asset availability.
+
 `codex-unlock-windows.exe` inspects an explicitly selected Codex thread lock.
 It is a standalone Rust preview for Windows x64, local NTFS, and a normal
-non-administrator Medium-integrity terminal. No Node.js or Rust installation
+non-elevated, non-AppContainer Medium-integrity terminal. No Node.js, Rust or `lsof` installation
 is required to run the downloaded executable.
 
 This preview reports observations only. It has no unlock, process termination,
@@ -11,10 +16,18 @@ lock-file deletion or recovery command. Every JSON result retains
 
 ## Obtain and check an artifact
 
-Use a reviewed run of the repository's **Windows Rust diagnostics** workflow.
-Download the `windows-diagnostics-preview-windows-x86_64` artifact and extract
-the outer GitHub artifact archive into a new directory. Its payload contains
-`windows-diagnostics-preview-windows-x86_64.zip`, `SHA256SUMS` and `manifest.json`.
+Select `windows-v0.5.0-alpha.1` on
+[GitHub Releases](https://github.com/abruption/codex-unlock/releases) and check
+its publication status. If published, download
+`windows-diagnostics-preview-windows-x86_64.zip`, `SHA256SUMS` and `manifest.json`
+from that same release into a new directory.
+
+For CI builds, use a reviewed run of the repository's **Windows Rust diagnostics**
+workflow. Download the `windows-diagnostics-preview-windows-x86_64` artifact
+and extract its outer GitHub artifact archive. Its payload uses the same ZIP,
+checksum and manifest names. CI artifacts are short-lived build outputs, not
+public releases;
+check the run and source commit rather than treating them as the tagged release.
 
 In PowerShell, compare the ZIP digest with the sidecar checksum before opening
 it, then extract into a fresh directory:
@@ -29,11 +42,12 @@ Get-Content .\SHA256SUMS
 Get-Content .\manifest.json
 ```
 
-The inner manifest identifies the executable hash, version, target and build
-source commit. For a pull-request workflow that may be GitHub's merge-test
-commit; compare it with the checked-out source recorded by that run. Checksums
-detect changed bytes, not publisher identity. These are short-lived CI preview
-artifacts, not signed stable releases or a Windows npm installation.
+The manifests identify the payload hashes, version, target and build source
+commit. Check them against the selected release or workflow run, and confirm
+the executable's `--version` below. For a pull-request workflow the source may
+be GitHub's merge-test commit; compare it with the checked-out source recorded
+by that run. Checksums detect changed bytes, not publisher identity. These
+preview artifacts are not signed stable releases or a Windows npm installation.
 
 ## Use a normal terminal
 
@@ -103,14 +117,15 @@ disposable test home and do not assume that diagnostics are operationally inert.
 ## Current qualification
 
 The research backend was measured on Windows 10 x64/NTFS with a genuine Medium
-token and a self-started Codex 0.163.0 app-server. That evidence does not qualify
-all Windows versions, Codex modes, filesystems or security configurations. The
+token and a self-started Codex 0.163.0 app-server. Windows 11 was not measured.
+That evidence does not qualify other Windows versions, Codex modes, filesystems
+or security configurations. The
 designated-host measurement had Defender real-time protection disabled; this
-tool does not change that policy. ReFS, network/UNC/device paths, reparse paths,
+tool does not change that policy or ask users to disable protection. ReFS, network/UNC/device paths, reparse paths,
 hardlinked native files and unsupported contexts are refused.
 
 The separate research executable can collect other experiments; its policy is
 not an alternate mode or bypass of this preview's Medium-token boundary. High
 ownership policy, holder attribution and cooperative third-party release remain
-open research gates. No release, installer or global PATH modification is part
-of this preview.
+open research gates. The prerelease distribution is a portable ZIP; no
+installer or global PATH modification is part of this preview.
