@@ -103,13 +103,17 @@ jobs:
           $capabilities = & $binary capabilities --json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $cap = $capabilities | ConvertFrom-Json -ErrorAction Stop
-          if ($cap.schema -ne 'codex-unlock-windows-preview' -or $cap.safeToUnlock -ne $false -or $cap.recoveryAvailable -ne $false) { throw 'Invalid capabilities contract' }
-          if ($cap.diagnosticsAvailable -ne $false -or $cap.context.state -ne 'observed' -or $cap.context.elevated -ne $true -or $cap.context.integrityRid -ne 12288) { throw 'This refusal gate requires an observed High/elevated runner; Medium is measured separately' }
-          $refusal = & $binary inspect --home 'C:\preview-not-created' --thread '11111111-2222-4333-8444-555555555555' --pid 1 --json
-          if ($LASTEXITCODE -ne 2) { throw 'High runner must refuse inspection' }
-          $refused = $refusal | ConvertFrom-Json -ErrorAction Stop
-          if ($refused.reason -ne 'elevated_context_refused' -or $refused.safeToUnlock -ne $false -or $refused.PSObject.Properties.Name -contains 'diagnostic') { throw 'Preview reached inspection or gave an unexpected refusal' }
           $capabilities
+          if ($cap.schema -ne 'codex-unlock-windows-preview' -or $cap.safeToUnlock -ne $false -or $cap.recoveryAvailable -ne $false) { throw 'Invalid capabilities contract' }
+          if ($cap.diagnosticsAvailable -ne $false -or $cap.context.state -ne 'observed' -or $cap.context.elevated -isnot [bool] -or $cap.context.appContainer -isnot [bool] -or $cap.context.integrityRid -isnot [long]) { throw 'This refusal gate requires an observed unsupported caller; Medium is measured separately' }
+          if ($cap.context.appContainer) { $expectedReason = 'app_container_refused' }
+          elseif ($cap.context.elevated) { $expectedReason = 'elevated_context_refused' }
+          elseif ($cap.context.integrityRid -ne 8192) { $expectedReason = 'medium_integrity_required' }
+          else { throw 'Eligible Medium runner cannot stand in for refusal coverage' }
+          $refusal = & $binary inspect --home 'C:\preview-not-created' --thread '11111111-2222-4333-8444-555555555555' --pid 1 --json
+          if ($LASTEXITCODE -ne 2) { throw 'Unsupported caller must refuse inspection' }
+          $refused = $refusal | ConvertFrom-Json -ErrorAction Stop
+          if ($refused.reason -ne $expectedReason -or $refused.safeToUnlock -ne $false -or $refused.PSObject.Properties.Name -contains 'diagnostic') { throw 'Preview reached inspection or gave an unexpected refusal' }
           $refusal
           & $binary unlock
           if ($LASTEXITCODE -ne 64) { throw 'Preview did not return usage refusal for unlock' }
