@@ -118,7 +118,15 @@ export function verifySourceBindings(sourceFiles, checkoutFiles) {
   assert.deepEqual(Object.keys(checkoutFiles).sort(), [...SOURCE_BINDINGS].sort());
   for (const path of SOURCE_BINDINGS) {
     assert.ok(Buffer.isBuffer(sourceFiles[path]) && Buffer.isBuffer(checkoutFiles[path]));
-    assert.deepEqual(sourceFiles[path], checkoutFiles[path], `Release control file differs at source: ${path}`);
+    const sourceBytes = sourceFiles[path];
+    const checkoutBytes = checkoutFiles[path];
+    // A failed deep Buffer assertion can allocate a large element-wise diff.
+    // Keep exact byte equality, but pass only a boolean into the assertion so
+    // rejection does not format or retain the complete source file contents.
+    const equal = sourceBytes.equals(checkoutBytes);
+    assert.ok(equal, equal ? undefined : `Release control file differs at source: ${path}; ` +
+      `source-bytes=${sourceBytes.length},source-sha256=${digest(sourceBytes)}; ` +
+      `checkout-bytes=${checkoutBytes.length},checkout-sha256=${digest(checkoutBytes)}`);
   }
 }
 

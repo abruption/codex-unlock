@@ -124,6 +124,29 @@ test("source control files must match dispatch bytes, including both workflows a
   assert.throws(() => verifySourceBindings({ ...files, unexpected: Buffer.from("x") }, files));
 });
 
+test("large source-binding drift rejects with bounded diagnostics and exact byte comparison", () => {
+  const path = ".github/workflows/windows-rust-diagnostics.yml";
+  const files = Object.fromEntries(SOURCE_BINDINGS.map((name) => [name, Buffer.from(`fixture:${name}`)]));
+  const large = Buffer.alloc(256 * 1024, "a");
+  const independentCopy = Buffer.from(large);
+  verifySourceBindings({ ...files, [path]: large }, { ...files, [path]: independentCopy });
+  const samePrefix = Buffer.from(large);
+  samePrefix[samePrefix.length - 1] = "b".charCodeAt(0);
+  for (const actual of [Buffer.from("different workflow"), samePrefix]) {
+    assert.throws(() => verifySourceBindings({ ...files, [path]: actual }, { ...files, [path]: large }), (error) => {
+      assert.equal(error.code, "ERR_ASSERTION");
+      assert.equal(error.actual, false, "the assertion must not retain the actual Buffer");
+      assert.equal(error.expected, true, "the assertion must not retain the expected Buffer");
+      assert.ok(error.message.length < 512, "large file rejection must not render its byte contents");
+      assert.match(error.message, /Release control file differs at source/);
+      assert.ok(error.message.includes(path));
+      assert.ok(error.message.includes(`source-bytes=${actual.length},source-sha256=${digest(actual)}`));
+      assert.ok(error.message.includes(`checkout-bytes=${large.length},checkout-sha256=${digest(large)}`));
+      return true;
+    });
+  }
+});
+
 test("immutable policy requires explicit operator acknowledgement and listing pages must be complete", () => {
   verifyImmutablePolicyAcknowledgement("true");
   for (const value of ["false", "", null, undefined, true, { enabled: true }]) {
