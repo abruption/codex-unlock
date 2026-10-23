@@ -1,6 +1,6 @@
 {
   "name": "codex-unlock",
-  "version": "0.4.7",
+  "version": "1.0.0",
   "description": "Diagnose Codex thread writer locks and safely release completed idle sessions.",
   "type": "module",
   "types": "dist/json-types.d.ts",
