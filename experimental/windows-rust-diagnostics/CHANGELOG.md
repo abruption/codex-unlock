@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.0-rc.1](https://github.com/abruption/codex-unlock/compare/windows-v0.5.0-alpha.1...windows-v0.5.0-rc.1) (2026-10-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* **windows:** Windows RC and stable output use the codex-unlock-windows schema with explicit releaseChannel and maturity flags. Historical alpha parsing and the npm CLI JSON contract remain unchanged.
+
+### Features
+
+* **windows:** prepare diagnostic RC and stable qualification ([#177](https://github.com/abruption/codex-unlock/issues/177)) ([1bb8746](https://github.com/abruption/codex-unlock/commit/1bb8746d4ce80cd9c3915b7b617b6b8a289b8d45))
+
 ## 0.5.0-alpha.1 (2026-10-22)
 
 
