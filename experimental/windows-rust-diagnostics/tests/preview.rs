@@ -43,11 +43,29 @@ fn preview(args: &[&str]) -> (i32, Value) {
     )
 }
 
+fn assert_release_envelope(value: &Value) {
+    let version = env!("CARGO_PKG_VERSION");
+    let (schema, channel, prerelease) = match version {
+        "0.0.0" | "0.5.0-alpha.1" => ("codex-unlock-windows-preview", None, true),
+        "0.5.0-rc.1" => ("codex-unlock-windows", Some("rc"), true),
+        "0.5.0" => ("codex-unlock-windows", Some("stable"), false),
+        _ => panic!("unreviewed release version"),
+    };
+    assert_eq!(value["schema"], schema);
+    assert_eq!(value["schemaVersion"], 1);
+    assert_eq!(value["version"], version);
+    assert_eq!(value["preview"], prerelease);
+    assert_eq!(value["experimental"], prerelease);
+    assert_eq!(value.get("releaseChannel").and_then(Value::as_str), channel);
+    assert_eq!(value["safeToUnlock"], false);
+    assert_eq!(value["recoveryAvailable"], false);
+}
+
 #[test]
 fn real_context_capabilities_and_refusal_agree() {
     let (code, cap) = preview(&["capabilities", "--json"]);
     assert_eq!(code, 0);
-    assert_eq!(cap["schema"], "codex-unlock-windows-preview");
+    assert_release_envelope(&cap);
     assert_eq!(cap["safeToUnlock"], false);
     assert_eq!(cap["recoveryAvailable"], false);
     if cap["diagnosticsAvailable"] == true {
@@ -74,6 +92,7 @@ fn real_context_capabilities_and_refusal_agree() {
         "--json",
     ]);
     assert_eq!(code, 2);
+    assert_release_envelope(&refused);
     assert_eq!(refused["reason"], cap["reason"]);
     assert_eq!(refused["lock"]["state"], "unknown");
     assert!(refused.get("diagnostic").is_none());

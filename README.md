@@ -74,18 +74,21 @@ npm install --global codex-unlock@latest
 `check-update` checks the registry; it does not install anything.
 Automatic notices are advisory only. See [update behavior](docs/cli-reference.md#updates).
 
-## Windows diagnostic prerelease
+<a id="windows-diagnostic-prerelease"></a>
 
-The separate Windows diagnostic-only **0.5.0-alpha.1** prerelease uses tag
-`windows-v0.5.0-alpha.1` and does not change the stable npm CLI. Consult
+## Windows 10 diagnostics
+
+The separate Windows diagnostic-only channel uses tags `windows-v<version>`.
+Release candidates are marked as prereleases. Consult
 [GitHub Releases](https://github.com/abruption/codex-unlock/releases) for its
 publication status and ZIP availability. Running the standalone ZIP's executable
-requires no Node.js, Rust or `lsof` installation.
+requires no Node.js, Rust or `lsof` installation; npm installation remains the
+macOS/Linux CLI.
 
-Its scope is Windows x64 on local NTFS, with a verified Medium-integrity,
-non-elevated, non-AppContainer token. Measurements cover a designated Windows
-10 x64 host with Defender real-time protection disabled. Windows 11 was not
-measured, and other security configurations are not qualified by this evidence.
+The support scope is **Windows 10 x64 on local NTFS**, with a verified
+Medium-integrity, non-elevated, non-AppContainer token. Windows 11 and Windows
+Server are outside this qualified scope. Security-product and Codex-mode
+coverage is recorded in the platform guide; it does not cover every configuration.
 There is no Windows unlock or recovery, a supplied
 PID does not establish the lock holder, and `safeToUnlock` is always `false`.
 See [Windows scope and download guidance](docs/platform-support.md#windows-diagnostic-prerelease).

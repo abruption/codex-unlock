@@ -1,10 +1,10 @@
-name: Windows prerelease preparation
+name: Windows release preparation
 
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: Prepare a draft version PR, or build assets on a draft release (never publishes)
+        description: Prepare the checked-in Windows release plan as a draft PR or draft assets (never publishes)
         required: true
         type: choice
         options: [prepare, draft]
@@ -40,7 +40,7 @@ jobs:
         with:
           node-version: '24'
           package-manager-cache: false
-      - name: Refuse published releases and subsequent version preparation
+      - name: Validate release plan, published predecessor and draft-only preparation
         id: preflight
         env:
           GH_TOKEN: ${{ github.token }}

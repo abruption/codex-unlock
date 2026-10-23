@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { response, requests, threadId, RpcTranscript, parseDiagnostic, parsePreviewDiagnostic, parseObserverOptions, runVerifiedDiagnostic, isEntryPoint, nativeArguments, requireAbsent, knownFolders, KNOWN_FOLDER_QUERY, validateThreadConfiguration } from '../observe-native.mjs';
+import { response, requests, threadId, RpcTranscript, parseDiagnostic, parsePreviewDiagnostic, previewReleaseContract, parseObserverOptions, runVerifiedDiagnostic, isEntryPoint, nativeArguments, requireAbsent, knownFolders, KNOWN_FOLDER_QUERY, validateThreadConfiguration } from '../observe-native.mjs';
 test('responses need exactly one outcome and the expected ID', () => {
   assert.deepEqual(response({ id: 1, result: {} }, 1), {});
   for (const record of [null, [], { id: 1 }, { id: 1, result: {}, error: {} }, { id: 2, result: {} }, { id: 1, error: {} }]) {
@@ -135,6 +135,35 @@ test('research capabilities accept valid prerelease Cargo versions', () => {
   assert.equal(parseDiagnostic(record(value), { command: 'capabilities' }).parsed.prototypeVersion, '0.5.0-alpha.1');
   assert.throws(() => parseDiagnostic(record({ ...value, prototypeVersion: '0.5.0-alpha.01' }), { command: 'capabilities' }));
 });
+test('RC and stable envelopes bind schema, maturity and channel to the requested version', () => {
+  for (const [version, channel, prerelease] of [['0.5.0-rc.1', 'rc', true], ['0.5.0', 'stable', false]]) {
+    const value = { ...previewInspect(), schema: 'codex-unlock-windows', version,
+      releaseChannel: channel, preview: prerelease, experimental: prerelease };
+    const expected = { ...request, expectedVersion: version };
+    assert.deepEqual(parsePreviewDiagnostic(record(value), expected).parsed, value.diagnostic);
+    const cap = { ...previewEnvelope(), schema: value.schema, version, releaseChannel: channel,
+      preview: prerelease, experimental: prerelease, command: 'capabilities',
+      commands: ['capabilities', 'inspect'], supportedFilesystems: ['NTFS'],
+      holderAttribution: 'unproven', reason: 'diagnostic_available' };
+    assert.equal(parsePreviewDiagnostic(record(cap), { command: 'capabilities', expectedVersion: version }).parsed.version, version);
+    for (const change of [{ schema: 'codex-unlock-windows-preview' }, { releaseChannel: channel === 'rc' ? 'stable' : 'rc' },
+      { preview: !prerelease }, { experimental: !prerelease }, { releaseChannel: undefined },
+      { safeToUnlock: true }, { recoveryAvailable: true }]) {
+      assert.throws(() => parsePreviewDiagnostic(record({ ...value, ...change }), expected));
+    }
+    assert.throws(() => parsePreviewDiagnostic(record({ ...cap, reason: 'diagnostic_preview_available' }),
+      { command: 'capabilities', expectedVersion: version }));
+    assert.throws(() => parsePreviewDiagnostic(record(value), { ...expected,
+      expectedVersion: version === '0.5.0' ? '0.5.0-rc.1' : '0.5.0' }));
+  }
+  const legacy = { ...previewInspect(), version: '0.5.0-alpha.1' };
+  assert.throws(() => parsePreviewDiagnostic(record({ ...legacy, releaseChannel: 'alpha' }),
+    { ...request, expectedVersion: legacy.version }));
+  for (const version of ['', '0.5.0+build', '0.5.0-alpha.2', '0.5.0-rc.01', '0.5.1']) {
+    assert.equal(previewReleaseContract(version), null);
+    assert.throws(() => parsePreviewDiagnostic(record({ ...legacy, version }), { ...request, expectedVersion: version }));
+  }
+});
 test('diagnostic digest checks block changed input and retain executed records after drift', async () => {
   const pin = 'a'.repeat(64);
   let calls = 0;
@@ -166,6 +195,10 @@ test('preview observer requires a manifest diagnostic digest without changing re
   const pinned = [...args, '--diagnostic-format', 'preview', '--diagnostic-sha256', 'b'.repeat(64)];
   assert.throws(() => parseObserverOptions(pinned), /diagnostic_version_required/);
   assert.throws(() => parseObserverOptions([...pinned, '--diagnostic-version', '0.5.0-alpha.01']), /diagnostic_version_required/);
+  assert.throws(() => parseObserverOptions([...pinned, '--diagnostic-version', '0.5.1']), /diagnostic_version_unreviewed/);
+  for (const version of ['0.5.0-rc.1', '0.5.0']) {
+    assert.equal(parseObserverOptions([...pinned, '--diagnostic-version', version]).options['--diagnostic-version'], version);
+  }
   const valid = [...pinned, '--diagnostic-version', '0.5.0-alpha.1'];
   assert.equal(parseObserverOptions(valid).options['--diagnostic-sha256'], 'b'.repeat(64));
   assert.equal(parseObserverOptions(valid).options['--diagnostic-version'], '0.5.0-alpha.1');

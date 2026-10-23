@@ -66,11 +66,13 @@ npm install --global codex-unlock@latest
 
 `check-update` 只检查软件包注册表中的版本，不会安装更新。自动提示仅供参考。详见[更新行为](docs/cli-reference.md#updates)。
 
-## Windows 诊断预发布版
+<a id="windows-诊断预发布版"></a>
 
-独立的 Windows 仅诊断 **0.5.0-alpha.1** 预发布版使用标签 `windows-v0.5.0-alpha.1`，不改变稳定版 npm CLI。请在 [GitHub Releases](https://github.com/abruption/codex-unlock/releases) 查看发布状态及 ZIP 是否可供下载。运行独立 ZIP 中的可执行文件无需安装 Node.js、Rust 或 `lsof`。
+## Windows 10 诊断
 
-适用范围为使用本地 NTFS 的 Windows x64，且必须确认实际令牌为 Medium 完整性级别、未提升权限且不处于 AppContainer 中。测量依据仅来自关闭 Defender 实时保护的指定 Windows 10 x64 主机。Windows 11 尚未测量，此依据也不能证明其他安全配置已通过验证。不提供 Windows 解锁或恢复功能，用户指定的 PID 不能证明锁的持有者身份，`safeToUnlock` 始终为 `false`。详见 [Windows 适用范围与下载说明](docs/platform-support.md#windows-diagnostic-prerelease)。
+独立的 Windows 仅诊断发行版使用 `windows-v<version>` 格式的标签，候选版本（RC）标记为预发布版。请在 [GitHub Releases](https://github.com/abruption/codex-unlock/releases) 查看发布状态及 ZIP 是否可供下载。运行独立 ZIP 中的可执行文件无需安装 Node.js、Rust 或 `lsof`。通过 npm 安装的 CLI 仍用于 macOS/Linux。
+
+支持范围为**使用本地 NTFS 的 Windows 10 x64**，且必须确认实际令牌为 Medium 完整性级别、未提升权限且不处于 AppContainer 中。Windows 11 和 Windows Server 不在此验证范围内。安全产品和 Codex 运行模式的验证范围记录在平台说明中，并不表示所有配置均已通过验证。不提供 Windows 解锁或恢复功能，用户指定的 PID 不能证明锁的持有者身份，`safeToUnlock` 始终为 `false`。详见 [Windows 适用范围与下载说明](docs/platform-support.md#windows-diagnostic-prerelease)。
 
 ## 文档
 
