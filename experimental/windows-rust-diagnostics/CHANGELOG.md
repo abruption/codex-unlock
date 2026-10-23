@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/abruption/codex-unlock/compare/windows-v0.5.0-rc.1...windows-v0.5.0) (2026-10-23)
+
+
+### Features
+
+* **windows:** select stable release plan after qualified RC ([#179](https://github.com/abruption/codex-unlock/issues/179)) ([2893745](https://github.com/abruption/codex-unlock/commit/2893745bda171abc92b164127af87d4166d55acc))
+
 ## [0.5.0-rc.1](https://github.com/abruption/codex-unlock/compare/windows-v0.5.0-alpha.1...windows-v0.5.0-rc.1) (2026-10-23)
 
 
