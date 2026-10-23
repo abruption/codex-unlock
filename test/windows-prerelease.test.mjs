@@ -208,7 +208,8 @@ test("mocked preflight wires predecessor, phase and source-control checks withou
         import assert from 'node:assert/strict';
         import { Buffer } from 'node:buffer';
         import process from 'node:process';
-        import { main } from ${JSON.stringify(moduleUrl)};
+        process.stderr.write('fixture_child_started\\n');
+        const { main } = await import(${JSON.stringify(moduleUrl)});
         const sourceFiles = ${JSON.stringify(sourceFiles)};
         const previous = ${JSON.stringify(previous)};
         const release = ${JSON.stringify(release)};
@@ -242,20 +243,29 @@ test("mocked preflight wires predecessor, phase and source-control checks withou
           } else throw new Error('unexpected_mock_request:'+path);
           return {ok:true,status:200,json:async()=>result};
         };
+        await assert.rejects(globalThis.fetch('https://api.github.com/repos/abruption/codex-unlock/unmatched-fixture-route'), /unexpected_mock_request/);
+        process.stderr.write('fixture_mock_ready\\n');
         process.argv = ['node','test','preflight'];
         await main();
         assert.ok(calls.includes('git/ref/tags/windows-v${PLAN.previousVersion}'));
         if (${JSON.stringify(operation)} === 'draft') assert.ok(calls.includes('contents/.github/workflows/windows-rust-diagnostics.yml?ref=${sha}'));
+        process.stdout.write('fixture_preflight_completed\\n');
       `;
-      const result = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
-        cwd: directory, encoding: "utf8", timeout: 10_000,
+      // Keep the embedded source-file bytes out of argv. This is a subprocess
+      // startup/deadlock watchdog for loaded CI runners, not a product timing
+      // assertion: all HTTP is replaced above and every outcome stays checked.
+      const result = spawnSync(process.execPath, ["--input-type=module", "-"], {
+        cwd: directory, encoding: "utf8", input: code, timeout: 60_000,
         env: { GITHUB_REPOSITORY: "abruption/codex-unlock", GITHUB_REF: "refs/heads/main",
           GITHUB_EVENT_NAME: "workflow_dispatch", GH_TOKEN: "mock-only", GITHUB_OUTPUT: output,
           IMMUTABLE_POLICY_CONFIRMED: "true", OPERATION: operation },
       });
-      assert.equal(result.error, undefined, scenario);
+      const details = `${scenario}: stdout=${result.stdout}; stderr=${result.stderr}`;
+      assert.equal(result.error, undefined, details);
+      assert.match(result.stderr, /fixture_child_started\nfixture_mock_ready\n/, details);
       if (["prepare", "annotated", "draft"].includes(scenario)) {
         assert.equal(result.status, 0, `${scenario}: ${result.stderr}`);
+        assert.equal(result.stdout, "fixture_preflight_completed\n", scenario);
         assert.equal(readFileSync(output, "utf8"), `run_release_please=${operation === "prepare"}\n`);
       } else {
         assert.equal(result.status, 1, `${scenario}: ${result.stderr}`);
