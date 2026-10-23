@@ -2,7 +2,8 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { observeLockDirectory, observeLockFile } from "./lock.js";
-import { probeWithRetry } from "./native-coordination.js";
+import { guardedProbeOnce, probeWithRetry } from "./native-coordination.js";
+import { prepareLinuxParticipation, verifyLinuxParticipation } from "./linux-attribution.js";
 import { isThreadId, defaultOptions, validateThreadId } from "./options.js";
 import { evaluateSafety } from "./policy.js";
 import {
@@ -37,6 +38,8 @@ function sameProcessIdentity(
     before[0].pid === after[0].pid &&
     before[0].startTime !== null &&
     before[0].startTime === after[0].startTime
+    && (process.platform !== "linux" || (before[0].startTicks !== undefined && before[0].startTicks === after[0].startTicks &&
+      before[0].commandFingerprint !== undefined && before[0].commandFingerprint === after[0].commandFingerprint))
   );
 }
 
@@ -129,6 +132,31 @@ export async function inspectThread(
     openersAfter.processes,
   );
   const openerError = openersBefore.error ?? openersAfter.error;
+  // Correlation alone is insufficient on Linux. Bind a granted descriptor row
+  // to both process-instance samples under the existing native coordination.
+  for (const [probe, openers, observedLock] of [[probeBefore, openersBefore, lockBefore], [probeAfter, openersAfter, lockAfter]] as const) {
+    if (process.platform !== "linux" || probe.status !== "held") continue;
+    // Invalid opener discovery already blocks classification and policy. Keep
+    // the independent OS held result; it is not a process-visibility result.
+    if (openers.error || openers.processes.length !== 1) continue;
+    try {
+      const candidate = openers.processes[0];
+      const prepared = prepareLinuxParticipation(candidate.pid, lockPath);
+      if (!candidate.startTicks || prepared.startTicks !== candidate.startTicks ||
+        !candidate.commandFingerprint || prepared.commandFingerprint !== candidate.commandFingerprint) throw new Error("linux_identity_changed");
+      // Attribute only the ORIGINAL inspected inode. The existing native
+      // thread probe validates this snapshot against path and opened FD.
+      const fresh = observeLockFile(lockPath);
+      if (!fresh.regularFile || fresh.symlink || !fresh.ownedByCurrentUser ||
+        !sameSnapshot(observedLock.snapshot, fresh.snapshot)) throw new Error("linux_target_changed");
+      const result = guardedProbeOnce(lockPath, observedLock, undefined,
+        () => verifyLinuxParticipation(lockPath, prepared));
+      Object.assign(probe, result);
+    } catch {
+      probe.status = "unknown";
+      probe.error = "linux_participation_unproven";
+    }
+  }
   const probeStable = probeBefore.status === probeAfter.status;
   const classification = classify(
     lockAfter.status,
