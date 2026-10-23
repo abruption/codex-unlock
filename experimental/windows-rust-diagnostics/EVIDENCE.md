@@ -4,6 +4,10 @@ Related: #163, #146–#152. These results qualify an unpublished experimental
 increment, not Windows production support or recovery. Every diagnostic result
 retains `safeToUnlock=false`.
 
+The later [Medium-integrity follow-up](MEDIUM-EVIDENCE.md) reached the native
+guarded lock probe successfully. This document preserves the earlier High-token
+results and their limits.
+
 ## Inputs and integrity
 
 | Input | Pinned evidence |
@@ -131,12 +135,14 @@ check/clippy passed. The native observer's protocol/schema/startup tests: 13
 passed. These local Rust tests do not substitute for the separately recorded
 Windows execution.
 
-Package smoke was run and failed on unchanged packaging code: local tarball
+During the initial measurement, package smoke failed on unchanged packaging code: local tarball
 installation resolved `nan@2.30.0` while the lockfile expects `2.29.0`.
-The PR's package jobs show that failure too. The assertion was not relaxed and
+The initial PR package jobs showed that failure too. The assertion was not relaxed and
 the runtime dependency was not changed. This is a separate packaging gate,
 not a passing check or evidence that the registry-published package ignores
-its shrinkwrap.
+its shrinkwrap. PR #164 subsequently corrected the registry-metadata test path
+and inherited proxy handling; its final commit `af5ab64` passed all 41 GitHub
+checks before merge. Runtime dependency pins were unchanged.
 
 Independent read-only CLI reviews used Claude Code 2.1.306 (requested and
 response-reported `claude-opus-5-5`) and Codex CLI 0.163.0 (isolated default

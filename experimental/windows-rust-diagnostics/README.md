@@ -59,8 +59,10 @@ reuse can still be affected until the observer closes its file handles.
 File handles allow deletion, so before/after identity and path observations are
 samples rather than atomic name binding. Same-user malicious replacement or
 permission changes are not excluded. File ownership is checked; a full DACL
-authorization policy is not implemented. Other users, Medium integrity, ReFS,
-Defender interference and actual Codex modes require separate evidence.
+authorization policy is not implemented. A [Medium-integrity measurement](MEDIUM-EVIDENCE.md)
+observed guarded contention with one self-started Codex 0.163.0 app-server on
+NTFS. Other users, ReFS, Defender interference and other Codex modes require
+separate evidence.
 An elevated Codex can create objects owned by Administrators; the exact
 current-user ownership rule then returns `file_owner_not_self`. Raw results
 include local paths and PIDs: keep them private and redact public summaries.
