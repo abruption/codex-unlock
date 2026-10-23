@@ -67,11 +67,13 @@ npm install --global codex-unlock@latest
 `check-update` はパッケージレジストリで更新を確認するだけで、インストールは行いません。
 自動通知は参考情報にすぎません。詳しくは[更新の動作](docs/cli-reference.md#updates)を参照してください。
 
-## Windows 診断プレリリース
+<a id="windows-診断プレリリース"></a>
 
-独立した Windows 診断専用 **0.5.0-alpha.1** プレリリースのタグは `windows-v0.5.0-alpha.1` で、安定版 npm CLI には影響しません。公開状況と ZIP の入手可否は [GitHub Releases](https://github.com/abruption/codex-unlock/releases) で確認してください。単体実行用 ZIP に含まれる実行ファイルには Node.js、Rust、`lsof` のインストールは不要です。
+## Windows 10 の診断
 
-対象はローカル NTFS 上の Windows x64 で、実際のトークンが Medium 整合性レベル、非昇格、非 AppContainer であることを確認する必要があります。測定の根拠は Defender のリアルタイム保護が無効な指定の Windows 10 x64 ホストに限られます。Windows 11 は未測定で、この根拠では他のセキュリティ構成も検証済みとはいえません。Windows のロック解除・復旧機能はなく、指定した PID はロック保持者を確定する根拠にはなりません。`safeToUnlock` は常に `false` です。[Windows の対応範囲とダウンロード案内](docs/platform-support.md#windows-diagnostic-prerelease)を参照してください。
+独立した Windows 診断専用の配布には `windows-v<version>` 形式のタグを使用し、リリース候補（RC）はプレリリースとして表示します。公開状況と ZIP の入手可否は [GitHub Releases](https://github.com/abruption/codex-unlock/releases) で確認してください。単体実行用 ZIP の実行ファイルには Node.js、Rust、`lsof` のインストールは不要です。npm でインストールする CLI は引き続き macOS/Linux 用です。
+
+対応範囲は **ローカル NTFS 上の Windows 10 x64** です。実際のトークンが Medium 整合性レベル、非昇格、非 AppContainer であることを確認する必要があります。Windows 11 と Windows Server はこの検証範囲に含まれません。セキュリティ製品と Codex の実行モードごとの検証範囲はプラットフォーム案内に記載し、すべての構成を検証済みとはしません。Windows のロック解除・復旧機能はなく、指定した PID はロック保持者を確定する根拠にはなりません。`safeToUnlock` は常に `false` です。[Windows の対応範囲とダウンロード案内](docs/platform-support.md#windows-diagnostic-prerelease)を参照してください。
 
 ## ドキュメント
 

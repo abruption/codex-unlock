@@ -132,15 +132,35 @@ installed dependency tree and its counts are not a claim that the single
 provenance, an integrity mismatch, or an invalid signature blocks release
 verification even if installation succeeds.
 
-## Windows prerelease preparation
+<a id="windows-prerelease-preparation"></a>
+
+## Windows release preparation
 
 The Windows diagnostic channel uses separate Release Please files:
 `release-please-windows-config.json` and
-`.release-please-windows-manifest.json`. The Rust component's first target is
-`0.5.0-alpha.1`, tagged `windows-v0.5.0-alpha.1`; the stable npm package stays at
-0.4.7. Do not merge the Node release PR as a substitute for Windows preparation.
+`.release-please-windows-manifest.json`, plus the reviewed
+`windows-release-plan.json`. The standalone Rust channel uses `windows-v<version>`
+tags. The Node package has its own release PR and npm channel; merging it does
+not release the Windows executable.
 
-The **Windows prerelease preparation** workflow runs only by manual dispatch
+The plan permits exactly these transitions:
+
+| Target | Required published predecessor | Draft `prerelease` |
+| --- | --- | --- |
+| `0.5.0-rc.1` | `0.5.0-alpha.1` | true |
+| `0.5.0` | `0.5.0-rc.1` | false |
+
+Set the plan and matching Release Please `release-as`/`prerelease` configuration
+in a reviewed PR. Leave `draft=true` and `force-tag-creation=false`. Release
+Please then owns the Cargo version/lockfile, component changelog and Windows
+manifest changes. Do not manually bump them. Before preparing stable, inspect
+the RC's recorded host qualification and review results; a published predecessor
+alone does not prove those checks passed. Link the RC evidence and its result
+hashes in the stable-plan PR. If an RC exposes a product defect, introduce a
+newly reviewed plan/contract for a subsequent RC; do not overwrite its assets or
+skip directly to stable. Any obsolete draft needs explicit maintainer cleanup.
+
+The **Windows release preparation** workflow runs only by manual dispatch
 on `main`. It has two operations:
 
 Before either dispatch, a maintainer must run
@@ -151,7 +171,9 @@ workflow's `GITHUB_TOKEN` does not have. The required
 not an automated measurement; do not set it without checking the policy.
 
 1. `gh workflow run windows-prerelease.yml --ref main -f mode=prepare -F immutable_policy_confirmed=true` asks
-   Release Please to open a draft Windows version PR. It updates the Rust
+   Release Please to open a draft Windows version PR. Preparation requires the
+   previous version in Cargo/the manifest and a public immutable predecessor
+   release whose tag resolves to its recorded source commit. It updates the Rust
    Cargo version/lockfile, component changelog and Windows version manifest.
    Review its exact diff and run the repository and Windows checks. Bot-token
    PR creation may not trigger Actions; a maintainer can push an empty CI
@@ -160,13 +182,15 @@ not an automated measurement; do not set it without checking the policy.
    review gates pass. The bot-PR provenance check identifies that PR; it does
    not replace reviewing its complete diff for unexpected changes.
 2. `gh workflow run windows-prerelease.yml --ref main -f mode=draft -F immutable_policy_confirmed=true` asks
-   Release Please to create the draft prerelease and builds its immutable
+   Release Please to create the draft release and builds its immutable
    source commit. The workflow verifies the bot version PR, Cargo/manifest
-   version, source SHA, ZIP and checksums before attaching three assets to the
-   draft. It never changes `draft` to false and never runs npm publication.
+   version, source SHA, plan/config/helper/workflow bytes, ZIP and checksums
+   before attaching three assets to the draft. The RC draft is a prerelease;
+   the stable draft is not. The workflow never changes `draft` to false and
+   never runs npm publication.
 
-The config fixes `draft=true`, `prerelease=true` and
-`force-tag-creation=false`. GitHub does not create the actual tag until the
+The config keeps `draft=true` and `force-tag-creation=false`; `prerelease` must
+match the checked-in plan. GitHub does not create the actual tag until the
 draft is published. The helper refuses published releases, a public matching
 tag, wrong source/author/version, unexpected assets and differing existing
 asset bytes. For a partial upload, use **Re-run failed jobs** on the original
@@ -186,13 +210,38 @@ publication, but does not make concurrent manual publication a supported
 workflow. The reusable workflow definition comes from the dispatch revision;
 the executable source is the verified version-PR merge commit. Keep those
 workflow definitions unchanged between the version PR and draft preparation.
+The live-config preflight and Release Please's later configuration fetch are
+also separate operations. Source binding can refuse later asset attachment;
+it cannot undo an earlier action caused by a concurrent configuration change.
 
 Before public publication, inspect the completed draft and validate its exact
-executable bytes on the designated Windows host. A package checksum is not
-publisher authentication. The supported prerelease scope and measurement
+executable bytes on the designated Windows host. For 0.5.0, the approved scope
+is Windows 10 x64/local NTFS with Kaspersky Endpoint Security protection
+verified by its vendor CLI. Record Defender separately; Kaspersky-on is not
+Defender-on evidence. The host qualification runner is documented in
+[the source qualification guide](https://github.com/abruption/codex-unlock/blob/main/experimental/windows-rust-diagnostics/qualification/README.md).
+Run its actual Medium real-lock/file-safety matrix and High refusal checks,
+then the pinned native Codex observer. Bind all input hashes and retain failures
+and unconfirmed cleanup. Publish and validate the RC before changing the plan
+to stable. A stable version embeds different bytes, so repeat the final-byte
+host checks after its own build rather than reusing RC results.
+
+Once publication is authorized and the release's checks pass, publish that
+existing verified draft with its planned prerelease flag and
+`make_latest=false` (CLI: `--latest=false`), including the stable Windows release.
+The repository's GitHub Latest designation stays with the npm channel; verify
+`/releases/latest` after publication as well as npm's `latest` dist-tag.
+Preserve all three
+assets, verify the public tag's exact commit and anonymously download/check the
+ZIP again. Keep the separate npm stable channel unchanged. Record source,
+hashes, host/security conditions and CI/review results in
+[release issue #174](https://github.com/abruption/codex-unlock/issues/174).
+Keep raw account, PID and local-path evidence private; publish a redacted
+summary with its source/result hashes.
+A package checksum is not publisher authentication. The supported Windows scope and measurement
 limits are in [platform support](platform-support.md#windows-diagnostic-prerelease).
-Public publication is a separate maintainer decision. This preparation does
-not close the holder-attribution or cooperative-recovery gates.
+This diagnostic release does not close the holder-attribution or
+cooperative-recovery gates.
 
 ## Runtime dependency pinning
 

@@ -316,26 +316,43 @@ export function parseDiagnostic(record, request) {
   record.parsed = value;
   return record;
 }
-// Preview is a distinct envelope. Validate it before accepting the unchanged
-// research observation nested inside; raw stdout remains the preview output.
+// Alpha is retained for historical evidence. RC/stable use a separate public
+// schema ID, bound to an explicitly reviewed version and release channel.
+export function previewReleaseContract(version) {
+  if (version === '0.0.0' || version === '0.5.0-alpha.1') return {
+    schema: 'codex-unlock-windows-preview', preview: true, experimental: true,
+    availableReason: 'diagnostic_preview_available',
+  };
+  if (version === '0.5.0-rc.1' || version === '0.5.0') return {
+    schema: 'codex-unlock-windows', releaseChannel: version === '0.5.0' ? 'stable' : 'rc',
+    preview: version !== '0.5.0', experimental: version !== '0.5.0', availableReason: 'diagnostic_available',
+  };
+  return null;
+}
+// Validate the public envelope before accepting the unchanged research
+// observation nested inside. The legacy export name remains compatible.
 export function parsePreviewDiagnostic(record, request) {
   if (![0, 2].includes(record.exit?.code) || record.exit?.signal !== null || !record.complete
     || !Array.isArray(record.faults) || record.faults.length) throw new Error('diagnostic_incomplete');
   const value = JSON.parse(record.stdout);
+  const expectedVersion = request?.expectedVersion ?? '0.0.0';
+  const contract = previewReleaseContract(expectedVersion);
+  requireSchema(contract !== null);
   const common = ['schema', 'schemaVersion', 'preview', 'experimental', 'version', 'platform', 'architecture',
-    'safeToUnlock', 'recoveryAvailable', 'context', 'diagnosticsAvailable', 'command', 'reason'];
-  requireSchema(object(value) && value.schema === 'codex-unlock-windows-preview' && value.schemaVersion === 1
-    && value.preview === true && value.experimental === true && value.safeToUnlock === false
+    'safeToUnlock', 'recoveryAvailable', 'context', 'diagnosticsAvailable', 'command', 'reason',
+    ...(contract.releaseChannel ? ['releaseChannel'] : [])];
+  requireSchema(object(value) && value.schema === contract.schema && value.schemaVersion === 1
+    && value.preview === contract.preview && value.experimental === contract.experimental
+    && value.releaseChannel === contract.releaseChannel && value.safeToUnlock === false
     && value.recoveryAvailable === false && value.platform === 'windows' && value.architecture === 'x86_64'
-    && versionPattern.test(request?.expectedVersion ?? '0.0.0')
-    && value.version === (request?.expectedVersion ?? '0.0.0') && value.diagnosticsAvailable === true
+    && value.version === expectedVersion && value.diagnosticsAvailable === true
     && exactKeys(value.context, ['state', 'integrityRid', 'elevated', 'appContainer'])
     && value.context.state === 'observed' && value.context.integrityRid === 8192
     && value.context.elevated === false && value.context.appContainer === false);
   if (request?.command === 'capabilities') {
     requireSchema(exactKeys(value, [...common, 'commands', 'supportedFilesystems', 'holderAttribution'])
       && value.command === 'capabilities' && record.exit.code === 0
-      && value.reason === 'diagnostic_preview_available' && value.holderAttribution === 'unproven'
+      && value.reason === contract.availableReason && value.holderAttribution === 'unproven'
       && JSON.stringify(value.commands) === JSON.stringify(['capabilities', 'inspect'])
       && JSON.stringify(value.supportedFilesystems) === JSON.stringify(['NTFS']));
     record.parsed = value;
@@ -399,6 +416,9 @@ export function parseObserverOptions(argv) {
     && !/^[0-9a-f]{64}$/i.test(options['--diagnostic-sha256'] ?? '')) throw new Error('diagnostic_digest_required');
   if ((diagnosticFormat === 'preview' || options['--diagnostic-version'] !== undefined)
     && !versionPattern.test(options['--diagnostic-version'] ?? '')) throw new Error('diagnostic_version_required');
+  if (diagnosticFormat === 'preview' && !previewReleaseContract(options['--diagnostic-version'])) {
+    throw new Error('diagnostic_version_unreviewed');
+  }
   return { options, diagnosticFormat };
 }
 export async function main(argv) {

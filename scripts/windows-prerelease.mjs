@@ -5,13 +5,35 @@ import { createHash } from "node:crypto";
 import { appendFileSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import process from "node:process";
+import { URL } from "node:url";
 
-export const VERSION = "0.5.0-alpha.1";
+export function verifyPlan(plan) {
+  const allowed = [
+    { version: "0.5.0-rc.1", previousVersion: "0.5.0-alpha.1", prerelease: true },
+    { version: "0.5.0", previousVersion: "0.5.0-rc.1", prerelease: false },
+  ];
+  const expected = allowed.find((candidate) => candidate.version === plan?.version);
+  assert.ok(expected, "Unsupported Windows release target");
+  assert.deepEqual(plan, expected, "Windows release plan must follow alpha.1 -> rc.1 -> 0.5.0");
+}
+
+export const PLAN = Object.freeze(JSON.parse(readFileSync(new URL("../windows-release-plan.json", import.meta.url), "utf8")));
+verifyPlan(PLAN);
+export const VERSION = PLAN.version;
 export const TAG = `windows-v${VERSION}`;
 export const COMPONENT = "experimental/windows-rust-diagnostics";
 export const ARCHIVE = "windows-diagnostics-preview-windows-x86_64.zip";
 export const ASSETS = [ARCHIVE, "SHA256SUMS", "manifest.json"].sort();
 const repo = "abruption/codex-unlock";
+// The reusable workflow definition and attachment helper come from the dispatch
+// checkout, while the executable comes from the version-PR merge. Bind all
+// release control files to the same bytes to prevent interpreting that source
+// under another plan or workflow. Ordinary source/documentation may differ.
+export const SOURCE_BINDINGS = [
+  "windows-release-plan.json", "release-please-windows-config.json",
+  "scripts/windows-prerelease.mjs", "scripts/windows-prerelease-cli.mjs",
+  ".github/workflows/windows-prerelease.yml", ".github/workflows/windows-rust-diagnostics.yml",
+];
 export const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
 export function verifyImmutablePolicyAcknowledgement(value) {
@@ -21,11 +43,12 @@ export function verifyImmutablePolicyAcknowledgement(value) {
 
 export function completePage(items) {
   assert.ok(Array.isArray(items) && items.length < 100,
-    "Refuse incomplete paginated results; first-alpha preparation requires fewer than 100 entries");
+    "Refuse incomplete paginated results; release preparation requires fewer than 100 entries");
   return items;
 }
 
-export function verifyConfig(config) {
+export function verifyConfig(config, plan = PLAN) {
+  verifyPlan(plan);
   // This preparation lane is intentionally fixed. Reject unexpected fields as
   // well as overrides: a per-package draft:false would defeat a top-level check.
   assert.deepEqual(config, {
@@ -34,7 +57,7 @@ export function verifyConfig(config) {
     "separate-pull-requests": true,
     "draft-pull-request": true,
     draft: true,
-    prerelease: true,
+    prerelease: plan.prerelease,
     "force-tag-creation": false,
     label: "windows-release: pending",
     "release-label": "windows-release: tagged",
@@ -44,28 +67,76 @@ export function verifyConfig(config) {
       "include-component-in-tag": true,
       "include-v-in-tag": true,
       "tag-separator": "-",
-      "release-as": VERSION,
+      "release-as": plan.version,
       "changelog-path": "CHANGELOG.md",
     } },
   }, "Windows preparation configuration must remain fixed and draft-only");
 }
 
-export function verifyDraft(release, sha) {
+export function verifyDraft(release, sha, plan = PLAN) {
+  verifyPlan(plan);
   assert.match(sha ?? "", /^[a-f0-9]{40}$/);
-  assert.equal(release.tag_name, TAG);
+  assert.equal(release.tag_name, `windows-v${plan.version}`);
   assert.equal(release.target_commitish, sha, "Draft must target the immutable release merge SHA");
   assert.equal(release.draft, true, "Only draft releases may receive assets");
-  assert.equal(release.prerelease, true);
+  assert.equal(release.prerelease, plan.prerelease);
   assert.equal(release.author?.login, "github-actions[bot]");
   assert.ok(Number.isSafeInteger(release.id) && release.id > 0);
 }
 
-export function verifySource({ release, sha, pulls, cargo, versions }) {
-  verifyDraft(release, sha);
-  const packageSection = cargo.split(/^\[package\]\s*$/m)[1]?.split(/^\[/m)[0];
+export function verifyCargoVersion(cargo, version) {
+  const sections = cargo.split(/^\[package\]\s*$/m);
+  assert.equal(sections.length, 2, "Require exactly one Cargo package section");
+  const packageSection = sections[1]?.split(/^\[/m)[0];
   assert.ok(packageSection, "Missing Cargo package section");
-  assert.match(packageSection, /^version\s*=\s*"0\.5\.0-alpha\.1"\s*$/m);
-  assert.equal(versions[COMPONENT], VERSION);
+  const matches = [...packageSection.matchAll(/^version\s*=\s*"([^"\r\n]+)"\s*$/gm)];
+  assert.equal(matches.length, 1, "Require exactly one literal Cargo package version");
+  assert.equal(matches[0][1], version, "Cargo version differs from the release plan");
+}
+
+export function verifyVersionState(versions, operation, plan = PLAN) {
+  verifyPlan(plan);
+  assert.ok(["prepare", "draft"].includes(operation));
+  assert.deepEqual(versions, { [COMPONENT]: operation === "prepare" ? plan.previousVersion : plan.version },
+    "Windows manifest does not match the release phase");
+}
+
+export function verifyPreviousRelease(release, tagCommit, plan = PLAN) {
+  verifyPlan(plan);
+  assert.equal(release.tag_name, `windows-v${plan.previousVersion}`);
+  assert.equal(release.draft, false, "Previous Windows release must be public");
+  assert.equal(release.prerelease, true, "Both allowed predecessors are prereleases");
+  assert.equal(release.immutable, true, "Previous Windows release must be immutable");
+  assert.equal(release.author?.login, "github-actions[bot]");
+  assert.ok(Number.isSafeInteger(release.id) && release.id > 0);
+  assert.match(release.target_commitish ?? "", /^[a-f0-9]{40}$/);
+  assert.equal(tagCommit, release.target_commitish, "Previous public tag must match its release source");
+}
+
+export function verifySourceBindings(sourceFiles, checkoutFiles) {
+  assert.deepEqual(Object.keys(sourceFiles).sort(), [...SOURCE_BINDINGS].sort());
+  assert.deepEqual(Object.keys(checkoutFiles).sort(), [...SOURCE_BINDINGS].sort());
+  for (const path of SOURCE_BINDINGS) {
+    assert.ok(Buffer.isBuffer(sourceFiles[path]) && Buffer.isBuffer(checkoutFiles[path]));
+    const sourceBytes = sourceFiles[path];
+    const checkoutBytes = checkoutFiles[path];
+    // A failed deep Buffer assertion can allocate a large element-wise diff.
+    // Keep exact byte equality, but pass only a boolean into the assertion so
+    // rejection does not format or retain the complete source file contents.
+    const equal = sourceBytes.equals(checkoutBytes);
+    assert.ok(equal, equal ? undefined : `Release control file differs at source: ${path}; ` +
+      `source-bytes=${sourceBytes.length},source-sha256=${digest(sourceBytes)}; ` +
+      `checkout-bytes=${checkoutBytes.length},checkout-sha256=${digest(checkoutBytes)}`);
+  }
+}
+
+export function verifySource({ release, sha, pulls, cargo, versions, plan, config }, expectedPlan = PLAN) {
+  verifyPlan(plan);
+  assert.deepEqual(plan, expectedPlan, "Version PR source belongs to another release plan");
+  verifyConfig(config, expectedPlan);
+  verifyDraft(release, sha, expectedPlan);
+  verifyCargoVersion(cargo, expectedPlan.version);
+  verifyVersionState(versions, "draft", expectedPlan);
   assert.ok(pulls.some((pr) => pr.merged_at && pr.merge_commit_sha === sha &&
     pr.base?.ref === "main" && pr.base?.repo?.full_name === repo &&
     pr.user?.login === "github-actions[bot]" &&
@@ -75,14 +146,15 @@ export function verifySource({ release, sha, pulls, cargo, versions }) {
   "Source must be a merged Windows Release Please PR");
 }
 
-export function verifyAssets(files, sha) {
+export function verifyAssets(files, sha, plan = PLAN) {
+  verifyPlan(plan);
   assert.deepEqual(Object.keys(files).sort(), ASSETS);
   const manifest = JSON.parse(files["manifest.json"].toString("utf8"));
   assert.equal(manifest.schemaVersion, 1);
   assert.equal(manifest.sourceSha, sha);
   assert.equal(manifest.target, "x86_64-pc-windows-msvc");
   assert.equal(manifest.binary?.name, "codex-unlock-windows.exe");
-  assert.equal(manifest.binary?.version, VERSION);
+  assert.equal(manifest.binary?.version, plan.version);
   assert.match(manifest.binary?.sha256 ?? "", /^[a-f0-9]{64}$/);
   assert.equal(files.SHA256SUMS.toString("utf8").trim(), `${digest(files[ARCHIVE])}  ${ARCHIVE}`);
   return manifest;
@@ -109,6 +181,41 @@ async function api(path, options = {}) {
   return response.json();
 }
 
+async function repositoryFile(path, ref) {
+  const file = await api(`contents/${path}?ref=${ref}`);
+  assert.equal(file.type, "file");
+  assert.equal(file.encoding, "base64");
+  assert.equal(typeof file.content, "string");
+  return Buffer.from(file.content, "base64");
+}
+
+async function previousTagCommit(tag) {
+  const ref = await api(`git/ref/tags/${tag}`);
+  assert.equal(ref.ref, `refs/tags/${tag}`);
+  let object = ref.object;
+  const visited = new Set();
+  for (let depth = 0; depth < 4; depth++) {
+    assert.match(object?.sha ?? "", /^[a-f0-9]{40}$/);
+    if (object.type === "commit") return object.sha;
+    assert.equal(object.type, "tag", "Previous tag must resolve to a commit");
+    assert.ok(!visited.has(object.sha), "Cyclic tag reference");
+    visited.add(object.sha);
+    const annotated = await api(`git/tags/${object.sha}`);
+    assert.equal(annotated.sha, object.sha);
+    object = annotated.object;
+  }
+  assert.fail("Previous annotated tag chain exceeds the inspection bound");
+}
+
+async function previousRelease(releases) {
+  const previousTag = `windows-v${PLAN.previousVersion}`;
+  const matches = releases.filter((release) => release.tag_name === previousTag);
+  assert.equal(matches.length, 1, "Require exactly one published predecessor");
+  verifyPreviousRelease(matches[0], await previousTagCommit(previousTag));
+  const comparison = await api(`compare/${matches[0].target_commitish}...main`);
+  assert.ok(["ahead", "identical"].includes(comparison.status), "Previous release must belong to main");
+}
+
 async function findDraft() {
   // Drafts have no tag ref; list releases rather than resolving a public tag.
   const releases = completePage(await api("releases?per_page=100"));
@@ -120,16 +227,21 @@ async function findDraft() {
 async function source(release) {
   const sha = release.target_commitish;
   verifyDraft(release, sha);
-  const [pulls, cargo, versions, comparison] = await Promise.all([
+  const [pulls, cargo, versions, comparison, bindings] = await Promise.all([
     api(`commits/${sha}/pulls`),
-    api(`contents/${COMPONENT}/Cargo.toml?ref=${sha}`),
-    api(`contents/.release-please-windows-manifest.json?ref=${sha}`),
+    repositoryFile(`${COMPONENT}/Cargo.toml`, sha),
+    repositoryFile(".release-please-windows-manifest.json", sha),
     api(`compare/${sha}...main`),
+    Promise.all(SOURCE_BINDINGS.map(async (path) => [path, await repositoryFile(path, sha)])),
   ]);
   assert.ok(["ahead", "identical"].includes(comparison.status), "Source must belong to main");
+  const sourceFiles = Object.fromEntries(bindings);
+  verifySourceBindings(sourceFiles, Object.fromEntries(SOURCE_BINDINGS.map((path) => [path, readFileSync(path)])));
   verifySource({ release, sha, pulls,
-    cargo: Buffer.from(cargo.content, "base64").toString("utf8"),
-    versions: JSON.parse(Buffer.from(versions.content, "base64").toString("utf8")),
+    cargo: cargo.toString("utf8"),
+    versions: JSON.parse(versions.toString("utf8")),
+    plan: JSON.parse(sourceFiles["windows-release-plan.json"].toString("utf8")),
+    config: JSON.parse(sourceFiles["release-please-windows-config.json"].toString("utf8")),
   });
   return sha;
 }
@@ -146,14 +258,20 @@ export async function main() {
     assert.ok(["prepare", "draft"].includes(operation));
     verifyConfig(JSON.parse(readFileSync("release-please-windows-config.json", "utf8")));
     // Release Please reads target-branch files, which can advance after dispatch.
-    const liveConfig = await api("contents/release-please-windows-config.json?ref=main");
-    verifyConfig(JSON.parse(Buffer.from(liveConfig.content, "base64").toString("utf8")));
+    const [livePlan, liveConfig] = await Promise.all([
+      repositoryFile("windows-release-plan.json", "main"),
+      repositoryFile("release-please-windows-config.json", "main"),
+    ]);
+    assert.deepEqual(JSON.parse(livePlan.toString("utf8")), PLAN, "Live main has a different release plan");
+    verifyConfig(JSON.parse(liveConfig.toString("utf8")));
     const versions = JSON.parse(readFileSync(".release-please-windows-manifest.json", "utf8"));
-    assert.equal(versions[COMPONENT], operation === "prepare" ? "0.0.0" : VERSION,
-      "This workflow prepares only the fixed first alpha; do not start a subsequent release");
+    verifyVersionState(versions, operation);
+    verifyCargoVersion(readFileSync(`${COMPONENT}/Cargo.toml`, "utf8"), versions[COMPONENT]);
     const refs = await api(`git/matching-refs/tags/${TAG}`);
     assert.ok(!refs.some((ref) => ref.ref === `refs/tags/${TAG}`), "Preparation requires no public release tag");
-    const matches = completePage(await api("releases?per_page=100")).filter((item) => item.tag_name === TAG);
+    const releases = completePage(await api("releases?per_page=100"));
+    await previousRelease(releases);
+    const matches = releases.filter((item) => item.tag_name === TAG);
     assert.ok(matches.length <= 1, "Ambiguous release identity");
     if (matches.length) {
       assert.equal(operation, "draft", "An existing draft already completes preparation");

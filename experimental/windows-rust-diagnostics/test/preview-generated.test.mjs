@@ -14,7 +14,9 @@ test('observer accepts actual Rust mapping output with the documented exit contr
   const expected = { held_no_pid: [0, 'held'], free_no_pid: [0, 'free'], unknown_lock: [2, 'unknown'],
     unknown_process: [2, 'held'], different_user: [2, 'free'], same_user: [0, 'held'] };
   assert.ok(Array.isArray(cases));
-  assert.deepEqual(cases.map(({ name }) => name).sort(), Object.keys(expected).sort());
+  const versions = ['0.0.0', '0.5.0-alpha.1', '0.5.0-rc.1', '0.5.0'];
+  assert.deepEqual(cases.map(({ name, request }) => `${request.expectedVersion}:${name}`).sort(),
+    versions.flatMap((version) => Object.keys(expected).map((name) => `${version}:${name}`)).sort());
   for (const entry of cases) {
     assert.deepEqual([entry.exitCode, entry.result.lock.state], expected[entry.name]);
     assert.equal(typeof entry.request.expectedVersion, 'string', 'Rust producer must supply the expected build version');
@@ -22,5 +24,10 @@ test('observer accepts actual Rust mapping output with the documented exit contr
       complete: true, faults: [] };
     assert.equal(parsePreviewDiagnostic(record, entry.request).parsed.safeToUnlock, false);
     assert.throws(() => parsePreviewDiagnostic({ ...record }, { ...entry.request, expectedVersion: '999.0.0' }));
+    const otherSchema = { ...entry.result, schema: entry.result.schema === 'codex-unlock-windows'
+      ? 'codex-unlock-windows-preview' : 'codex-unlock-windows' };
+    assert.throws(() => parsePreviewDiagnostic({ ...record, stdout: JSON.stringify(otherSchema) }, entry.request));
+    const changedMaturity = { ...entry.result, experimental: !entry.result.experimental };
+    assert.throws(() => parsePreviewDiagnostic({ ...record, stdout: JSON.stringify(changedMaturity) }, entry.request));
   }
 });

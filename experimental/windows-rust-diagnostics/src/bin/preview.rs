@@ -1,4 +1,4 @@
-//! User-facing diagnostic-only preview. The research observer remains separate.
+//! User-facing diagnostic CLI. The research observation schema remains separate.
 use serde_json::{Value, json};
 use std::{
     io::{self, Write},
@@ -9,7 +9,49 @@ use std::{
 #[path = "../windows.rs"]
 mod windows;
 
-const HELP: &str = "codex-unlock-windows — diagnostic-only Windows preview\n\nUsage:\n  codex-unlock-windows --help\n  codex-unlock-windows --version\n  codex-unlock-windows capabilities [--json]\n  codex-unlock-windows inspect --home ABS --thread UUID [--pid POSITIVE] [--json]\n\nUse an absolute local Windows drive path and a normal non-admin terminal.\nOnly NTFS and a non-elevated Medium-integrity, non-AppContainer context are supported.\nInspection briefly takes existing coordination/thread locks. It creates no native files.\n--pid observes only the requested process; it does not identify the lock owner.\nNo unlock, list, signal, deletion, or recovery command is available.\n";
+const HELP: &str = "\n\nUsage:\n  codex-unlock-windows --help\n  codex-unlock-windows --version\n  codex-unlock-windows capabilities [--json]\n  codex-unlock-windows inspect --home ABS --thread UUID [--pid POSITIVE] [--json]\n\nQualified OS: Windows 10 x64. Other Windows versions are not qualified.\nUse an absolute local Windows drive path and a normal non-admin terminal.\nOnly NTFS and a non-elevated Medium-integrity, non-AppContainer context are supported.\nInspection briefly takes existing coordination/thread locks. It creates no native files.\n--pid observes only the requested process; it does not identify the lock owner.\nNo unlock, list, signal, deletion, or recovery command is available.\n";
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ReleaseContract {
+    LegacyAlpha,
+    Candidate,
+    Stable,
+}
+
+fn release_contract(version: &str) -> Option<ReleaseContract> {
+    match version {
+        "0.0.0" | "0.5.0-alpha.1" => Some(ReleaseContract::LegacyAlpha),
+        "0.5.0-rc.1" => Some(ReleaseContract::Candidate),
+        "0.5.0" => Some(ReleaseContract::Stable),
+        _ => None,
+    }
+}
+
+impl ReleaseContract {
+    fn schema(self) -> &'static str {
+        match self {
+            Self::LegacyAlpha => "codex-unlock-windows-preview",
+            Self::Candidate | Self::Stable => "codex-unlock-windows",
+        }
+    }
+    fn title(self) -> &'static str {
+        match self {
+            Self::LegacyAlpha => "Windows diagnostic preview",
+            Self::Candidate => "Windows diagnostic release candidate",
+            Self::Stable => "Windows diagnostics",
+        }
+    }
+    fn available_reason(self) -> &'static str {
+        match self {
+            Self::LegacyAlpha => "diagnostic_preview_available",
+            Self::Candidate | Self::Stable => "diagnostic_available",
+        }
+    }
+}
+
+fn current_contract() -> ReleaseContract {
+    release_contract(env!("CARGO_PKG_VERSION")).expect("reviewed Windows release version required")
+}
 
 #[derive(Debug, PartialEq)]
 enum Request {
@@ -136,11 +178,23 @@ fn gated_observation(c: &Value, observe: impl FnOnce() -> Value) -> Result<Value
     Ok(observe())
 }
 
-fn envelope() -> Value {
-    json!({"schema":"codex-unlock-windows-preview", "schemaVersion":1,
-        "preview":true, "experimental":true, "version":env!("CARGO_PKG_VERSION"),
+fn envelope_for(version: &str) -> Value {
+    let contract = release_contract(version).expect("reviewed Windows release version required");
+    let prerelease = contract != ReleaseContract::Stable;
+    let mut out = json!({"schema":contract.schema(), "schemaVersion":1,
+        "preview":prerelease, "experimental":prerelease, "version":version,
         "platform":std::env::consts::OS, "architecture":std::env::consts::ARCH,
-        "safeToUnlock":false, "recoveryAvailable":false})
+        "safeToUnlock":false, "recoveryAvailable":false});
+    match contract {
+        ReleaseContract::LegacyAlpha => {}
+        ReleaseContract::Candidate => out["releaseChannel"] = json!("rc"),
+        ReleaseContract::Stable => out["releaseChannel"] = json!("stable"),
+    }
+    out
+}
+
+fn envelope() -> Value {
+    envelope_for(env!("CARGO_PKG_VERSION"))
 }
 
 fn execute(request: Request) -> (u8, Value) {
@@ -155,7 +209,11 @@ fn execute(request: Request) -> (u8, Value) {
             out["commands"] = json!(["capabilities", "inspect"]);
             out["supportedFilesystems"] = json!(["NTFS"]);
             out["holderAttribution"] = json!("unproven");
-            out["reason"] = json!(decision.err().unwrap_or("diagnostic_preview_available"));
+            out["reason"] = json!(
+                decision
+                    .err()
+                    .unwrap_or(current_contract().available_reason())
+            );
             (0, out)
         }
         Request::Inspect { home, thread, pid } => {
@@ -212,11 +270,11 @@ fn guidance(reason: &str) -> &'static str {
             "The requested PID could not be verified as a live same-user process. Check that PID and its owner; it is not evidence of lock ownership."
         }
         "final_path_not_exact" => {
-            "Use the exact existing path spelling and case. This preview does not normalize alternate path spellings."
+            "Use the exact existing path spelling and case. This CLI does not normalize alternate path spellings."
         }
-        "windows_required" => "Run this preview on Windows in a normal non-admin terminal.",
+        "windows_required" => "Run this CLI on Windows in a normal non-admin terminal.",
         "windows_x64_required" => {
-            "Use the Windows x64 preview executable in a normal non-admin terminal; this build architecture is unsupported."
+            "Use the Windows x64 executable in a normal non-admin terminal; this build architecture is unsupported."
         }
         "current_token_unknown"
         | "app_container_refused"
@@ -224,7 +282,7 @@ fn guidance(reason: &str) -> &'static str {
         | "medium_integrity_required" => {
             "Use a normal non-admin terminal with Medium integrity outside AppContainer; no files or requested process were inspected."
         }
-        "diagnostic_preview_available" => {
+        "diagnostic_preview_available" | "diagnostic_available" => {
             "Use inspect with an explicit absolute local home and thread UUID."
         }
         "diagnostic_observation_only" => {
@@ -242,7 +300,8 @@ fn escaped(s: &str) -> String {
 fn human(value: &Value) -> String {
     let reason = value["reason"].as_str().unwrap_or("observation_unknown");
     let mut text = format!(
-        "Windows diagnostic preview — recovery unavailable\nReason: {}\n",
+        "{} — recovery unavailable\nReason: {}\n",
+        current_contract().title(),
         escaped(reason)
     );
     if value["error"] == "usage" {
@@ -282,7 +341,13 @@ fn main() -> ExitCode {
         .map_err(|_| "argument_encoding_invalid")
         .and_then(|a| parse(a));
     let (code, output) = match parsed {
-        Ok((Request::Help, _)) => (0, HELP.to_string()),
+        Ok((Request::Help, _)) => (
+            0,
+            format!(
+                "codex-unlock-windows — {}{HELP}",
+                current_contract().title()
+            ),
+        ),
         Ok((Request::Version, _)) => (
             0,
             format!("codex-unlock-windows {}\n", env!("CARGO_PKG_VERSION")),
@@ -318,6 +383,58 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn release_contract_schema_transitions_preserve_recovery_refusal() {
+        for (version, schema, channel, prerelease, available_reason) in [
+            (
+                "0.0.0",
+                "codex-unlock-windows-preview",
+                None,
+                true,
+                "diagnostic_preview_available",
+            ),
+            (
+                "0.5.0-alpha.1",
+                "codex-unlock-windows-preview",
+                None,
+                true,
+                "diagnostic_preview_available",
+            ),
+            (
+                "0.5.0-rc.1",
+                "codex-unlock-windows",
+                Some("rc"),
+                true,
+                "diagnostic_available",
+            ),
+            (
+                "0.5.0",
+                "codex-unlock-windows",
+                Some("stable"),
+                false,
+                "diagnostic_available",
+            ),
+        ] {
+            let value = envelope_for(version);
+            assert_eq!(value["schema"], schema);
+            assert_eq!(value["schemaVersion"], 1);
+            assert_eq!(value.get("releaseChannel").and_then(Value::as_str), channel);
+            assert_eq!(value["preview"], prerelease);
+            assert_eq!(value["experimental"], prerelease);
+            assert_eq!(value["safeToUnlock"], false);
+            assert_eq!(value["recoveryAvailable"], false);
+            assert_eq!(
+                release_contract(version).unwrap().available_reason(),
+                available_reason
+            );
+        }
+        for version in ["", "0.5.0-rc.01", "0.5.0-alpha.2", "0.5.1", "0.5.0+local"] {
+            assert_eq!(release_contract(version), None);
+        }
+        assert!(!ReleaseContract::Stable.title().contains("preview"));
+        assert!(!ReleaseContract::Stable.title().contains("candidate"));
+        assert!(ReleaseContract::Candidate.title().contains("candidate"));
+    }
     #[test]
     fn output_errors_preserve_diagnostic_status_only_for_broken_pipe() {
         struct FailingWriter {
@@ -414,33 +531,35 @@ mod tests {
             };
             let diagnostic = json!({"schemaVersion":1,"experimental":true,"safeToUnlock":false,"platform":"windows",
                 "requestedPid":pid,"lock":lock,"observation":observation});
-            let mut out = envelope();
-            out["platform"] = json!("windows");
-            out["architecture"] = json!("x86_64");
-            out["context"] = json!({"state":"observed","integrityRid":8192,"elevated":false,"appContainer":false});
-            out["diagnosticsAvailable"] = json!(true);
-            out["command"] = json!("inspect");
-            out["requestedPid"] = pid.clone();
-            out["requestedPidEvidence"] = json!("requested_pid_only_not_holder");
-            let (code, result) = finish_observation(out, diagnostic.clone());
-            assert_eq!(code, expected, "{name}");
-            assert_eq!(result["diagnostic"], diagnostic);
-            assert_eq!(result["lock"], diagnostic["lock"]);
-            assert_eq!(result["safeToUnlock"], false);
-            assert_eq!(result["recoveryAvailable"], false);
-            assert_eq!(
-                result["reason"],
-                if state == "unknown" {
-                    "open_existing_failed"
-                } else if expected == 2 {
-                    "requested_process_unverified"
-                } else {
-                    "diagnostic_observation_only"
-                }
-            );
-            cases.push(json!({"name":name,"exitCode":code,"result":result,
+            for version in ["0.0.0", "0.5.0-alpha.1", "0.5.0-rc.1", "0.5.0"] {
+                let mut out = envelope_for(version);
+                out["platform"] = json!("windows");
+                out["architecture"] = json!("x86_64");
+                out["context"] = json!({"state":"observed","integrityRid":8192,"elevated":false,"appContainer":false});
+                out["diagnosticsAvailable"] = json!(true);
+                out["command"] = json!("inspect");
+                out["requestedPid"] = pid.clone();
+                out["requestedPidEvidence"] = json!("requested_pid_only_not_holder");
+                let (code, result) = finish_observation(out, diagnostic.clone());
+                assert_eq!(code, expected, "{name}");
+                assert_eq!(result["diagnostic"], diagnostic);
+                assert_eq!(result["lock"], diagnostic["lock"]);
+                assert_eq!(result["safeToUnlock"], false);
+                assert_eq!(result["recoveryAvailable"], false);
+                assert_eq!(
+                    result["reason"],
+                    if state == "unknown" {
+                        "open_existing_failed"
+                    } else if expected == 2 {
+                        "requested_process_unverified"
+                    } else {
+                        "diagnostic_observation_only"
+                    }
+                );
+                cases.push(json!({"name":name,"exitCode":code,"result":result,
                 "request":{"command":"inspect","home":home,"thread":thread,"pid":pid,
-                    "expectedVersion":env!("CARGO_PKG_VERSION")}}));
+                    "expectedVersion":version}}));
+            }
         }
         if let Some(directory) = std::env::var_os("PREVIEW_TEST_GOLDEN_DIR") {
             let directory = std::path::PathBuf::from(directory);
@@ -570,7 +689,7 @@ mod tests {
     #[test]
     fn capabilities_always_denies_recovery() {
         let (_, value) = execute(Request::Capabilities);
-        assert_eq!(value["schema"], "codex-unlock-windows-preview");
+        assert_eq!(value["schema"], current_contract().schema());
         assert_eq!(value["safeToUnlock"], false);
         assert_eq!(value["recoveryAvailable"], false);
         assert_eq!(

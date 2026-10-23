@@ -61,11 +61,13 @@ npm install --global codex-unlock@latest
 
 `check-update`는 레지스트리에서 업데이트를 확인할 뿐, 설치하지는 않습니다. 자동 알림은 참고용입니다. [업데이트 동작](docs/cli-reference.md#updates)을 참고하세요.
 
-## Windows 진단 프리릴리스
+<a id="windows-진단-프리릴리스"></a>
 
-별도 Windows 진단 전용 **0.5.0-alpha.1** 프리릴리스의 태그는 `windows-v0.5.0-alpha.1`이며, 안정판 npm CLI에는 영향을 주지 않습니다. 공개 상태와 ZIP 다운로드 가능 여부는 [GitHub Releases](https://github.com/abruption/codex-unlock/releases)에서 확인하세요. 독립 실행형 ZIP에 포함된 실행 파일을 실행하는 데 Node.js, Rust, `lsof` 설치는 필요하지 않습니다.
+## Windows 10 진단
 
-대상 범위는 로컬 NTFS를 사용하는 Windows x64이며, 실제 토큰이 Medium 무결성 수준이고 권한 상승 및 AppContainer 상태가 아님을 확인해야 합니다. 측정 근거는 Defender 실시간 보호가 꺼진 지정 Windows 10 x64 호스트에 한정됩니다. Windows 11은 측정하지 않았으며, 이 근거로 다른 보안 구성까지 검증되었다고 볼 수 없습니다. Windows 잠금 해제·복구 기능은 없고, 사용자가 지정한 PID로 잠금 보유자를 확정하지 않으며, `safeToUnlock`은 항상 `false`입니다. [Windows 지원 범위 및 다운로드 안내](docs/platform-support.md#windows-diagnostic-prerelease)를 참고하세요.
+별도 Windows 진단 전용 배포의 태그는 `windows-v<version>` 형식이며, 출시 후보(RC)는 프리릴리스로 표시됩니다. 공개 상태와 ZIP 다운로드 가능 여부는 [GitHub Releases](https://github.com/abruption/codex-unlock/releases)에서 확인하세요. 독립 실행형 ZIP의 실행 파일에는 Node.js, Rust, `lsof` 설치가 필요하지 않습니다. npm으로 설치하는 CLI는 계속 macOS/Linux용입니다.
+
+지원 범위는 **로컬 NTFS를 사용하는 Windows 10 x64**입니다. 실제 토큰이 Medium 무결성 수준이고 권한 상승 및 AppContainer 상태가 아님을 확인해야 합니다. Windows 11과 Windows Server는 이 검증 범위에 포함되지 않습니다. 보안 제품과 Codex 실행 모드별 검증 범위는 플랫폼 안내에 기록하며, 모든 구성을 검증했다는 뜻은 아닙니다. Windows 잠금 해제·복구 기능은 없고, 사용자가 지정한 PID로 잠금 보유자를 확정하지 않으며, `safeToUnlock`은 항상 `false`입니다. [Windows 지원 범위 및 다운로드 안내](docs/platform-support.md#windows-diagnostic-prerelease)를 참고하세요.
 
 ## 문서
 

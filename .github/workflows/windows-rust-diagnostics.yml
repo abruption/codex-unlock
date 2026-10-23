@@ -108,7 +108,7 @@ jobs:
           node-version: '24'
           package-manager-cache: false
       - name: Validate native observer contracts
-        run: node --test test/*.test.mjs
+        run: node --test test/*.test.mjs qualification/*.test.mjs
       - name: Record measurement binary digests
         run: |
           $items = @(Get-Item target/debug/codex-unlock-windows-diagnostic.exe, target/debug/codex-unlock-windows-fixture.exe) + @(Get-ChildItem target/debug/deps/windows-*.exe)
@@ -148,16 +148,35 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $cap = $capabilities | ConvertFrom-Json -ErrorAction Stop
           $capabilities
-          if ($cap.version -cne $env:PREVIEW_EXPECTED_VERSION) { throw 'Unexpected capabilities version' }
-          if ($cap.schema -ne 'codex-unlock-windows-preview' -or $cap.safeToUnlock -ne $false -or $cap.recoveryAvailable -ne $false) { throw 'Invalid capabilities contract' }
+          $expectedSchema = 'codex-unlock-windows-preview'
+          $expectedChannel = $null
+          $expectedPrerelease = $true
+          switch -CaseSensitive ($env:PREVIEW_EXPECTED_VERSION) {
+            '0.0.0' {}
+            '0.5.0-alpha.1' {}
+            '0.5.0-rc.1' { $expectedSchema = 'codex-unlock-windows'; $expectedChannel = 'rc' }
+            '0.5.0' { $expectedSchema = 'codex-unlock-windows'; $expectedChannel = 'stable'; $expectedPrerelease = $false }
+            default { throw 'Unreviewed Windows release version' }
+          }
+          function Assert-ReleaseEnvelope($value) {
+            if ($value.version -cne $env:PREVIEW_EXPECTED_VERSION -or $value.schema -cne $expectedSchema -or $value.schemaVersion -ne 1) { throw 'Unexpected public schema or version' }
+            if ($value.preview -isnot [bool] -or $value.experimental -isnot [bool] -or $value.preview -ne $expectedPrerelease -or $value.experimental -ne $expectedPrerelease) { throw 'Unexpected release maturity' }
+            if ($expectedChannel) {
+              if ($value.releaseChannel -cne $expectedChannel) { throw 'Unexpected release channel' }
+            } elseif ($value.PSObject.Properties.Name -contains 'releaseChannel') { throw 'Legacy alpha must retain its original envelope' }
+            if ($value.safeToUnlock -ne $false -or $value.recoveryAvailable -ne $false) { throw 'Invalid recovery contract' }
+          }
+          Assert-ReleaseEnvelope $cap
           if ($cap.diagnosticsAvailable -ne $false -or $cap.context.state -ne 'observed' -or $cap.context.elevated -isnot [bool] -or $cap.context.appContainer -isnot [bool] -or $cap.context.integrityRid -isnot [long]) { throw 'This refusal gate requires an observed unsupported caller; Medium is measured separately' }
           if ($cap.context.appContainer) { $expectedReason = 'app_container_refused' }
           elseif ($cap.context.elevated) { $expectedReason = 'elevated_context_refused' }
           elseif ($cap.context.integrityRid -ne 8192) { $expectedReason = 'medium_integrity_required' }
           else { throw 'Eligible Medium runner cannot stand in for refusal coverage' }
+          if ($cap.reason -cne $expectedReason) { throw 'Capabilities refusal reason mismatch' }
           $refusal = & $binary inspect --home 'C:\preview-not-created' --thread '11111111-2222-4333-8444-555555555555' --pid 1 --json
           if ($LASTEXITCODE -ne 2) { throw 'Unsupported caller must refuse inspection' }
           $refused = $refusal | ConvertFrom-Json -ErrorAction Stop
+          Assert-ReleaseEnvelope $refused
           if ($refused.reason -ne $expectedReason -or $refused.safeToUnlock -ne $false -or $refused.PSObject.Properties.Name -contains 'diagnostic') { throw 'Preview reached inspection or gave an unexpected refusal' }
           $refusal
           & $binary unlock
