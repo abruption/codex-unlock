@@ -71,6 +71,7 @@ export interface LockProbe {
   method: "flock_exclusive_nonblocking";
   error?: string;
   guard?: NativeGuardEvidence;
+  participation?: { pid: number; startTicks: string; descriptor: string };
 }
 
 export type ProcessObservationStatus = "present" | "absent" | "unknown";
@@ -84,6 +85,8 @@ export interface ProcessStartObservation {
 }
 
 export interface ProcessInfo {
+  startTicks?: string;
+  commandFingerprint?: string;
   pid: number;
   ppid: number | null;
   uid: number | null;

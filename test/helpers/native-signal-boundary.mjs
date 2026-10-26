@@ -16,6 +16,9 @@ let finalDescriptor;
 let finalClosed = false;
 let microtaskRan = false;
 const held = new Set();
+// Two inspections each use two OS probes. Linux additionally performs two
+// guarded attribution probes per inspection; the final signal probe is last.
+const signalProbeAttempt = 2 * (2 + (process.platform === "linux" ? 2 : 0)) + 1;
 
 fs.openSync = (path, ...args) => {
   const fd = open(path, ...args);
@@ -33,7 +36,7 @@ syncBuiltinESMExports();
 addon.flockSync = (fd, operation) => {
   if (guards.has(fd) && operation === "exnb") {
     attempts += 1;
-    if (attempts === 5) {
+    if (attempts === signalProbeAttempt) {
       finalDescriptor = fd;
       if (process.env.CODEX_UNLOCK_TEST_NATIVE_SIGNAL === "busy") {
         throw Object.assign(new Error("injected native guard contention"), { code: "EAGAIN" });
@@ -52,7 +55,7 @@ addon.flockSync = (fd, operation) => {
 };
 process.kill = (pid, signal) => {
   if (signal === "SIGTERM") {
-    assert.equal(attempts, 5);
+    assert.equal(attempts, signalProbeAttempt);
     assert.equal(held.size, 0);
     assert.equal(finalClosed, true);
     assert.equal(microtaskRan, false);
