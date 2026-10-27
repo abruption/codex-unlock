@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.4.8](https://github.com/abruption/codex-unlock/compare/v0.4.7...v0.4.8) (2026-10-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **windows:** Windows RC and stable output use the codex-unlock-windows schema with explicit releaseChannel and maturity flags. Historical alpha parsing and the npm CLI JSON contract remain unchanged.
+
+### Features
+
+* **experimental:** add diagnostic-only Rust Windows prototype ([#164](https://github.com/abruption/codex-unlock/issues/164)) ([22857b3](https://github.com/abruption/codex-unlock/commit/22857b3eb14b89976673830c601e54f52a42c217))
+* **experimental:** add standalone Windows diagnostic preview ([#170](https://github.com/abruption/codex-unlock/issues/170)) ([36e3bf6](https://github.com/abruption/codex-unlock/commit/36e3bf655cacddaac9b1c8ed3c80530199dd5ef5))
+* prepare standalone Windows diagnostic alpha releases ([#172](https://github.com/abruption/codex-unlock/issues/172)) ([815c56e](https://github.com/abruption/codex-unlock/commit/815c56e047cca57b71f50805bb487c856f047526))
+* **windows:** prepare diagnostic RC and stable qualification ([#177](https://github.com/abruption/codex-unlock/issues/177)) ([1bb8746](https://github.com/abruption/codex-unlock/commit/1bb8746d4ce80cd9c3915b7b617b6b8a289b8d45))
+* **windows:** select stable release plan after qualified RC ([#179](https://github.com/abruption/codex-unlock/issues/179)) ([2893745](https://github.com/abruption/codex-unlock/commit/2893745bda171abc92b164127af87d4166d55acc))
+
+
+### Bug Fixes
+
+* **deps:** patch URI parsing advisories and refresh development dependencies ([37074a5](https://github.com/abruption/codex-unlock/commit/37074a5b1d3dc5b4e1976cd3f56af353519134a3))
+
 ## [0.4.7](https://github.com/abruption/codex-unlock/compare/v0.4.6...v0.4.7) (2026-10-18)
 
 
