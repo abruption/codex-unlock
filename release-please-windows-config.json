@@ -1,0 +1,22 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "cdd4bf1769c6a24d90b1624c4c9ea8d022666b7e",
+  "separate-pull-requests": true,
+  "draft-pull-request": true,
+  "draft": true,
+  "prerelease": false,
+  "force-tag-creation": false,
+  "label": "windows-release: pending",
+  "release-label": "windows-release: tagged",
+  "packages": {
+    "experimental/windows-rust-diagnostics": {
+      "release-type": "rust",
+      "component": "windows",
+      "include-component-in-tag": true,
+      "include-v-in-tag": true,
+      "tag-separator": "-",
+      "release-as": "0.5.0",
+      "changelog-path": "CHANGELOG.md"
+    }
+  }
+}

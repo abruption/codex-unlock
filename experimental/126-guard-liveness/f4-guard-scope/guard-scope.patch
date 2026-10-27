@@ -1,0 +1,226 @@
+diff --git a/src/inspection.ts b/src/inspection.ts
+index 25b9253..2999624 100644
+--- a/src/inspection.ts
++++ b/src/inspection.ts
+@@ -3,7 +3,7 @@ import { join } from "node:path";
+ 
+ import { observeLockDirectory, observeLockFile } from "./lock.js";
+ import { guardedProbeOnce, probeWithRetry } from "./native-coordination.js";
+-import { prepareLinuxParticipation, verifyLinuxParticipation } from "./linux-attribution.js";
++import { confirmLinuxCommand, prepareLinuxParticipation, verifyLinuxParticipation } from "./linux-attribution.js";
+ import { isThreadId, defaultOptions, validateThreadId } from "./options.js";
+ import { evaluateSafety } from "./policy.js";
+ import {
+@@ -151,6 +151,8 @@ export async function inspectThread(
+         !sameSnapshot(observedLock.snapshot, fresh.snapshot)) throw new Error("linux_target_changed");
+       const result = guardedProbeOnce(lockPath, observedLock, undefined,
+         () => verifyLinuxParticipation(lockPath, prepared));
++      // The guard is released; command evidence is read only now.
++      if (result.status === "held") confirmLinuxCommand(prepared);
+       Object.assign(probe, result);
+     } catch {
+       probe.status = "unknown";
+diff --git a/src/linux-attribution.ts b/src/linux-attribution.ts
+index e87925d..a96009b 100644
+--- a/src/linux-attribution.ts
++++ b/src/linux-attribution.ts
+@@ -8,6 +8,16 @@ const BYTE_LIMIT = 65536;
+ const FD_LIMIT = 256;
+ const BUDGET_MS = 25;
+ const FILESYSTEMS = new Set([0xef53n, 0x01021994n, 0x58465342n]); // ext, tmpfs, XFS
++// Upper bound for the post-release confirm step measured by assertFinalBoundary.
++// It is not an evidence-age bound and not a release-to-signal bound.
++export const FINAL_BOUNDARY_MS = 25;
++/**
++ * Reads reported by verifyLinuxParticipation's optional trace callback. The
++ * callback is manual and not exhaustive (for example, checkNamespace and the
++ * descriptor directory's internal reads are reported coarsely), so it is
++ * review evidence, not proof that no other path is touched.
++ */
++export type GuardedRead = { op: "readlink" | "read" | "stat" | "statfs" | "opendir"; path: string };
+ 
+ export interface LinuxParticipation { pid: number; startTicks: string; descriptor: string }
+ export interface LinuxPreparation {
+@@ -146,22 +156,42 @@ export function linuxStartTicks(pid: number): string {
+   return parseStartTicks(boundedRead(`/proc/${pid}/stat`), pid);
+ }
+ 
+-/** Called synchronously under native coordination, after independent held probe. */
+-export function verifyLinuxParticipation(lockPath: string, prepared: LinuxPreparation): LinuxParticipation {
++/**
++ * Called synchronously under native coordination, after independent held probe.
++ *
++ * This function does not read cmdline/exe and does not stat through
++ * /proc/PID/fd/N; command evidence is confirmed after release by
++ * confirmLinuxCommand. A granted row whose device and inode match the lock
++ * path is the evidence that the sampled description participates. Every
++ * remaining read is still a synchronous syscall without a hard deadline. The
++ * fdinfo read calls the file's show_fdinfo: if FD N is reused between the
++ * readlinks (for example by an epoll file, whose show_fdinfo takes ep->mtx),
++ * it can wait while coordination is held. A later refusal cannot undo a wait
++ * that already happened.
++ */
++export function verifyLinuxParticipation(
++  lockPath: string, prepared: LinuxPreparation, trace?: (read: GuardedRead) => void,
++): LinuxParticipation {
+   const deadline = performance.now() + BUDGET_MS;
+   const checkBudget = (): void => { if (performance.now() > deadline) throw new Error("linux_attribution_budget"); };
++  const link = (path: string): string => { trace?.({ op: "readlink", path }); return readlinkSync(path); };
++  const read = (path: string): string => { trace?.({ op: "read", path }); return boundedRead(path, deadline); };
++  const listed = (): string[] => { trace?.({ op: "opendir", path: `/proc/${prepared.pid}/fd` }); return descriptors(prepared.pid, deadline); };
++  trace?.({ op: "statfs", path: "/proc" });
+   checkNamespace();
++  trace?.({ op: "statfs", path: lockPath });
+   if (!FILESYSTEMS.has(statfsSync(lockPath, { bigint: true }).type)) throw new Error("linux_filesystem_unsupported");
++  trace?.({ op: "stat", path: lockPath });
+   const target = statSync(lockPath, { bigint: true });
+   if (!target.isFile() || target.nlink !== 1n || target.uid !== prepared.uid) throw new Error("linux_target_changed");
+   const validateIdentity = (): void => {
+     checkBudget();
++    trace?.({ op: "stat", path: `/proc/${prepared.pid}` });
+     if (statSync(`/proc/${prepared.pid}`, { bigint: true }).uid !== prepared.uid ||
+-      readlinkSync("/proc/self/ns/mnt") !== prepared.mountNamespace ||
+-      readlinkSync(`/proc/${prepared.pid}/ns/mnt`) !== prepared.mountNamespace ||
+-      parseStartTicks(boundedRead(`/proc/${prepared.pid}/stat`, deadline), prepared.pid) !== prepared.startTicks ||
+-      linuxCommandFingerprint(prepared.pid, deadline) !== prepared.commandFingerprint ||
+-      JSON.stringify(descriptors(prepared.pid, deadline)) !== JSON.stringify(prepared.descriptors)) {
++      link("/proc/self/ns/mnt") !== prepared.mountNamespace ||
++      link(`/proc/${prepared.pid}/ns/mnt`) !== prepared.mountNamespace ||
++      parseStartTicks(read(`/proc/${prepared.pid}/stat`), prepared.pid) !== prepared.startTicks ||
++      JSON.stringify(listed()) !== JSON.stringify(prepared.descriptors)) {
+       throw new Error("linux_identity_changed");
+     }
+   };
+@@ -170,12 +200,9 @@ export function verifyLinuxParticipation(lockPath: string, prepared: LinuxPrepar
+   for (const descriptor of prepared.candidates) {
+     checkBudget();
+     const path = `/proc/${prepared.pid}/fd/${descriptor}`;
+-    if (!prepared.descriptors.includes(descriptor) || readlinkSync(path) !== prepared.targetPath) throw new Error("linux_descriptor_changed");
+-    const before = statSync(path, { bigint: true });
+-    if (before.dev !== target.dev || before.ino !== target.ino) throw new Error("linux_descriptor_changed");
+-    const rows = parseFlockRows(boundedRead(`/proc/${prepared.pid}/fdinfo/${descriptor}`, deadline));
+-    const after = statSync(path, { bigint: true });
+-    if (readlinkSync(path) !== prepared.targetPath || before.dev !== after.dev || before.ino !== after.ino) throw new Error("linux_descriptor_changed");
++    if (!prepared.descriptors.includes(descriptor) || link(path) !== prepared.targetPath) throw new Error("linux_descriptor_changed");
++    const rows = parseFlockRows(read(`/proc/${prepared.pid}/fdinfo/${descriptor}`));
++    if (link(path) !== prepared.targetPath) throw new Error("linux_descriptor_changed");
+     const major = ((target.dev >> 8n) & 0xfffn) | ((target.dev >> 32n) & 0xfffff000n);
+     const minor = (target.dev & 0xffn) | ((target.dev >> 12n) & 0xffffff00n);
+     if (rows.some((row) => row.major !== major || row.minor !== minor || row.inode !== target.ino)) throw new Error("linux_row_identity_mismatch");
+@@ -183,9 +210,30 @@ export function verifyLinuxParticipation(lockPath: string, prepared: LinuxPrepar
+     else if (rows.length > 1) throw new Error("linux_rows_ambiguous");
+   }
+   validateIdentity();
++  trace?.({ op: "stat", path: lockPath });
+   const after = statSync(lockPath, { bigint: true });
+   if (!after.isFile() || after.nlink !== 1n || after.uid !== prepared.uid ||
+     after.dev !== target.dev || after.ino !== target.ino || matches.length !== 1) throw new Error("linux_participation_unproven");
+   checkBudget();
+   return { pid: prepared.pid, startTicks: prepared.startTicks, descriptor: matches[0] };
+ }
++
++/**
++ * After native coordination is released: the command fingerprint (cmdline and
++ * exe, which may wait on the target's memory map) and start ticks must still
++ * match the prepared instance. A same-path re-exec with identical argv remains
++ * undetectable.
++ */
++export function confirmLinuxCommand(prepared: LinuxPreparation): void {
++  if (linuxStartTicks(prepared.pid) !== prepared.startTicks ||
++    linuxCommandFingerprint(prepared.pid) !== prepared.commandFingerprint) throw new Error("linux_identity_changed");
++}
++
++/**
++ * Refuses when the post-release confirm step took longer than FINAL_BOUNDARY_MS.
++ * It does not measure evidence age, any delay before guardedProbeOnce returned,
++ * or the time from this check to process.kill.
++ */
++export function assertFinalBoundary(releasedAt: number, now = performance.now()): void {
++  if (!(now - releasedAt <= FINAL_BOUNDARY_MS)) throw new Error("linux_evidence_stale");
++}
+diff --git a/src/unlock.ts b/src/unlock.ts
+index 04fcdf0..6e66a89 100644
+--- a/src/unlock.ts
++++ b/src/unlock.ts
+@@ -1,6 +1,6 @@
+ import { acquireUnlockLease } from "./coordination.js";
+ import { inspectThread } from "./inspection.js";
+-import { prepareLinuxParticipation, verifyLinuxParticipation } from "./linux-attribution.js";
++import { assertFinalBoundary, confirmLinuxCommand, prepareLinuxParticipation, verifyLinuxParticipation } from "./linux-attribution.js";
+ import { performance } from "node:perf_hooks";
+ import { closeSync, constants, fstatSync, lstatSync, openSync } from "node:fs";
+ 
+@@ -492,6 +492,13 @@ export async function unlockInspectedThread(
+         prepared.commandFingerprint !== finalInspection.owner?.commandFingerprint)) throw new Error("linux_identity_changed");
+       preSignalProbe = guardedProbeOnce(inspection.lock.path, preSignalLock, undefined,
+         prepared ? () => verifyLinuxParticipation(inspection.lock.path, prepared) : undefined);
++      if (prepared && preSignalProbe.status === "held") {
++        // Bounds only this confirm step after guardedProbeOnce returned; not
++        // the evidence age and not the time until process.kill.
++        const releasedAt = performance.now();
++        confirmLinuxCommand(prepared);
++        assertFinalBoundary(releasedAt);
++      }
+     } catch {
+       preSignalProbe = { status: "unknown", method: "flock_exclusive_nonblocking", error: "linux_participation_unproven" };
+     }
+diff --git a/test/linux-attribution.test.mjs b/test/linux-attribution.test.mjs
+index b784c81..46ac64e 100644
+--- a/test/linux-attribution.test.mjs
++++ b/test/linux-attribution.test.mjs
+@@ -9,7 +9,7 @@ import { mkdtempSync, writeFileSync, openSync, closeSync, rmSync, readFileSync,
+ import { tmpdir } from 'node:os';
+ import { join } from 'node:path';
+ import { flockSync } from 'fs-ext-extra-prebuilt';
+-import { assertProcNamespace, filterCandidateDescriptors, fingerprintCommand, parseFlockRows, parseStartTicks, prepareLinuxParticipation, verifyLinuxParticipation } from '../dist/linux-attribution.js';
++import { FINAL_BOUNDARY_MS, assertFinalBoundary, assertProcNamespace, confirmLinuxCommand, filterCandidateDescriptors, fingerprintCommand, parseFlockRows, parseStartTicks, prepareLinuxParticipation, verifyLinuxParticipation } from '../dist/linux-attribution.js';
+ import { guardedProbeOnce } from '../dist/native-coordination.js';
+ import { observeLockFile } from '../dist/lock.js';
+ 
+@@ -161,10 +161,45 @@ test('Linux real FLOCK participates; open-but-unlocked descriptor does not', { s
+     try { assert.throws(() => flockSync(competing, 'exnb')); } finally { closeSync(competing); }
+     assert.equal(readFileSync(path, 'utf8'), '');
+     assert.throws(() => verifyLinuxParticipation(path, { ...prepared, startTicks: '0' }));
+-    assert.throws(() => verifyLinuxParticipation(path, { ...prepared, commandFingerprint: '0'.repeat(64) }), /identity_changed/);
++    // Command evidence moved out of the guard: verify ignores it, confirm refuses it.
++    assert.equal(verifyLinuxParticipation(path, { ...prepared, commandFingerprint: '0'.repeat(64) }).descriptor, String(fd));
++    assert.throws(() => confirmLinuxCommand({ ...prepared, commandFingerprint: '0'.repeat(64) }), /identity_changed/);
++    assert.throws(() => confirmLinuxCommand({ ...prepared, startTicks: '0' }), /identity_changed/);
++    confirmLinuxCommand(prepared);
+     assert.throws(() => verifyLinuxParticipation(path, { ...prepared, mountNamespace: 'mnt:[0]' }), /identity_changed/);
+     assert.throws(() => verifyLinuxParticipation(path, { ...prepared, descriptors: [] }), /identity_changed/);
+     flockSync(fd, 'un');
+     assert.throws(() => verifyLinuxParticipation(path, prepareLinuxParticipation(process.pid, path)), /linux_participation_unproven/);
+   } finally { closeSync(fd); rmSync(root, { recursive: true }); }
+ });
++
++test('final boundary refuses a confirm step longer than the accepted gap', () => {
++  assertFinalBoundary(100, 100 + FINAL_BOUNDARY_MS);
++  assert.throws(() => assertFinalBoundary(100, 100 + FINAL_BOUNDARY_MS + 0.001), /linux_evidence_stale/);
++  assert.throws(() => assertFinalBoundary(Number.NaN, 0), /linux_evidence_stale/);
++});
++
++test('traced guarded reads exclude cmdline/exe and FD-target stat (manual trace, not exhaustive)', { skip: process.platform !== 'linux' }, (t) => {
++  const root = mkdtempSync(join(tmpdir(), 'codex-attribution-scope-'));
++  const path = join(root, 'thread.lock');
++  writeFileSync(path, '');
++  writeFileSync(join(root, '.coordination.lock'), '');
++  const fd = openSync(path, 'r');
++  try {
++    flockSync(fd, 'exnb');
++    const prepared = prepareLinuxParticipation(process.pid, path);
++    const reads = [];
++    const result = guardedProbeOnce(path, observeLockFile(path), undefined,
++      () => verifyLinuxParticipation(path, prepared, (read) => reads.push(read)));
++    if (result.status === 'unknown' && /filesystem_unsupported/.test(result.error ?? '') && !process.env.CI) {
++      t.skip('actual filesystem mapping unsupported; positive evidence unverified'); return;
++    }
++    assert.equal(result.status, 'held', result.error);
++    assert.equal(result.participation.descriptor, String(fd));
++    assert.ok(reads.length > 0);
++    for (const read of reads) {
++      assert.doesNotMatch(read.path, /\/(cmdline|exe|environ|maps|mem)$/, JSON.stringify(read));
++      if (read.op === 'stat') assert.doesNotMatch(read.path, /\/fd\/\d+$/, JSON.stringify(read));
++    }
++  } finally { closeSync(fd); rmSync(root, { recursive: true }); }
++});

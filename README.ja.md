@@ -5,7 +5,7 @@
 [English](README.md) · [한국어](README.ko.md) · [简体中文](README.zh-CN.md)
 
 [![npm version](https://img.shields.io/npm/v/codex-unlock?color=cb3837&logo=npm)](https://www.npmjs.com/package/codex-unlock)
-[![npm downloads](https://img.shields.io/npm/dm/codex-unlock?color=cb3837&logo=npm)](https://www.npmjs.com/package/codex-unlock)
+[![npmの過去18か月のダウンロード](https://img.shields.io/npm/d18m/codex-unlock?label=downloads%20%2818%20months%29&color=cb3837&logo=npm)](https://www.npmjs.com/package/codex-unlock)
 [![CI](https://github.com/abruption/codex-unlock/actions/workflows/ci.yml/badge.svg)](https://github.com/abruption/codex-unlock/actions/workflows/ci.yml)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![node](https://img.shields.io/node/v/codex-unlock?color=339933&logo=node.js)](https://www.npmjs.com/package/codex-unlock)
@@ -35,8 +35,8 @@ codex-unlock inspect <thread-id>
 
 ## クイックスタート
 
-macOS または Linux、Node.js **22.13 以上（22.x）または 24.x**、および `lsof` が必要です。
-Windows と Node.js 26 はサポートしていません。
+安定版 npm CLI には macOS または Linux、Node.js **22.13 以上（22.x）または 24.x**、および `lsof` が必要です。
+この CLI は Windows と Node.js 26 をサポートしていません。
 
 `list` と `inspect` は Codex のネイティブロックファイルや会話記録ファイルの内容を変更しませんが、各プローブで Codex の調整ロックを短時間取得します。対話形式でコマンドを実行すると、主な結果を出力した後に `codex-unlock` の更新案内キャッシュを別途更新することがあります。詳しくは[更新の動作](docs/cli-reference.md#updates)を参照してください。
 再検証により、対象ロックを所有しているのが同一ユーザーの Codex プロセス1つだけだと確認できた場合に限り、`unlock` は `SIGTERM` を送ります。
@@ -66,6 +66,14 @@ npm install --global codex-unlock@latest
 
 `check-update` はパッケージレジストリで更新を確認するだけで、インストールは行いません。
 自動通知は参考情報にすぎません。詳しくは[更新の動作](docs/cli-reference.md#updates)を参照してください。
+
+<a id="windows-診断プレリリース"></a>
+
+## Windows 10 の診断
+
+独立した Windows 診断専用の配布には `windows-v<version>` 形式のタグを使用し、リリース候補（RC）はプレリリースとして表示します。公開状況と ZIP の入手可否は [GitHub Releases](https://github.com/abruption/codex-unlock/releases) で確認してください。単体実行用 ZIP の実行ファイルには Node.js、Rust、`lsof` のインストールは不要です。npm でインストールする CLI は引き続き macOS/Linux 用です。
+
+対応範囲は **ローカル NTFS 上の Windows 10 x64** です。実際のトークンが Medium 整合性レベル、非昇格、非 AppContainer であることを確認する必要があります。Windows 11 と Windows Server はこの検証範囲に含まれません。セキュリティ製品と Codex の実行モードごとの検証範囲はプラットフォーム案内に記載し、すべての構成を検証済みとはしません。Windows のロック解除・復旧機能はなく、指定した PID はロック保持者を確定する根拠にはなりません。`safeToUnlock` は常に `false` です。[Windows の対応範囲とダウンロード案内](docs/platform-support.md#windows-diagnostic-prerelease)を参照してください。
 
 ## ドキュメント
 

@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""Synthetic Linux holder named `codex` (#126 research, F2).
+
+Acquires the thread flock under `.coordination.lock` like Codex v0.162.1 and
+holds it until stdin EOF (exit 0) or its lifetime (exit 3): 20 s, or
+FIXTURE_LIFETIME_SECONDS (1-120). It explicitly sets and verifies
+both requested dumpable values with prctl, modelling a process
+that hardened itself. A targeted search of pinned v0.162.1 found no direct
+hardening call in the ordinary CLI main; this does not establish a deployed
+writer's dumpability. The fixture models a non-dumpable candidate.
+
+Prints one JSON line {"ready":true,"pid":..,"fd":..,"dumpable":..}.
+"""
+import ctypes
+import fcntl
+import json
+import os
+import select
+import sys
+import time
+
+PR_SET_DUMPABLE = 4
+PR_GET_DUMPABLE = 3
+
+if sys.platform != "linux" or os.getuid() == 0 or os.getuid() != os.geteuid():
+    raise RuntimeError("fixture requires an unprivileged same-user Linux process")
+lock_path = os.environ["FIXTURE_LOCK_PATH"]
+want = int(os.environ["FIXTURE_DUMPABLE"])
+if want not in (0, 1):
+    raise ValueError("FIXTURE_DUMPABLE must be 0 or 1")
+lifetime = int(os.environ.get("FIXTURE_LIFETIME_SECONDS", "20"))
+if not 1 <= lifetime <= 120:
+    raise ValueError("FIXTURE_LIFETIME_SECONDS must be 1-120")
+deadline = time.monotonic() + lifetime
+libc = ctypes.CDLL(None, use_errno=True)
+libc.prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]
+libc.prctl.restype = ctypes.c_int
+if libc.prctl(PR_SET_DUMPABLE, want, 0, 0, 0) != 0:
+    raise OSError(ctypes.get_errno(), "prctl(PR_SET_DUMPABLE)")
+dumpable = libc.prctl(PR_GET_DUMPABLE, 0, 0, 0, 0)
+if dumpable == -1:
+    raise OSError(ctypes.get_errno(), "prctl(PR_GET_DUMPABLE)")
+if dumpable != want:
+    raise RuntimeError(f"dumpable mismatch: requested {want}, observed {dumpable}")
+
+def acquire(fd):
+    until = min(deadline, time.monotonic() + 2)
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= until:
+                raise TimeoutError("fixture lock acquisition timed out")
+            time.sleep(0.01)
+
+
+guard = thread = None
+eof = False
+try:
+    guard = os.open(os.path.join(os.path.dirname(lock_path), ".coordination.lock"),
+                    os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    acquire(guard)
+    thread = os.open(lock_path, os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW)
+    acquire(thread)
+    fcntl.flock(guard, fcntl.LOCK_UN)
+    os.close(guard)
+    guard = None
+    print(json.dumps({"ready": True, "pid": os.getpid(), "fd": thread,
+                      "dumpable": dumpable, "uid": os.getuid(), "euid": os.geteuid(),
+                      "lifetime_seconds": lifetime}), flush=True)
+    while time.monotonic() < deadline:
+        readable, _, _ = select.select([sys.stdin.fileno()], [], [], max(0, deadline - time.monotonic()))
+        if readable and not os.read(sys.stdin.fileno(), 4096):
+            eof = True
+            break
+finally:
+    if guard is not None:
+        os.close(guard)
+    if thread is not None:
+        os.close(thread)
+# Exit 0 on stdin EOF, 3 when the lifetime ended first.
+sys.exit(0 if eof else 3)

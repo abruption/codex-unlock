@@ -1,0 +1,104 @@
+name: Windows release preparation
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Prepare the checked-in Windows release plan as a draft PR or draft assets (never publishes)
+        required: true
+        type: choice
+        options: [prepare, draft]
+      immutable_policy_confirmed:
+        description: I independently verified immutable releases are enabled and will not change policy/config or publish during this run (manual acknowledgement)
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-prerelease-preparation
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      release_id: ${{ steps.source.outputs.release_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Validate release plan, published predecessor and draft-only preparation
+        id: preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OPERATION: ${{ inputs.mode }}
+          IMMUTABLE_POLICY_CONFIRMED: ${{ inputs.immutable_policy_confirmed }}
+        run: node scripts/windows-prerelease-cli.mjs preflight
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
+        if: ${{ steps.preflight.outputs.run_release_please == 'true' }}
+        with:
+          token: ${{ github.token }}
+          target-branch: main
+          config-file: release-please-windows-config.json
+          manifest-file: .release-please-windows-manifest.json
+          skip-github-release: ${{ inputs.mode == 'prepare' }}
+          skip-github-pull-request: ${{ inputs.mode == 'draft' }}
+      - name: Resolve and verify draft source (also supports retries)
+        if: ${{ inputs.mode == 'draft' }}
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CREATED_SHA: ${{ steps.release.outputs['experimental/windows-rust-diagnostics--sha'] }}
+          CREATED_TAG: ${{ steps.release.outputs['experimental/windows-rust-diagnostics--tag_name'] }}
+        run: node scripts/windows-prerelease-cli.mjs resolve
+
+  build:
+    needs: release-please
+    if: ${{ inputs.mode == 'draft' && needs.release-please.outputs.source_sha != '' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/windows-rust-diagnostics.yml
+    with:
+      source_ref: ${{ needs.release-please.outputs.source_sha }}
+
+  attach:
+    needs: [release-please, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.build.outputs.preview_artifact_id }}
+          path: ${{ runner.temp }}/windows-preview
+          merge-multiple: true
+      - name: Verify provenance and attach bytes to draft only
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.release-please.outputs.source_sha }}
+          RELEASE_ID: ${{ needs.release-please.outputs.release_id }}
+          IMMUTABLE_POLICY_CONFIRMED: ${{ inputs.immutable_policy_confirmed }}
+        run: node scripts/windows-prerelease-cli.mjs attach "$RUNNER_TEMP/windows-preview"

@@ -5,7 +5,7 @@
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
 [![npm version](https://img.shields.io/npm/v/codex-unlock?color=cb3837&logo=npm)](https://www.npmjs.com/package/codex-unlock)
-[![npm downloads](https://img.shields.io/npm/dm/codex-unlock?color=cb3837&logo=npm)](https://www.npmjs.com/package/codex-unlock)
+[![npm近18个月下载量](https://img.shields.io/npm/d18m/codex-unlock?label=downloads%20%2818%20months%29&color=cb3837&logo=npm)](https://www.npmjs.com/package/codex-unlock)
 [![CI](https://github.com/abruption/codex-unlock/actions/workflows/ci.yml/badge.svg)](https://github.com/abruption/codex-unlock/actions/workflows/ci.yml)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![node](https://img.shields.io/node/v/codex-unlock?color=339933&logo=node.js)](https://www.npmjs.com/package/codex-unlock)
@@ -34,8 +34,8 @@ codex-unlock inspect <thread-id>
 
 ## 快速开始
 
-需要 macOS 或 Linux、Node.js **22.13+（22.x）或 24.x**，以及 `lsof`。
-不支持 Windows 和 Node.js 26。
+稳定版 npm CLI 需要 macOS 或 Linux、Node.js **22.13+（22.x）或 24.x**，以及 `lsof`。
+此 CLI 不支持 Windows 和 Node.js 26。
 
 `list` 和 `inspect` 不会修改 Codex 原生锁文件或对话记录文件的内容，但每次探测都会短暂获取 Codex 的协调锁。
 在交互式命令输出主要结果后，`codex-unlock` 可能会单独刷新更新提示缓存。详见[更新行为](docs/cli-reference.md#updates)。
@@ -65,6 +65,14 @@ npm install --global codex-unlock@latest
 ```
 
 `check-update` 只检查软件包注册表中的版本，不会安装更新。自动提示仅供参考。详见[更新行为](docs/cli-reference.md#updates)。
+
+<a id="windows-诊断预发布版"></a>
+
+## Windows 10 诊断
+
+独立的 Windows 仅诊断发行版使用 `windows-v<version>` 格式的标签，候选版本（RC）标记为预发布版。请在 [GitHub Releases](https://github.com/abruption/codex-unlock/releases) 查看发布状态及 ZIP 是否可供下载。运行独立 ZIP 中的可执行文件无需安装 Node.js、Rust 或 `lsof`。通过 npm 安装的 CLI 仍用于 macOS/Linux。
+
+支持范围为**使用本地 NTFS 的 Windows 10 x64**，且必须确认实际令牌为 Medium 完整性级别、未提升权限且不处于 AppContainer 中。Windows 11 和 Windows Server 不在此验证范围内。安全产品和 Codex 运行模式的验证范围记录在平台说明中，并不表示所有配置均已通过验证。不提供 Windows 解锁或恢复功能，用户指定的 PID 不能证明锁的持有者身份，`safeToUnlock` 始终为 `false`。详见 [Windows 适用范围与下载说明](docs/platform-support.md#windows-diagnostic-prerelease)。
 
 ## 文档
 

@@ -5,7 +5,7 @@
 [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
 [![npm version](https://img.shields.io/npm/v/codex-unlock?color=cb3837&logo=npm)](https://www.npmjs.com/package/codex-unlock)
-[![npm downloads](https://img.shields.io/npm/dm/codex-unlock?color=cb3837&logo=npm)](https://www.npmjs.com/package/codex-unlock)
+[![npm downloads (last 18 months)](https://img.shields.io/npm/d18m/codex-unlock?label=downloads%20%2818%20months%29&color=cb3837&logo=npm)](https://www.npmjs.com/package/codex-unlock)
 [![CI](https://github.com/abruption/codex-unlock/actions/workflows/ci.yml/badge.svg)](https://github.com/abruption/codex-unlock/actions/workflows/ci.yml)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![node](https://img.shields.io/node/v/codex-unlock?color=339933&logo=node.js)](https://www.npmjs.com/package/codex-unlock)
@@ -37,8 +37,8 @@ recovery only when every safety check passes.
 
 ## Quick Start
 
-Requires macOS or Linux, Node.js **22.13+ (22.x) or 24.x**, and `lsof`.
-Windows and Node.js 26 are not supported.
+The stable npm CLI requires macOS or Linux, Node.js **22.13+ (22.x) or 24.x**, and `lsof`.
+That CLI does not support Windows or Node.js 26.
 
 `list` and `inspect` do not change the contents of Codex's native lock or
 transcript files, though each probe briefly takes Codex's coordination lock.
@@ -73,6 +73,25 @@ npm install --global codex-unlock@latest
 
 `check-update` checks the registry; it does not install anything.
 Automatic notices are advisory only. See [update behavior](docs/cli-reference.md#updates).
+
+<a id="windows-diagnostic-prerelease"></a>
+
+## Windows 10 diagnostics
+
+The separate Windows diagnostic-only channel uses tags `windows-v<version>`.
+Release candidates are marked as prereleases. Consult
+[GitHub Releases](https://github.com/abruption/codex-unlock/releases) for its
+publication status and ZIP availability. Running the standalone ZIP's executable
+requires no Node.js, Rust or `lsof` installation; npm installation remains the
+macOS/Linux CLI.
+
+The support scope is **Windows 10 x64 on local NTFS**, with a verified
+Medium-integrity, non-elevated, non-AppContainer token. Windows 11 and Windows
+Server are outside this qualified scope. Security-product and Codex-mode
+coverage is recorded in the platform guide; it does not cover every configuration.
+There is no Windows unlock or recovery, a supplied
+PID does not establish the lock holder, and `safeToUnlock` is always `false`.
+See [Windows scope and download guidance](docs/platform-support.md#windows-diagnostic-prerelease).
 
 ## Docs
 
