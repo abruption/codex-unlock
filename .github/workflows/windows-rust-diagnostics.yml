@@ -1,0 +1,209 @@
+name: Windows Rust diagnostics
+
+on:
+  workflow_call:
+    inputs:
+      source_ref:
+        description: Immutable source commit to validate (defaults to github.sha)
+        type: string
+        required: false
+        default: ''
+    outputs:
+      preview_artifact_id:
+        description: Validated Windows preview artifact ID
+        value: ${{ jobs.windows.outputs.preview_artifact_id }}
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Immutable 40-character source commit (blank uses github.sha)
+        type: string
+        required: false
+        default: ''
+  pull_request:
+    branches: [main]
+    paths:
+      - experimental/windows-rust-diagnostics/**
+      - .github/workflows/windows-rust-diagnostics.yml
+  push:
+    branches: [main]
+    paths:
+      - experimental/windows-rust-diagnostics/**
+      - .github/workflows/windows-rust-diagnostics.yml
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    outputs:
+      preview_artifact_id: ${{ steps.preview-upload.outputs.artifact-id }}
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: experimental/windows-rust-diagnostics
+    steps:
+      - name: Validate immutable source ref
+        id: source
+        working-directory: .
+        env:
+          SOURCE_REF: ${{ inputs.source_ref || github.sha }}
+        run: |
+          if ($env:SOURCE_REF -cnotmatch '^[a-f0-9]{40}$') { throw 'source_ref must be an immutable commit SHA' }
+          "sha=$env:SOURCE_REF" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ steps.source.outputs.sha }}
+      - name: Verify checked-out source
+        env:
+          SOURCE_REF: ${{ steps.source.outputs.sha }}
+        run: |
+          $actual = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $actual -cne $env:SOURCE_REF) { throw 'Source checkout mismatch' }
+      - name: Install pinned toolchain
+        run: |
+          rustup toolchain install 1.90.0 --profile minimal --component rustfmt --component clippy
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustc --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - run: cargo fetch --locked
+      - name: Read expected Cargo version
+        run: |
+          $metadata = cargo metadata --no-deps --locked --offline --format-version 1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $packages = @(($metadata | ConvertFrom-Json).packages | Where-Object { $_.name -ceq 'codex-unlock-windows-diagnostic' })
+          if ($packages.Count -ne 1) { throw 'Expected one diagnostic Cargo package' }
+          "PREVIEW_EXPECTED_VERSION=$($packages[0].version)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --offline --all-targets -- -D warnings
+      - name: Create private synthetic parent and test
+        run: |
+          $parentPath = Join-Path $env:RUNNER_TEMP ('codex-rust-diag-' + [guid]::NewGuid().ToString('N'))
+          $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+          $acl = [Security.AccessControl.DirectorySecurity]::new()
+          $acl.SetOwner($sid)
+          $acl.SetAccessRuleProtection($true, $false)
+          $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))
+          $directory = [IO.DirectoryInfo]::new($parentPath)
+          [IO.FileSystemAclExtensions]::Create($directory, $acl)
+          $env:WINDOWS_DIAGNOSTIC_FIXTURE_PARENT = $parentPath
+          $env:PREVIEW_TEST_GOLDEN_DIR = Join-Path $env:RUNNER_TEMP ('codex-preview-contract-' + [guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $env:PREVIEW_TEST_GOLDEN_DIR | Out-Null
+          "PREVIEW_TEST_GOLDEN_DIR=$env:PREVIEW_TEST_GOLDEN_DIR" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "PREVIEW_GOLDEN_REQUIRED=1" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          cargo test --locked --offline -- --test-threads=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build unpublished measurement binaries
+        run: |
+          cargo build --locked --offline --bins
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --offline --no-run
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Validate native observer contracts
+        run: node --test test/*.test.mjs qualification/*.test.mjs
+      - name: Record measurement binary digests
+        run: |
+          $items = @(Get-Item target/debug/codex-unlock-windows-diagnostic.exe, target/debug/codex-unlock-windows-fixture.exe) + @(Get-ChildItem target/debug/deps/windows-*.exe)
+          $records = @($items | ForEach-Object {
+            [pscustomobject]@{name=[IO.Path]::GetRelativePath((Resolve-Path target/debug).Path, $_.FullName).Replace('\','/'); sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower()}
+          })
+          $records | ConvertTo-Json | Set-Content target/debug/artifact-manifest.json -Encoding utf8
+          $records | Format-Table
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-rust-diagnostic-research
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            experimental/windows-rust-diagnostics/target/debug/codex-unlock-windows-diagnostic.exe
+            experimental/windows-rust-diagnostics/target/debug/codex-unlock-windows-fixture.exe
+            experimental/windows-rust-diagnostics/target/debug/deps/windows-*.exe
+            experimental/windows-rust-diagnostics/target/debug/artifact-manifest.json
+      - name: Validate preview packaging contracts
+        run: node --test scripts/*.test.mjs
+      - name: Build Windows x86_64 diagnostic preview
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: |
+          cargo build --locked --offline --release --target x86_64-pc-windows-msvc --bin codex-unlock-windows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Smoke preview CLI without accessing Codex
+        run: |
+          $binary = './target/x86_64-pc-windows-msvc/release/codex-unlock-windows.exe'
+          $testedSha = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant()
+          & $binary --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = & $binary --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (($version -join "`n").Trim() -cne "codex-unlock-windows $env:PREVIEW_EXPECTED_VERSION") { throw 'Unexpected CLI version' }
+          $capabilities = & $binary capabilities --json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $cap = $capabilities | ConvertFrom-Json -ErrorAction Stop
+          $capabilities
+          $expectedSchema = 'codex-unlock-windows-preview'
+          $expectedChannel = $null
+          $expectedPrerelease = $true
+          switch -CaseSensitive ($env:PREVIEW_EXPECTED_VERSION) {
+            '0.0.0' {}
+            '0.5.0-alpha.1' {}
+            '0.5.0-rc.1' { $expectedSchema = 'codex-unlock-windows'; $expectedChannel = 'rc' }
+            '0.5.0' { $expectedSchema = 'codex-unlock-windows'; $expectedChannel = 'stable'; $expectedPrerelease = $false }
+            default { throw 'Unreviewed Windows release version' }
+          }
+          function Assert-ReleaseEnvelope($value) {
+            if ($value.version -cne $env:PREVIEW_EXPECTED_VERSION -or $value.schema -cne $expectedSchema -or $value.schemaVersion -ne 1) { throw 'Unexpected public schema or version' }
+            if ($value.preview -isnot [bool] -or $value.experimental -isnot [bool] -or $value.preview -ne $expectedPrerelease -or $value.experimental -ne $expectedPrerelease) { throw 'Unexpected release maturity' }
+            if ($expectedChannel) {
+              if ($value.releaseChannel -cne $expectedChannel) { throw 'Unexpected release channel' }
+            } elseif ($value.PSObject.Properties.Name -contains 'releaseChannel') { throw 'Legacy alpha must retain its original envelope' }
+            if ($value.safeToUnlock -ne $false -or $value.recoveryAvailable -ne $false) { throw 'Invalid recovery contract' }
+          }
+          Assert-ReleaseEnvelope $cap
+          if ($cap.diagnosticsAvailable -ne $false -or $cap.context.state -ne 'observed' -or $cap.context.elevated -isnot [bool] -or $cap.context.appContainer -isnot [bool] -or $cap.context.integrityRid -isnot [long]) { throw 'This refusal gate requires an observed unsupported caller; Medium is measured separately' }
+          if ($cap.context.appContainer) { $expectedReason = 'app_container_refused' }
+          elseif ($cap.context.elevated) { $expectedReason = 'elevated_context_refused' }
+          elseif ($cap.context.integrityRid -ne 8192) { $expectedReason = 'medium_integrity_required' }
+          else { throw 'Eligible Medium runner cannot stand in for refusal coverage' }
+          if ($cap.reason -cne $expectedReason) { throw 'Capabilities refusal reason mismatch' }
+          $refusal = & $binary inspect --home 'C:\preview-not-created' --thread '11111111-2222-4333-8444-555555555555' --pid 1 --json
+          if ($LASTEXITCODE -ne 2) { throw 'Unsupported caller must refuse inspection' }
+          $refused = $refusal | ConvertFrom-Json -ErrorAction Stop
+          Assert-ReleaseEnvelope $refused
+          if ($refused.reason -ne $expectedReason -or $refused.safeToUnlock -ne $false -or $refused.PSObject.Properties.Name -contains 'diagnostic') { throw 'Preview reached inspection or gave an unexpected refusal' }
+          $refusal
+          & $binary unlock
+          if ($LASTEXITCODE -ne 64) { throw 'Preview did not return usage refusal for unlock' }
+          & $binary inspect --home relative-path --thread invalid --json
+          if ($LASTEXITCODE -ne 64) { throw 'Preview did not return usage refusal for invalid inspect arguments' }
+          if ((Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant() -cne $testedSha) { throw 'Preview bytes changed during smoke' }
+          "PREVIEW_TESTED_SHA256=$testedSha" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          # Expected refusal exits must not become this successful step's exit status.
+          $global:LASTEXITCODE = 0
+      - name: Package and verify diagnostic preview ZIP
+        run: |
+          $sourceSha = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./scripts/package-preview.ps1 `
+            -BinaryPath target/x86_64-pc-windows-msvc/release/codex-unlock-windows.exe `
+            -QuickstartPath PREVIEW.md `
+            -Destination target/preview-package `
+            -SourceSha $sourceSha `
+            -ExpectedSha256 $env:PREVIEW_TESTED_SHA256
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        id: preview-upload
+        with:
+          name: windows-diagnostics-preview-windows-x86_64
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            experimental/windows-rust-diagnostics/target/preview-package/windows-diagnostics-preview-windows-x86_64.zip
+            experimental/windows-rust-diagnostics/target/preview-package/SHA256SUMS
+            experimental/windows-rust-diagnostics/target/preview-package/manifest.json

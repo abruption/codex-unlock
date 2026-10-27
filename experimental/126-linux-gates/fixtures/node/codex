@@ -1,0 +1,54 @@
+#!/usr/bin/env node
+// Synthetic Node holder named `codex` (#126 research, Linux gates G1).
+//
+// SYNTHETIC, not Codex. It is started as `<node> <this file>`, the one
+// interpreter form the product's argv grammar accepts for its own test
+// fixture (basename(argv[0]) is node, basename(argv[1]) is codex). Node cannot
+// call prctl, so this holder never changes dumpability; the runner infers the
+// inherited value from /proc ownership and records it as inferred.
+//
+// Takes `.coordination.lock` then the thread lock with bounded nonblocking
+// polling, releases coordination, prints one ready JSON line and holds until
+// stdin EOF (exit 0) or FIXTURE_LIFETIME_SECONDS (exit 3). Sends no signal.
+import fs from 'node:fs'
+import { createRequire } from 'node:module'
+import path from 'node:path'
+import process from 'node:process'
+import { clearTimeout, setTimeout } from 'node:timers'
+
+if (process.platform !== 'linux' || process.getuid() === 0 || process.getuid() !== process.geteuid()) {
+  throw new Error('fixture requires an unprivileged same-user Linux process')
+}
+const require = createRequire(process.env.FIXTURE_REQUIRE_FROM)
+const { flockSync } = require('fs-ext-extra-prebuilt')
+const lifetime = Number(process.env.FIXTURE_LIFETIME_SECONDS ?? '20')
+if (!Number.isInteger(lifetime) || lifetime < 1 || lifetime > 120) throw new Error('FIXTURE_LIFETIME_SECONDS must be 1-120')
+const sleeper = new Int32Array(new SharedArrayBuffer(4))
+
+function acquire(fd) {
+  const until = Date.now() + 2000
+  while (true) {
+    try {
+      flockSync(fd, 'exnb')
+      return
+    } catch (error) {
+      if (error.code !== 'EAGAIN' && error.code !== 'EWOULDBLOCK') throw error
+    }
+    if (Date.now() > until) throw new Error('fixture lock acquisition timed out')
+    Atomics.wait(sleeper, 0, 0, 10)
+  }
+}
+
+const lockPath = process.env.FIXTURE_LOCK_PATH
+const flags = fs.constants.O_CLOEXEC | fs.constants.O_NOFOLLOW
+const guard = fs.openSync(path.join(path.dirname(lockPath), '.coordination.lock'), fs.constants.O_RDONLY | flags)
+acquire(guard)
+const thread = fs.openSync(lockPath, fs.constants.O_RDWR | flags)
+acquire(thread)
+flockSync(guard, 'un')
+fs.closeSync(guard)
+process.stdout.write(JSON.stringify({ ready: true, pid: process.pid, fd: thread, dumpable: null,
+  uid: process.getuid(), euid: process.geteuid(), lifetime_seconds: lifetime, fixture: 'node_synthetic' }) + '\n')
+const timer = setTimeout(() => { fs.closeSync(thread); process.exitCode = 3; process.stdin.destroy() }, lifetime * 1000)
+process.stdin.on('end', () => { clearTimeout(timer); fs.closeSync(thread); process.exitCode = 0 })
+process.stdin.resume()

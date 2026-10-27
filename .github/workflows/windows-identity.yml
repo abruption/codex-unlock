@@ -1,0 +1,128 @@
+name: Windows identity experiment
+
+# Proposal only (experimental/windows-identity/ci-proposal.patch). Synthetic
+# fixtures on a disposable hosted runner; no real Codex binary, Codex home,
+# account, existing ACL, privilege, policy, volume or Defender change. Results
+# never publish safeToUnlock=true and do not establish Windows support.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/windows-identity.yml
+      - experimental/windows-identity/**
+      - src/process.ts
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/windows-identity.yml
+      - experimental/windows-identity/**
+      - src/process.ts
+
+permissions:
+  contents: read
+
+jobs:
+  # Stage 1: mock unit tests. No Windows API is called.
+  unit:
+    name: Classifier unit tests (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+      # No npm install: the classifier and its tests use only Node built-ins.
+      - run: node --test experimental/windows-identity/classify.test.mjs
+
+  # Stage 2: parse and compile only. No scratch, fixture, process or native call.
+  static:
+    name: Parse and compile observer (Windows PowerShell 5.1)
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($PSVersionTable.PSVersion.Major -ne 5) { throw 'This gate requires Windows PowerShell 5.1' }
+          & powershell -NoProfile -NonInteractive -File experimental/windows-identity/check.ps1
+          if ($LASTEXITCODE -ne 0) { throw "check.ps1 exit $LASTEXITCODE" }
+
+  # Stage 3: synthetic fixtures on the runner's NTFS volume and token.
+  synthetic:
+    name: Synthetic fixtures (NTFS, hosted runner token)
+    needs: [unit, static]
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+      - name: Run synthetic fixtures and classify against the manifest
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = Join-Path $env:RUNNER_TEMP 'windows-identity.jsonl'
+          $labLog = Join-Path $env:RUNNER_TEMP 'windows-identity-lab.log'
+          $ErrorActionPreference = 'Continue'
+          & powershell -NoProfile -NonInteractive -File experimental/windows-identity/lab.ps1 -OutFile $out *> $labLog
+          $labExit = $LASTEXITCODE
+          $ErrorActionPreference = 'Stop'
+          & node experimental/windows-identity/classify.mjs $out | Select-Object -Last 1
+          $classifyExit = $LASTEXITCODE
+          Write-Output "lab exit $labExit, classify exit $classifyExit"
+          # 4 = complete and matched with partial coverage (an allowed skip or
+          # PID reuse unobserved). It is not PID-reuse evidence.
+          if ($labExit -ne 0 -or ($classifyExit -ne 0 -and $classifyExit -ne 4)) { exit 1 }
+          exit 0
+      # Raw JSONL holds runner paths and per-run SID tags; it is not uploaded.
+
+  # Stage 4: synthetic fault injection. Each run must fail in its defined way.
+  fault-injection:
+    name: Fault injection (${{ matrix.fault }})
+    needs: [unit, static]
+    runs-on: windows-2022
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        fault: [during_file_cases, after_child_launch, during_child_observation, child_abnormal_exit, child_ignores_eof]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+      - name: Run with the injected fault and check the defined failure
+        shell: powershell
+        env:
+          FAULT: ${{ matrix.fault }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = Join-Path $env:RUNNER_TEMP "windows-identity-$env:FAULT.jsonl"
+          $labLog = Join-Path $env:RUNNER_TEMP "windows-identity-$env:FAULT.log"
+          $ErrorActionPreference = 'Continue'
+          & powershell -NoProfile -NonInteractive -File experimental/windows-identity/lab.ps1 -OutFile $out -FaultInjection $env:FAULT *> $labLog
+          $labExit = $LASTEXITCODE
+          $ErrorActionPreference = 'Stop'
+          & node experimental/windows-identity/classify.mjs --fault $env:FAULT $out | Select-Object -Last 1
+          $classifyExit = $LASTEXITCODE
+          Write-Output "lab exit $labExit, classify exit $classifyExit"
+          # child_abnormal_exit completes the suite; the others report exit 2.
+          $wantLab = if ($env:FAULT -eq 'child_abnormal_exit') { 0 } else { 2 }
+          if ($labExit -ne $wantLab -or $classifyExit -ne 0) { exit 1 }
+          exit 0
