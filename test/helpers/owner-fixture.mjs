@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { spawn } from "node:child_process";
 
 import { acquireUnlockLease } from "../../dist/coordination.js";
+import { collectCliOutput } from "./cli-output.mjs";
 
 export const THREAD_ID = "01a089e8-3731-7202-ba68-0f4b0a3b2711";
 export const OTHER_THREAD_ID = "02b190f9-4842-8313-ca79-1f5c1b4c3822";
@@ -119,18 +120,7 @@ export async function runCli(args, env = process.env, nodeArgs = []) {
     env,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  let stdout = "";
-  let stderr = "";
-  child.stdout.setEncoding("utf8");
-  child.stderr.setEncoding("utf8");
-  child.stdout.on("data", (chunk) => {
-    stdout += chunk;
-  });
-  child.stderr.on("data", (chunk) => {
-    stderr += chunk;
-  });
-  const [code, signal] = await once(child, "exit");
-  return { code, signal, stdout, stderr };
+  return collectCliOutput(child);
 }
 
 export async function waitForUnlockLeaseContention(codexHome, timeoutMs = 5_000) {

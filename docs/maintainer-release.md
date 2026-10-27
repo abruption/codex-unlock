@@ -29,14 +29,16 @@ The stable aggregate branch-protection checks are `supported-tests`, `lint`,
 
 `supported-tests` covers the explicit x64/arm64 macOS and Linux matrix in
 [`platform-support.md`](platform-support.md). `package-smoke` requires exact
-artifact contents, an offline clean tarball installation, CLI/JSON smoke tests,
+artifact contents, an offline clean installation of the packed bytes through
+registry metadata, CLI/JSON smoke tests,
 and rejected package-root/internal imports on both operating systems.
 It generates the runtime-only `npm-shrinkwrap.json` from `package-lock.json`,
 asserts that the native runtime dependency is an exact pin matching the
 lockfile, that the shrinkwrap is published without development entries, that a
 regular dependency installation contains exactly `codex-unlock`,
 `fs-ext-extra-prebuilt`, and `nan`, and that their installed versions equal the
-pins. The generated shrinkwrap is removed afterwards.
+pins. The registry fixture serves the newly packed artifact, not an already
+published version. The generated shrinkwrap is removed afterwards.
 It also compiles a consumer against the installed tarball's type-only JSON
 declarations in NodeNext and bundler modes, without Node.js type dependencies,
 and rejects `/types` as a runtime import.
@@ -130,6 +132,117 @@ installed dependency tree and its counts are not a claim that the single
 provenance, an integrity mismatch, or an invalid signature blocks release
 verification even if installation succeeds.
 
+<a id="windows-prerelease-preparation"></a>
+
+## Windows release preparation
+
+The Windows diagnostic channel uses separate Release Please files:
+`release-please-windows-config.json` and
+`.release-please-windows-manifest.json`, plus the reviewed
+`windows-release-plan.json`. The standalone Rust channel uses `windows-v<version>`
+tags. The Node package has its own release PR and npm channel; merging it does
+not release the Windows executable.
+
+The plan permits exactly these transitions:
+
+| Target | Required published predecessor | Draft `prerelease` |
+| --- | --- | --- |
+| `0.5.0-rc.1` | `0.5.0-alpha.1` | true |
+| `0.5.0` | `0.5.0-rc.1` | false |
+
+Set the plan and matching Release Please `release-as`/`prerelease` configuration
+in a reviewed PR. Leave `draft=true` and `force-tag-creation=false`. Release
+Please then owns the Cargo version/lockfile, component changelog and Windows
+manifest changes. Do not manually bump them. Before preparing stable, inspect
+the RC's recorded host qualification and review results; a published predecessor
+alone does not prove those checks passed. Link the RC evidence and its result
+hashes in the stable-plan PR. If an RC exposes a product defect, introduce a
+newly reviewed plan/contract for a subsequent RC; do not overwrite its assets or
+skip directly to stable. Any obsolete draft needs explicit maintainer cleanup.
+
+The **Windows release preparation** workflow runs only by manual dispatch
+on `main`. It has two operations:
+
+Before either dispatch, a maintainer must run
+`gh api repos/abruption/codex-unlock/immutable-releases` and confirm
+`enabled: true`. This read requires administration permission, which the
+workflow's `GITHUB_TOKEN` does not have. The required
+`immutable_policy_confirmed=true` input records the maintainer's acknowledgement,
+not an automated measurement; do not set it without checking the policy.
+
+1. `gh workflow run windows-prerelease.yml --ref main -f mode=prepare -F immutable_policy_confirmed=true` asks
+   Release Please to open a draft Windows version PR. Preparation requires the
+   previous version in Cargo/the manifest and a public immutable predecessor
+   release whose tag resolves to its recorded source commit. It updates the Rust
+   Cargo version/lockfile, component changelog and Windows version manifest.
+   Review its exact diff and run the repository and Windows checks. Bot-token
+   PR creation may not trigger Actions; a maintainer can push an empty CI
+   trigger commit to that generated branch, without editing generated version
+   files. Mark it ready for automatic review, then merge after the checks and
+   review gates pass. The bot-PR provenance check identifies that PR; it does
+   not replace reviewing its complete diff for unexpected changes.
+2. `gh workflow run windows-prerelease.yml --ref main -f mode=draft -F immutable_policy_confirmed=true` asks
+   Release Please to create the draft release and builds its immutable
+   source commit. The workflow verifies the bot version PR, Cargo/manifest
+   version, source SHA, plan/config/helper/workflow bytes, ZIP and checksums
+   before attaching three assets to the draft. The RC draft is a prerelease;
+   the stable draft is not. The workflow never changes `draft` to false and
+   never runs npm publication.
+
+The config keeps `draft=true` and `force-tag-creation=false`; `prerelease` must
+match the checked-in plan. GitHub does not create the actual tag until the
+draft is published. The helper refuses published releases, a public matching
+tag, wrong source/author/version, unexpected assets and differing existing
+asset bytes. For a partial upload, use **Re-run failed jobs** on the original
+run so the attachment job reuses the same retained build artifact. Do this
+before that artifact expires. A new dispatch rebuilds the executable and ZIP,
+whose bytes may differ; it is not an equivalent retry and will refuse to
+overwrite differing assets. If the original artifact is unavailable, stop for
+maintainer reconciliation rather than forcing an upload.
+
+Do not manually publish the draft or change release configuration, workflow
+files or repository release policy while preparation is running. The helper
+requires an explicit acknowledgement of GitHub's enabled immutable-releases
+policy; leave it enabled.
+Its draft checks and uploads are separate API operations, not an atomic
+transaction. Server-side immutability prevents asset modification after
+publication, but does not make concurrent manual publication a supported
+workflow. The reusable workflow definition comes from the dispatch revision;
+the executable source is the verified version-PR merge commit. Keep those
+workflow definitions unchanged between the version PR and draft preparation.
+The live-config preflight and Release Please's later configuration fetch are
+also separate operations. Source binding can refuse later asset attachment;
+it cannot undo an earlier action caused by a concurrent configuration change.
+
+Before public publication, inspect the completed draft and validate its exact
+executable bytes on the designated Windows host. For 0.5.0, the approved scope
+is Windows 10 x64/local NTFS with Kaspersky Endpoint Security protection
+verified by its vendor CLI. Record Defender separately; Kaspersky-on is not
+Defender-on evidence. The host qualification runner is documented in
+[the source qualification guide](https://github.com/abruption/codex-unlock/blob/main/experimental/windows-rust-diagnostics/qualification/README.md).
+Run its actual Medium real-lock/file-safety matrix and High refusal checks,
+then the pinned native Codex observer. Bind all input hashes and retain failures
+and unconfirmed cleanup. Publish and validate the RC before changing the plan
+to stable. A stable version embeds different bytes, so repeat the final-byte
+host checks after its own build rather than reusing RC results.
+
+Once publication is authorized and the release's checks pass, publish that
+existing verified draft with its planned prerelease flag and
+`make_latest=false` (CLI: `--latest=false`), including the stable Windows release.
+The repository's GitHub Latest designation stays with the npm channel; verify
+`/releases/latest` after publication as well as npm's `latest` dist-tag.
+Preserve all three
+assets, verify the public tag's exact commit and anonymously download/check the
+ZIP again. Keep the separate npm stable channel unchanged. Record source,
+hashes, host/security conditions and CI/review results in
+[release issue #174](https://github.com/abruption/codex-unlock/issues/174).
+Keep raw account, PID and local-path evidence private; publish a redacted
+summary with its source/result hashes.
+A package checksum is not publisher authentication. The supported Windows scope and measurement
+limits are in [platform support](platform-support.md#windows-diagnostic-prerelease).
+This diagnostic release does not close the holder-attribution or
+cooperative-recovery gates.
+
 ## Runtime dependency pinning
 
 `package-lock.json` is the repository lockfile. The build job's package smoke
@@ -142,6 +255,13 @@ The published shrinkwrap makes `npm install codex-unlock`
 `nan` versions that CI validated instead of the newest compatible release.
 `package.json` also pins `fs-ext-extra-prebuilt` to an exact version for
 package managers that ignore npm's shrinkwrap.
+
+Registry metadata is part of this npm installation contract: npm 10.9.2 uses
+the version's `_hasShrinkwrap` flag to discover the embedded shrinkwrap.
+Installing identical bytes by a local tarball path can instead resolve the
+native dependency's compatible `nan` range without honoring that pin. Do not
+treat a local-file install as proof of registry pin enforcement, or update the
+expected pin merely because a newer compatible dependency has appeared.
 
 Never publish the full lockfile as a shrinkwrap: npm installs every entry of a
 dependency's shrinkwrap, so 0.4.1 installed its development tooling into
