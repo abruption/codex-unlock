@@ -103,7 +103,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked --offline --no-run
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '24'
           package-manager-cache: false
@@ -117,7 +117,7 @@ jobs:
           })
           $records | ConvertTo-Json | Set-Content target/debug/artifact-manifest.json -Encoding utf8
           $records | Format-Table
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-rust-diagnostic-research
           retention-days: 7
@@ -197,7 +197,7 @@ jobs:
             -Destination target/preview-package `
             -SourceSha $sourceSha `
             -ExpectedSha256 $env:PREVIEW_TESTED_SHA256
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         id: preview-upload
         with:
           name: windows-diagnostics-preview-windows-x86_64
