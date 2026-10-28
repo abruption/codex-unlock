@@ -128,7 +128,7 @@ that bypass native coordination are outside the interference guarantee.
 ## Requirements
 
 - macOS or Linux
-- Node.js 22.13+ (22.x) or Node.js 24.x
+- Node.js 22.23.4+ (22.x) or Node.js 24.22.1+ (24.x)
 - `lsof` available on the host
 
 The actual lock probe uses `fs-ext-extra-prebuilt`, which provides prebuilt

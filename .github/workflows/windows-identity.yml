@@ -38,7 +38,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 24
+          node-version: 24.22.1
       # No npm install: the classifier and its tests use only Node built-ins.
       - run: node --test experimental/windows-identity/classify.test.mjs
 
@@ -70,7 +70,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 24
+          node-version: 24.22.1
       - name: Run synthetic fixtures and classify against the manifest
         shell: powershell
         run: |
@@ -106,7 +106,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 24
+          node-version: 24.22.1
       - name: Run with the injected fault and check the defined failure
         shell: powershell
         env:

@@ -1,12 +1,23 @@
 # Supported platform evidence
 
 The stable `codex-unlock` npm CLI supports macOS and Linux only. It requires
-Node.js 22.13+ (22.x) or 24.x and `lsof`; these requirements are unchanged by the
+Node.js 22.23.4+ (22.x) or 24.22.1+ (24.x) and `lsof`; these requirements are unchanged by the
 separate Windows diagnostic prerelease described below. Stable CLI support means that the published
 CLI can load its native advisory-lock dependency and that CI proves the full
 non-mutating evidence path, including native coordination, against a real lock
 owner. It does not mean that every
 Unix-like platform or architecture is assumed safe.
+
+## Security baseline
+
+The minimum supported patch releases are Node.js **22.23.4** and **24.22.1**,
+following the [October 21, 2026 security release](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases).
+Earlier patches on those lines are no longer supported. Node.js 26 remains
+unsupported. Both patched minimums and the latest releases on each supported
+line are tested; release tooling uses 24.22.1. This metadata change does not
+upgrade an installed Node runtime. Advisory applicability depends on the actual
+API and attacker-controlled inputs; it is not evidence of an exploitable CLI
+path. The native dependency and lock/identity/recovery policy are unchanged.
 
 ## Verified matrix
 
@@ -14,10 +25,10 @@ The `supported-tests` CI gate requires every combination below to pass:
 
 | Operating system | Architecture | GitHub runner | Node.js |
 |---|---|---|---|
-| Ubuntu 24.04 | x64 | `ubuntu-24.04` | 22.13.0, latest 22.x, latest 24.x |
-| Ubuntu 24.04 | arm64 | `ubuntu-24.04-arm` | 22.13.0, latest 22.x, latest 24.x |
-| macOS 15 | x64 | `macos-15-intel` | 22.13.0, latest 22.x, latest 24.x |
-| macOS 15 | arm64 | `macos-15` | 22.13.0, latest 22.x, latest 24.x |
+| Ubuntu 24.04 | x64 | `ubuntu-24.04` | 22.23.4, latest 22.x, 24.22.1, latest 24.x |
+| Ubuntu 24.04 | arm64 | `ubuntu-24.04-arm` | 22.23.4, latest 22.x, 24.22.1, latest 24.x |
+| macOS 15 | x64 | `macos-15-intel` | 22.23.4, latest 22.x, 24.22.1, latest 24.x |
+| macOS 15 | arm64 | `macos-15` | 22.23.4, latest 22.x, 24.22.1, latest 24.x |
 
 These explicit labels and architectures follow GitHub's
 [hosted-runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).

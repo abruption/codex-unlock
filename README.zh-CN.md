@@ -34,7 +34,7 @@ codex-unlock inspect <thread-id>
 
 ## 快速开始
 
-稳定版 npm CLI 需要 macOS 或 Linux、Node.js **22.13+（22.x）或 24.x**，以及 `lsof`。
+稳定版 npm CLI 需要 macOS 或 Linux、Node.js **22.23.4+（22.x）或 24.22.1+（24.x）**，以及 `lsof`。
 此 CLI 不支持 Windows 和 Node.js 26。
 
 `list` 和 `inspect` 不会修改 Codex 原生锁文件或对话记录文件的内容，但每次探测都会短暂获取 Codex 的协调锁。

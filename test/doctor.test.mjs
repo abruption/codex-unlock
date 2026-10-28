@@ -572,7 +572,9 @@ test("post-signal lock observation failure cannot report release", async (t) => 
 });
 
 test("terminal width variables cannot hide a shared app-server owner", async (t) => {
-  const value = await fixture();
+  // Linux process.title can only reuse the original argv buffer. Reserve enough
+  // space so a short checkout path cannot truncate the synthetic service name.
+  const value = await fixture("task_complete", { ownerArgs: ["exec", "x".repeat(128)] });
   t.after(async () => await stopChild(value.child));
   const title = `codex --x${"x".repeat(48)} app-server`;
   await commandOwner(value.child, { action: "title", value: title });

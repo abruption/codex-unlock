@@ -24,7 +24,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 24
+          node-version: 24.22.1
       # The import-graph parser uses the existing TypeScript dev dependency.
       # Skip lifecycle scripts: synthetic snapshot tests do not load the
       # product or a Codex binary and establish no unlock eligibility.

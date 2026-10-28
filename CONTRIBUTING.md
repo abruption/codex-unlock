@@ -2,7 +2,7 @@
 
 ## Development
 
-Use Node.js 22.13+ (22.x) or Node.js 24.x and install from the committed
+Use Node.js 22.23.4+ (22.x) or Node.js 24.22.1+ (24.x) and install from the committed
 lockfile:
 
 ```bash

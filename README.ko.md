@@ -33,7 +33,7 @@ codex-unlock inspect <thread-id>
 
 ## 빠른 시작
 
-안정판 npm CLI는 macOS 또는 Linux, Node.js **22.13 이상(22.x) 또는 24.x**, 그리고 `lsof`가 필요합니다. 이 CLI는 Windows와 Node.js 26을 지원하지 않습니다.
+안정판 npm CLI는 macOS 또는 Linux, Node.js **22.23.4 이상(22.x) 또는 24.22.1 이상(24.x)**, 그리고 `lsof`가 필요합니다. 이 CLI는 Windows와 Node.js 26을 지원하지 않습니다.
 
 `list`와 `inspect`는 Codex의 네이티브 잠금 파일이나 대화 기록 파일의 내용을 바꾸지 않지만, 잠금을 검사할 때마다 Codex의 조정 잠금을 잠시 획득합니다. 대화형 명령에서는 기본 결과를 출력한 뒤 `codex-unlock`의 업데이트 안내 캐시를 별도로 갱신할 수 있습니다. 자세한 내용은 [업데이트 동작](docs/cli-reference.md#updates)을 참고하세요.
 
