@@ -37,7 +37,7 @@ recovery only when every safety check passes.
 
 ## Quick Start
 
-The stable npm CLI requires macOS or Linux, Node.js **22.13+ (22.x) or 24.x**, and `lsof`.
+The stable npm CLI requires macOS or Linux, Node.js **22.23.4+ (22.x) or 24.22.1+ (24.x)**, and `lsof`.
 That CLI does not support Windows or Node.js 26.
 
 `list` and `inspect` do not change the contents of Codex's native lock or

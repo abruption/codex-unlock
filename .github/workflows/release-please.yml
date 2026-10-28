@@ -46,7 +46,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 24
+          node-version: 24.22.1
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
       - name: Require release source to match provenance source
@@ -96,7 +96,7 @@ jobs:
       # run in this job. The npm Trusted Publisher workflow binding is unchanged.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 24
+          node-version: 24.22.1
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
       - run: npm install --global npm@11.11.0 --ignore-scripts
