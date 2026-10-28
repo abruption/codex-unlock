@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.9](https://github.com/abruption/codex-unlock/compare/v0.4.8...v0.4.9) (2026-10-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* Node 22 versions below 22.23.4 and Node 24 versions below 24.22.1 are no longer supported.
+
+### Bug Fixes
+
+* require patched Node 22 and 24 security baselines ([#184](https://github.com/abruption/codex-unlock/issues/184)) ([0c9ecfc](https://github.com/abruption/codex-unlock/commit/0c9ecfc9ba78e1d977bfbec9be585d2e3a3d4bbc))
+
+
+### Documentation
+
+* document Node security hotfix compatibility ([ce84a24](https://github.com/abruption/codex-unlock/commit/ce84a245e657836e3f518eacdbbbe36883a53e52))
+
 ## [0.4.8](https://github.com/abruption/codex-unlock/compare/v0.4.7...v0.4.8) (2026-10-27)
 
 
