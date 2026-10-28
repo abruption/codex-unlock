@@ -90,7 +90,7 @@
   "author": "abruption",
   "license": "MIT",
   "dependencies": {
-    "fs-ext-extra-prebuilt": "2.2.14"
+    "fs-ext-extra-prebuilt": "2.2.16"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
