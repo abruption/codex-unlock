@@ -27,6 +27,12 @@ records the latest released version.
 The stable aggregate branch-protection checks are `supported-tests`, `lint`,
 `security-audit`, and `package-smoke`.
 
+The npm 0.4.9 security hotfix requires Node `^22.23.4 || ^24.22.1`.
+Its release notes must call out that older Node patches are no longer supported:
+updating the package does not upgrade the user's Node runtime. The explicitly
+selected patch version does not remove this compatibility change. The separate
+Windows standalone release remains 0.5.0.
+
 `supported-tests` covers the explicit x64/arm64 macOS and Linux matrix in
 [`platform-support.md`](platform-support.md). `package-smoke` requires exact
 artifact contents, an offline clean installation of the packed bytes through
