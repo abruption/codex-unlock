@@ -46,6 +46,15 @@
       "properties": {
         "status": { "enum": ["held", "free", "unknown"] },
         "method": { "const": "flock_exclusive_nonblocking" },
+        "participation": {
+          "type": "object",
+          "required": ["pid", "startTicks", "descriptor"],
+          "properties": {
+            "pid": { "type": "integer", "minimum": 1 },
+            "startTicks": { "type": "string", "pattern": "^[0-9]+$" },
+            "descriptor": { "type": "string", "pattern": "^[0-9]+$" }
+          }
+        },
         "guard": {
           "type": "object",
           "required": ["status"],
@@ -65,6 +74,8 @@
         "ppid": { "type": ["integer", "null"], "minimum": 0 },
         "uid": { "type": ["integer", "null"], "minimum": 0 },
         "startTime": { "type": ["string", "null"] },
+        "startTicks": { "type": "string", "pattern": "^[0-9]+$" },
+        "commandFingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "tty": { "type": ["string", "null"] },
         "command": { "type": ["string", "null"] },
         "arguments": { "type": ["string", "null"] },

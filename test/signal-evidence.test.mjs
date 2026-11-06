@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import fs from "node:fs";
-import { mkdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { join, resolve } from "node:path";
 import process from "node:process";
@@ -155,6 +155,69 @@ test("late evidence preserves an unchanged owner control", { timeout: 30_000 }, 
   assert.equal((await stableFileHash(value.transcriptPath)).hash, before.hash);
   assert.equal(existsSync(value.lockPath), true);
   assert.equal(validate(result), true, JSON.stringify(validate.errors));
+});
+
+test("late evidence refuses a hard link added during the last process sample", { timeout: 30_000 }, async (t) => {
+  const value = await signalFixture(t);
+  const result = await unlockWithLease(value, {
+    processStartTime: async (pid) => {
+      const observation = await processStartTime(pid);
+      await link(value.lockPath, join(value.codexHome, "late-lock-alias"));
+      return observation;
+    },
+  });
+  assertRefusedUntouched(value, result);
+  assert.ok(result.reasons.includes("lock_metadata_changed_before_signal"));
+});
+
+test("thread probe refuses metadata replacement while its descriptor is open", async () => {
+  const { mkdtemp, rm, writeFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const root = await mkdtemp(join(tmpdir(), "codex-lock-metadata-"));
+  try {
+    const lock = join(root, "thread.lock");
+    await writeFile(lock, "");
+    await writeFile(join(root, ".coordination.lock"), "");
+    const result = guardedProbeOnce(lock, undefined, {
+      afterThreadAcquired: () => fs.linkSync(lock, join(root, "alias")),
+    });
+    assert.equal(result.status, "unknown");
+    assert.match(result.error, /changed/);
+    assert.equal(await readFile(lock, "utf8"), "");
+  } finally {
+    await rm(root, { recursive: true });
+  }
+});
+
+test("Linux final fdinfo denial refuses the full unlock path without signaling", {
+  skip: process.platform !== "linux", timeout: 30_000,
+}, async (t) => {
+  const value = await signalFixture(t);
+  const originalOpen = fs.openSync;
+  let injected = false;
+  let result;
+  try {
+    result = await unlockWithLease(value, {
+      processStartTime: async (pid) => {
+        const observation = await processStartTime(pid);
+        fs.openSync = (path, ...args) => {
+          if (typeof path === "string" && path.startsWith(`/proc/${pid}/fdinfo/`)) {
+            injected = true;
+            throw Object.assign(new Error("injected fdinfo denial"), { code: "EACCES" });
+          }
+          return originalOpen(path, ...args);
+        };
+        syncBuiltinESMExports();
+        return observation;
+      },
+    });
+  } finally {
+    fs.openSync = originalOpen;
+    syncBuiltinESMExports();
+  }
+  assert.equal(injected, true);
+  assertRefusedUntouched(value, result);
+  assert.ok(result.reasons.includes("lock_changed_before_signal"));
 });
 
 for (const [label, dependency, reason] of [
