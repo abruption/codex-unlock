@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.10](https://github.com/abruption/codex-unlock/compare/v0.4.9...v0.4.10) (2026-11-24)
+
+
+### Bug Fixes
+
+* **deps-dev:** override vulnerable minimatch release ([#191](https://github.com/abruption/codex-unlock/issues/191)) ([5df26bd](https://github.com/abruption/codex-unlock/commit/5df26bd31594e12b50a5fb183510ec972fed867a))
+
 ## [0.4.9](https://github.com/abruption/codex-unlock/compare/v0.4.8...v0.4.9) (2026-10-28)
 
 
