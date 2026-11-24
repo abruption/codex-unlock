@@ -92,6 +92,9 @@
   "dependencies": {
     "fs-ext-extra-prebuilt": "2.2.14"
   },
+  "overrides": {
+    "minimatch": "11.0.1"
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.15.0",
