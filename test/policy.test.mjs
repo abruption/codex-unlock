@@ -86,6 +86,7 @@ function context(overrides = {}) {
   return {
     currentProcessFamily: new Set([100, 101]),
     currentUid: process.getuid?.() ?? 501,
+    platform: "darwin",
     ...overrides,
   };
 }
@@ -97,6 +98,20 @@ test("authorizes complete deterministic evidence without process fixtures", () =
     blockers: [],
     warnings: [],
   });
+});
+
+test("Linux policy requires positive participation tied to owner instance", () => {
+  const value = evidence();
+  const linux = context({ platform: "linux" });
+  assert.equal(evaluateSafety(value, linux).safeToUnlock, false);
+  value.owner.startTicks = "123";
+  value.lock.probe.participation = { pid: value.owner.pid, startTicks: "123", descriptor: "7" };
+  assert.equal(evaluateSafety(value, linux).safeToUnlock, true);
+  value.lock.probe.participation.pid += 1;
+  assert.equal(evaluateSafety(value, linux).safeToUnlock, false);
+  value.lock.probe.participation.pid = value.owner.pid;
+  value.lock.probe.participation.startTicks = "124";
+  assert.equal(evaluateSafety(value, linux).safeToUnlock, false);
 });
 
 test("refuses shared owners and current-process-family owners", () => {

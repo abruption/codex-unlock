@@ -6,6 +6,7 @@ export type InspectionEvidence = Omit<
 >;
 
 export interface SafetyContext {
+  platform?: NodeJS.Platform;
   currentProcessFamily: Set<number> | null;
   openerError?: string;
   ownerLockError?: string;
@@ -38,6 +39,11 @@ export function evaluateSafety(
   const blockers: string[] = [];
   const warnings: string[] = [];
   const { lock, owner, transcript } = result;
+  if ((context.platform ?? process.platform) === "linux" &&
+    (!owner?.startTicks || lock.probe.participation?.pid !== owner.pid ||
+      lock.probe.participation?.startTicks !== owner.startTicks)) {
+    addOnce(blockers, "linux_participation_unproven");
+  }
 
   if (result.classification !== "live_owner") {
     addOnce(blockers, `classification_${result.classification}`);

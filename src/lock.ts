@@ -161,7 +161,9 @@ export function probeThreadLockOnce(
     if (
       !value.isFile() ||
       opened.device !== before.snapshot.device ||
-      opened.inode !== before.snapshot.inode
+      opened.inode !== before.snapshot.inode ||
+      opened.uid !== before.snapshot.uid ||
+      opened.links !== before.snapshot.links
     ) {
       throw new Error("lock file changed while it was opened");
     }
@@ -179,8 +181,11 @@ export function probeThreadLockOnce(
         error: errorText(error),
       };
     }
-    const after = publicSnapshot(lstatSync(path, { bigint: true }));
-    if (after.device !== opened.device || after.inode !== opened.inode) {
+    const afterValue = lstatSync(path, { bigint: true });
+    const after = publicSnapshot(afterValue);
+    if (!afterValue.isFile() || afterValue.isSymbolicLink() ||
+      after.device !== opened.device || after.inode !== opened.inode ||
+      after.uid !== opened.uid || after.links !== opened.links) {
       throw new Error("lock file changed during the probe");
     }
   } catch (error) {

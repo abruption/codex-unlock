@@ -354,7 +354,8 @@ for (const mode of ["verify", "busy"]) {
       assert.equal(result.code, 0, result.stdout);
       assert.equal(parsed.outcome, "unlocked");
       assert.deepEqual(JSON.parse(readFileSync(marker, "utf8")), {
-        attempts: 5, guardReleased: true, guardClosed: true, microtaskRan: false,
+        attempts: process.platform === "linux" ? 9 : 5,
+        guardReleased: true, guardClosed: true, microtaskRan: false,
       });
     }
   });
