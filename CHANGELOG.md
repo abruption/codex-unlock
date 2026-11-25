@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.11](https://github.com/abruption/codex-unlock/compare/v0.4.10...v0.4.11) (2026-11-25)
+
+
+### Bug Fixes
+
+* **deps:** bump the minor-and-patch group across 1 directory with 5 updates ([#190](https://github.com/abruption/codex-unlock/issues/190)) ([092221f](https://github.com/abruption/codex-unlock/commit/092221f270960209e21a06cef190064a92d094c9))
+
 ## [0.4.10](https://github.com/abruption/codex-unlock/compare/v0.4.9...v0.4.10) (2026-11-24)
 
 
